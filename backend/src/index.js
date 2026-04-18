@@ -1,0 +1,66 @@
+import "dotenv/config";
+import express from "express";
+import cors from "cors";
+import path from "path";
+import fs from "fs";
+import { createServer } from "http";
+import { connectDatabase } from "./config/database.js";
+import authRoutes from "./routes/auth.js";
+import usersRoutes from "./routes/users.js";
+import tasksRoutes from "./routes/tasks.js";
+import projectsRoutes from "./routes/projects.js";
+import notificationsRoutes from "./routes/notifications.js";
+import dashboardRoutes from "./routes/dashboard.js";
+import reportsRoutes from "./routes/reports.js";
+import uploadsRoutes from "./routes/uploads.js";
+import { setupSocket } from "./realtime/socket.js";
+import { setSocket } from "./services/notificationService.js";
+import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
+
+const app = express();
+const server = createServer(app);
+const io = setupSocket(server);
+setSocket(io);
+
+const PORT = process.env.PORT || 5000;
+const origins = ["http://localhost:3000", "http://127.0.0.1:3000", process.env.CLIENT_ORIGIN || "http://localhost:3000"];
+
+app.use(cors({ origin: origins, credentials: true }));
+app.use(express.json({ limit: "2mb" }));
+
+const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
+if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+app.use("/uploads", express.static(UPLOAD_DIR, { maxAge: "7d" }));
+
+app.get("/api/health", (_req, res) =>
+  res.json({
+    ok: true,
+    service: "task-project-api",
+    recycleBinRetentionDays: Math.max(1, Number(process.env.RECYCLE_BIN_RETENTION_DAYS) || 10),
+  })
+);
+
+app.use("/api/auth", authRoutes);
+app.use("/api/users", usersRoutes);
+app.use("/api/tasks", tasksRoutes);
+app.use("/api/projects", projectsRoutes);
+app.use("/api/notifications", notificationsRoutes);
+app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/reports", reportsRoutes);
+app.use("/api/uploads", uploadsRoutes);
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  res.status(500).json({ message: err.message || "Internal server error" });
+});
+
+const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/tms";
+connectDatabase(uri)
+  .then(() => {
+    startTrashPurgeScheduler();
+    server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
+  })
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
