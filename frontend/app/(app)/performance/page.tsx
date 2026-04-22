@@ -1,12 +1,13 @@
 "use client";
 
 import { api } from "@/lib/api";
+import { formatRoleLine } from "@/lib/roles";
 import { Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 type Member = {
-  user: { _id: string; name: string; role: string };
+  user: { _id: string; name: string; role: string; executorKind?: string };
   total: number;
   pending: number;
   overdue: number;
@@ -62,7 +63,7 @@ export default function PerformancePage() {
               </div>
               <div>
                 <div className="text-sm font-bold">{m.user.name}</div>
-                <div className="text-[10.5px] capitalize text-zinc-500">{m.user.role}</div>
+                <div className="text-[10.5px] text-zinc-500">{formatRoleLine(m.user.role, m.user.executorKind)}</div>
               </div>
             </div>
             <div className="mt-4 grid grid-cols-4 gap-2 text-center text-[11px]">

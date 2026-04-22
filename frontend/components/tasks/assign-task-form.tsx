@@ -19,6 +19,8 @@ import {
 import { useEffect, useMemo, useState } from "react";
 
 type UserLite = { _id: string; name: string; email: string; role: string };
+type CenterLite = { _id: string; name: string; code: string };
+type DepartmentLite = { _id: string; name: string; code: string };
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
 const TYPES: { value: string; label: string }[] = [
@@ -40,6 +42,10 @@ type Draft = {
   assignees: string[];
   requiresApproval: boolean;
   dueDate: string;
+  centerId: string;
+  departmentId: string;
+  functionTag: string;
+  requiredFieldsCsv: string;
   forever: boolean;
   includeSunday: boolean;
   weekOff: string;
@@ -58,6 +64,10 @@ function emptyDraft(id: number): Draft {
     assignees: [],
     requiresApproval: false,
     dueDate: "",
+    centerId: "",
+    departmentId: "",
+    functionTag: "",
+    requiredFieldsCsv: "",
     forever: true,
     includeSunday: false,
     weekOff: "Sunday",
@@ -102,11 +112,15 @@ async function uploadVoice(blob: Blob): Promise<string> {
 export function AssignTaskForm() {
   const [drafts, setDrafts] = useState<Draft[]>([emptyDraft(1)]);
   const [users, setUsers] = useState<UserLite[]>([]);
+  const [centers, setCenters] = useState<CenterLite[]>([]);
+  const [departments, setDepartments] = useState<DepartmentLite[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     api<{ users: UserLite[] }>("/users").then((d) => setUsers(d.users)).catch(() => setUsers([]));
+    api<{ centers: CenterLite[] }>("/centers").then((d) => setCenters(d.centers)).catch(() => setCenters([]));
+    api<{ departments: DepartmentLite[] }>("/departments").then((d) => setDepartments(d.departments)).catch(() => setDepartments([]));
   }, []);
 
   const createdCount = drafts.length;
@@ -116,9 +130,14 @@ export function AssignTaskForm() {
   const updateDraft = (id: number, patch: Partial<Draft>) => setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
   const submit = async () => {
-    const invalid = drafts.find((d) => !d.title.trim() || !d.dueDate || d.assignees.length === 0);
+    const invalid = drafts.find(
+      (d) => !d.title.trim() || !d.dueDate || d.assignees.length === 0 || !d.centerId || !d.departmentId || !d.functionTag.trim()
+    );
     if (invalid) {
-      setMessage({ type: "error", text: `Task #${invalid.id}: title, due date and at least one assignee are required.` });
+      setMessage({
+        type: "error",
+        text: `Task #${invalid.id}: title, center, department, function tag, due date and assignee are required.`,
+      });
       return;
     }
     setSubmitting(true);
@@ -129,11 +148,18 @@ export function AssignTaskForm() {
           uploadAttachments(d.attachments),
           d.voiceBlob ? uploadVoice(d.voiceBlob) : Promise.resolve(""),
         ]);
+        const required = d.requiredFieldsCsv
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
         await api("/tasks", {
           method: "POST",
           body: JSON.stringify({
             title: d.title.trim(),
             description: d.description,
+            centerId: d.centerId,
+            departmentId: d.departmentId,
+            functionTag: d.functionTag.trim(),
             taskType: d.taskType,
             priority: d.priority,
             assignees: d.assignees,
@@ -143,6 +169,11 @@ export function AssignTaskForm() {
               forever: d.forever,
               includeSunday: d.includeSunday,
               weekOff: d.weekOff,
+            },
+            requiredInputsSchema: {
+              type: "object",
+              properties: Object.fromEntries(required.map((f) => [f, { type: "string" }])),
+              required,
             },
             attachments,
             voiceNoteUrl,
@@ -169,6 +200,8 @@ export function AssignTaskForm() {
           index={idx + 1}
           draft={d}
           users={users}
+          centers={centers}
+          departments={departments}
           onChange={(patch) => updateDraft(d.id, patch)}
           onRemove={drafts.length > 1 ? () => setDrafts((list) => list.filter((x) => x.id !== d.id)) : undefined}
         />
@@ -214,12 +247,16 @@ function DraftCard({
   index,
   draft,
   users,
+  centers,
+  departments,
   onChange,
   onRemove,
 }: {
   index: number;
   draft: Draft;
   users: UserLite[];
+  centers: CenterLite[];
+  departments: DepartmentLite[];
   onChange: (p: Partial<Draft>) => void;
   onRemove?: () => void;
 }) {
@@ -271,6 +308,38 @@ function DraftCard({
               <option key={t.value} value={t.value}>{t.label}</option>
             ))}
           </Select>
+        </Field>
+
+        <Field label="Center" required>
+          <Select value={draft.centerId} onChange={(e) => onChange({ centerId: e.target.value })}>
+            <option value="">Select center…</option>
+            {centers.map((c) => (
+              <option key={c._id} value={c._id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Department" required>
+          <Select value={draft.departmentId} onChange={(e) => onChange({ departmentId: e.target.value })}>
+            <option value="">Select department…</option>
+            {departments.map((d) => (
+              <option key={d._id} value={d._id}>
+                {d.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field label="Function Tag" required>
+          <Input placeholder="e.g. doctor_visit, daily_followup" value={draft.functionTag} onChange={(e) => onChange({ functionTag: e.target.value })} />
+        </Field>
+        <Field label="Required Inputs (comma separated)">
+          <Input
+            placeholder="e.g. doctorName, clinicPhoto, area, outcome"
+            value={draft.requiredFieldsCsv}
+            onChange={(e) => onChange({ requiredFieldsCsv: e.target.value })}
+          />
         </Field>
 
         <div className="md:col-span-2">

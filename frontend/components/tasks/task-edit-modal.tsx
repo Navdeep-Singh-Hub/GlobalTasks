@@ -14,6 +14,10 @@ type TaskPayload = {
   status: string;
   priority: string;
   dueDate: string;
+  centerId?: { _id: string; name?: string } | string | null;
+  departmentId?: { _id: string; name?: string } | string | null;
+  functionTag?: string;
+  requiredInputsSchema?: { required?: string[] };
   recurrence?: { forever?: boolean; includeSunday?: boolean; weekOff?: string; endDate?: string | null };
   requiresApproval?: boolean;
   assignees?: { _id: string; name: string }[];
@@ -22,6 +26,8 @@ type TaskPayload = {
 
 type UserOpt = { _id: string; name: string };
 type ProjectOpt = { _id: string; name: string };
+type CenterOpt = { _id: string; name: string };
+type DepartmentOpt = { _id: string; name: string };
 
 function toLocalDatetimeValue(iso: string) {
   const d = new Date(iso);
@@ -45,6 +51,8 @@ export function TaskEditModal({
   const [meta, setMeta] = useState<{ types: string[]; statuses: string[]; priorities: string[] } | null>(null);
   const [users, setUsers] = useState<UserOpt[]>([]);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
+  const [centers, setCenters] = useState<CenterOpt[]>([]);
+  const [departments, setDepartments] = useState<DepartmentOpt[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
@@ -62,22 +70,30 @@ export function TaskEditModal({
   const [requiresApproval, setRequiresApproval] = useState(false);
   const [assigneeIds, setAssigneeIds] = useState<string[]>([]);
   const [projectId, setProjectId] = useState("");
+  const [centerId, setCenterId] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [functionTag, setFunctionTag] = useState("");
+  const [requiredFieldsCsv, setRequiredFieldsCsv] = useState("");
 
   const load = useCallback(async () => {
     if (!taskId || !open) return;
     setLoading(true);
     setErr("");
     try {
-      const [taskRes, usersRes, projectsRes, metaRes] = await Promise.all([
+      const [taskRes, usersRes, projectsRes, metaRes, centersRes, departmentsRes] = await Promise.all([
         api<{ task: TaskPayload }>(`/tasks/${taskId}`),
         api<{ users: UserOpt[] }>("/users").catch(() => ({ users: [] as UserOpt[] })),
         api<{ projects: ProjectOpt[] }>("/projects").catch(() => ({ projects: [] as ProjectOpt[] })),
         api<{ types: string[]; statuses: string[]; priorities: string[] }>("/tasks/meta"),
+        api<{ centers: CenterOpt[] }>("/centers").catch(() => ({ centers: [] as CenterOpt[] })),
+        api<{ departments: DepartmentOpt[] }>("/departments").catch(() => ({ departments: [] as DepartmentOpt[] })),
       ]);
       const t = taskRes.task;
       setMeta(metaRes);
       setUsers(usersRes.users || []);
       setProjects(projectsRes.projects || []);
+      setCenters(centersRes.centers || []);
+      setDepartments(departmentsRes.departments || []);
       setTitle(t.title || "");
       setDescription(t.description || "");
       setTaskType(t.taskType || "one_time");
@@ -92,6 +108,13 @@ export function TaskEditModal({
       setAssigneeIds((t.assignees || []).map((a) => a._id));
       const pid = t.project && typeof t.project === "object" && "_id" in t.project ? String(t.project._id) : "";
       setProjectId(pid);
+      const cid = t.centerId && typeof t.centerId === "object" && "_id" in t.centerId ? String(t.centerId._id) : String(t.centerId || "");
+      const did =
+        t.departmentId && typeof t.departmentId === "object" && "_id" in t.departmentId ? String(t.departmentId._id) : String(t.departmentId || "");
+      setCenterId(cid || "");
+      setDepartmentId(did || "");
+      setFunctionTag(t.functionTag || "");
+      setRequiredFieldsCsv((t.requiredInputsSchema?.required || []).join(", "));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed to load task");
     } finally {
@@ -108,8 +131,8 @@ export function TaskEditModal({
   };
 
   const save = async () => {
-    if (!taskId || !title.trim() || !dueLocal) {
-      setErr("Title and due date are required.");
+    if (!taskId || !title.trim() || !dueLocal || !departmentId || !centerId || !functionTag.trim()) {
+      setErr("Title, center, department, function tag and due date are required.");
       return;
     }
     setSaving(true);
@@ -124,6 +147,23 @@ export function TaskEditModal({
         dueDate: new Date(dueLocal).toISOString(),
         assignees: assigneeIds,
         project: projectId || null,
+        centerId,
+        departmentId,
+        functionTag: functionTag.trim(),
+        requiredInputsSchema: {
+          type: "object",
+          properties: Object.fromEntries(
+            requiredFieldsCsv
+              .split(",")
+              .map((x) => x.trim())
+              .filter(Boolean)
+              .map((k) => [k, { type: "string" }])
+          ),
+          required: requiredFieldsCsv
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        },
         requiresApproval,
       };
       if (taskType !== "one_time") {
@@ -189,6 +229,28 @@ export function TaskEditModal({
                 </option>
               ))}
             </Select>
+            <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
+              <option value="">Select center</option>
+              {centers.map((c) => (
+                <option key={c._id} value={c._id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">Select department</option>
+              {departments.map((d) => (
+                <option key={d._id} value={d._id}>
+                  {d.name}
+                </option>
+              ))}
+            </Select>
+            <Input placeholder="Function tag" value={functionTag} onChange={(e) => setFunctionTag(e.target.value)} />
+            <Input
+              placeholder="Required inputs (comma separated)"
+              value={requiredFieldsCsv}
+              onChange={(e) => setRequiredFieldsCsv(e.target.value)}
+            />
           </div>
 
           {taskType !== "one_time" && (
@@ -217,7 +279,7 @@ export function TaskEditModal({
 
           <label className="mt-4 flex items-center gap-2 text-xs font-semibold">
             <input type="checkbox" checked={requiresApproval} onChange={(e) => setRequiresApproval(e.target.checked)} className="h-4 w-4 rounded border-zinc-300" />
-            Requires admin approval to complete
+            Requires CEO approval to complete
           </label>
 
           <div className="mt-4">

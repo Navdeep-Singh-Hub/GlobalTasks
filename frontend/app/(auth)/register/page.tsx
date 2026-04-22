@@ -1,9 +1,9 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
-import { useAuth, type Role } from "@/contexts/auth-context";
+import { useAuth } from "@/contexts/auth-context";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, Lock, Mail, Sparkles, User } from "lucide-react";
 import Link from "next/link";
@@ -16,7 +16,6 @@ export default function RegisterPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<Role>("user");
   const [show, setShow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -26,7 +25,7 @@ export default function RegisterPage() {
     setError(null);
     setLoading(true);
     try {
-      await register({ name, email, password, role });
+      await register({ name, email, password });
       router.replace("/dashboard");
     } catch (err) {
       const msg =
@@ -67,13 +66,6 @@ export default function RegisterPage() {
                 <Mail className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
                 <Input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="pl-9" />
               </div>
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-semibold">Role</label>
-              <Select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                <option value="user">User</option>
-                <option value="manager">Manager</option>
-              </Select>
             </div>
             <div>
               <label className="mb-1.5 block text-xs font-semibold">Password</label>

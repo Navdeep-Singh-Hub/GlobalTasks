@@ -6,6 +6,7 @@ import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/ba
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { isCeo } from "@/lib/roles";
 import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Table2, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -58,12 +59,12 @@ export function TasksView({
   subtitle: string;
   preset?: Preset;
   showCadenceFilter?: boolean;
-  /** When true and the signed-in user is admin, show Edit / Delete on Master Single & Master Recurring. */
+  /** When true and the signed-in user is CEO, show Edit / Delete on Master Single & Master Recurring. */
   masterAdminActions?: boolean;
 }) {
   const { user } = useAuth();
-  const showMasterAdmin = masterAdminActions && user?.role === "admin";
-  const showApprovalQuickActions = Boolean(preset.approval && user?.role === "admin");
+  const showMasterAdmin = masterAdminActions && isCeo(user?.role);
+  const showApprovalQuickActions = Boolean(preset.approval && isCeo(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
@@ -119,8 +120,8 @@ export function TasksView({
 
   const runHardDelete = async () => {
     if (!deleteChoice) return;
-    if (deleteChoice.mode === "bulk" && user?.role !== "admin") {
-      setDeleteErr("Only admins can permanently delete multiple tasks.");
+    if (deleteChoice.mode === "bulk" && !isCeo(user?.role)) {
+      setDeleteErr("Only the CEO can permanently delete multiple tasks.");
       return;
     }
     setDeleteWorking(true);
@@ -143,8 +144,8 @@ export function TasksView({
     }
   };
 
-  const canPermanentBulk = user?.role === "admin";
-  const canPermanentSingle = user?.role === "admin" || user?.role === "manager";
+  const canPermanentBulk = isCeo(user?.role);
+  const canPermanentSingle = isCeo(user?.role) || user?.role === "centre_head";
 
   const load = useCallback(() => {
     setLoading(true);
@@ -546,7 +547,7 @@ export function TasksView({
           <strong className="text-rose-600">Delete permanently</strong> — removes the task from the database. This cannot be undone.
         </p>
         {deleteChoice?.mode === "bulk" && !canPermanentBulk && (
-          <p className="mt-2 text-xs text-zinc-500">Permanent bulk delete is available to admins only.</p>
+          <p className="mt-2 text-xs text-zinc-500">Permanent bulk delete is available to the CEO only.</p>
         )}
         {deleteErr && (
           <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-200">

@@ -5,17 +5,23 @@ import path from "path";
 import fs from "fs";
 import { createServer } from "http";
 import { connectDatabase } from "./config/database.js";
+import { migrateLegacyUserRoles } from "./migrateUserRoles.js";
+import { ensureMasterData } from "./bootstrap/masterData.js";
 import authRoutes from "./routes/auth.js";
 import usersRoutes from "./routes/users.js";
 import tasksRoutes from "./routes/tasks.js";
+import centersRoutes from "./routes/centers.js";
+import departmentsRoutes from "./routes/departments.js";
 import projectsRoutes from "./routes/projects.js";
 import notificationsRoutes from "./routes/notifications.js";
 import dashboardRoutes from "./routes/dashboard.js";
 import reportsRoutes from "./routes/reports.js";
 import uploadsRoutes from "./routes/uploads.js";
+import whatsappRoutes from "./routes/whatsapp.js";
 import { setupSocket } from "./realtime/socket.js";
 import { setSocket } from "./services/notificationService.js";
 import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
+import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
 
 const app = express();
 const server = createServer(app);
@@ -43,10 +49,13 @@ app.get("/api/health", (_req, res) =>
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tasks", tasksRoutes);
+app.use("/api/centers", centersRoutes);
+app.use("/api/departments", departmentsRoutes);
 app.use("/api/projects", projectsRoutes);
 app.use("/api/notifications", notificationsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/reports", reportsRoutes);
+app.use("/api/integrations/whatsapp", whatsappRoutes);
 app.use("/api/uploads", uploadsRoutes);
 
 app.use((err, _req, res, _next) => {
@@ -56,8 +65,11 @@ app.use((err, _req, res, _next) => {
 
 const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/tms";
 connectDatabase(uri)
-  .then(() => {
+  .then(async () => {
+    await migrateLegacyUserRoles();
+    await ensureMasterData();
     startTrashPurgeScheduler();
+    startEscalationScheduler();
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   })
   .catch((e) => {

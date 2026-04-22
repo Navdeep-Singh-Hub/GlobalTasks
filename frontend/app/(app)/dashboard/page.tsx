@@ -3,33 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { KpiCard } from "@/components/dashboard/kpi-card";
-import { DeliveryCurve } from "@/components/dashboard/delivery-curve";
-import { StatusDonut } from "@/components/dashboard/status-donut";
-import { CadenceGrid } from "@/components/dashboard/cadence-grid";
-import { TeamFocus } from "@/components/dashboard/team-focus";
-import { TeamPending } from "@/components/dashboard/team-pending";
-import { ActivityFeed } from "@/components/dashboard/activity-feed";
-import { CalendarDays, CheckCircle2, ListChecks, Sparkles, TriangleAlert, Timer, ChevronDown } from "lucide-react";
-
-type Summary = {
-  cards: { totalTasks: number; pending: number; completed: number; overdue: number; activeProjects: number; overduePct: number };
-  byStatus: { name: string; value: number }[];
-  byCadence: { _id: string; total: number; pending: number; completed: number }[];
-  deliveryCurve: { label: string; planned: number; completed: number }[];
-};
-type TeamMember = {
-  user: { _id: string; name: string; email: string; role: string };
-  total: number;
-  pending: number;
-  overdue: number;
-  completed: number;
-  completion: number;
-  oneTime: number;
-  daily: number;
-  recurring: number;
-};
-type ActivityItem = { _id: string; actorName?: string; message: string; taskTitle?: string; taskType?: string; createdAt: string };
+import { formatRoleLine } from "@/lib/roles";
+import { CalendarDays, ChevronDown, Sparkles } from "lucide-react";
+import type { CioSummary, CoordinatorReport, CentreHeadReport, IndividualReport, Summary, SupervisorReport, TeamMember, ActivityItem } from "@/components/dashboard/types";
+import { CioDashboard, CoordinatorDashboard, CentreHeadDashboard, ExecutorDashboard, SupervisorDashboard } from "@/components/dashboard/role-sections";
 
 export default function DashboardPage() {
   const { user } = useAuth();
@@ -37,12 +14,23 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
+  const [individual, setIndividual] = useState<IndividualReport | null>(null);
+  const [supervisor, setSupervisor] = useState<SupervisorReport | null>(null);
+  const [coordinator, setCoordinator] = useState<CoordinatorReport | null>(null);
+  const [centreHead, setCentreHead] = useState<CentreHeadReport | null>(null);
+  const [ceo, setCeo] = useState<CioSummary | null>(null);
 
   useEffect(() => {
     api<Summary>(`/dashboard/summary?scope=${scope}`).then(setSummary).catch(() => {});
     api<{ members: TeamMember[] }>("/dashboard/team-performance").then((d) => setTeam(d.members)).catch(() => setTeam([]));
     api<{ items: ActivityItem[] }>("/dashboard/activity?limit=10").then((d) => setActivity(d.items)).catch(() => setActivity([]));
-  }, [scope]);
+    if (!user) return;
+    if (user.role === "executor") api<IndividualReport>("/reports/individual").then(setIndividual).catch(() => setIndividual(null));
+    if (user.role === "supervisor") api<SupervisorReport>("/reports/supervisor").then(setSupervisor).catch(() => setSupervisor(null));
+    if (user.role === "coordinator") api<CoordinatorReport>("/reports/coordinator").then(setCoordinator).catch(() => setCoordinator(null));
+    if (user.role === "centre_head") api<CentreHeadReport>("/reports/centre-head").then(setCentreHead).catch(() => setCentreHead(null));
+    if (user.role === "ceo") api<CioSummary>("/reports/ceo-summary").then(setCeo).catch(() => setCeo(null));
+  }, [scope, user]);
 
   const monthLabel = useMemo(() => new Date().toLocaleDateString([], { month: "long", year: "numeric" }), []);
   const plannedTotal = summary?.deliveryCurve.reduce((a, b) => a + b.planned, 0) || 0;
@@ -67,8 +55,9 @@ export default function DashboardPage() {
               <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900">
                 <CalendarDays className="h-3 w-3" /> {scope === "month" ? "Current month" : "All time"}
               </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-semibold capitalize text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" /> {user?.role}
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-[11px] font-semibold text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{" "}
+                {user ? formatRoleLine(user.role, user.executorKind) : "—"}
               </span>
             </div>
           </div>
@@ -107,55 +96,47 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard
-          label="Total tasks"
-          value={summary?.cards.totalTasks ?? "—"}
-          icon={ListChecks}
-          tone="brand"
-          trend="+100%"
-          hint="All active work items in the selected scope"
+      {user?.role === "executor" && <ExecutorDashboard individual={individual} summary={summary} activity={activity} />}
+      {user?.role === "supervisor" && (
+        <SupervisorDashboard
+          supervisor={supervisor}
+          summary={summary}
+          team={team}
+          activity={activity}
+          plannedTotal={plannedTotal}
+          completedTotal={completedTotal}
         />
-        <KpiCard
-          label="Pending"
-          value={summary?.cards.pending ?? "—"}
-          icon={Timer}
-          tone="amber"
-          trend="+100%"
-          hint="Tasks waiting for action"
+      )}
+      {user?.role === "coordinator" && (
+        <CoordinatorDashboard
+          coordinator={coordinator}
+          summary={summary}
+          team={team}
+          activity={activity}
+          plannedTotal={plannedTotal}
+          completedTotal={completedTotal}
         />
-        <KpiCard
-          label="Completed"
-          value={summary?.cards.completed ?? "—"}
-          icon={CheckCircle2}
-          tone="emerald"
-          trend="+0%"
-          hint="Tasks delivered successfully"
+      )}
+      {user?.role === "centre_head" && (
+        <CentreHeadDashboard
+          centreHead={centreHead}
+          summary={summary}
+          team={team}
+          activity={activity}
+          plannedTotal={plannedTotal}
+          completedTotal={completedTotal}
         />
-        <KpiCard
-          label="Overdue"
-          value={summary?.cards.overdue ?? "—"}
-          icon={TriangleAlert}
-          tone="rose"
-          trend={summary ? `${summary.cards.overduePct}%` : "—"}
-          hint={summary ? `${summary.cards.overduePct}% of active tasks` : "Overdue share"}
+      )}
+      {user?.role === "ceo" && (
+        <CioDashboard
+          ceo={ceo}
+          summary={summary}
+          team={team}
+          activity={activity}
+          plannedTotal={plannedTotal}
+          completedTotal={completedTotal}
         />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        {summary && <DeliveryCurve data={summary.deliveryCurve} planned={plannedTotal} completed={completedTotal} />}
-        <TeamFocus members={team} />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <CadenceGrid data={summary?.byCadence || []} />
-        <StatusDonut data={summary?.byStatus || []} />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
-        <ActivityFeed items={activity} />
-        <TeamPending members={team} />
-      </section>
+      )}
     </div>
   );
 }

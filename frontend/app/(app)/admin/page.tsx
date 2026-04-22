@@ -7,6 +7,15 @@ import { Badge, roleTone } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import {
+  EXECUTOR_KIND_LABELS,
+  EXECUTOR_KIND_OPTIONS,
+  ROLE_LABELS,
+  USER_ROLES,
+  formatRoleLine,
+  rolesAssignableBy,
+  type Role,
+} from "@/lib/roles";
+import {
   CreditCard,
   Filter,
   Info,
@@ -24,7 +33,9 @@ type Member = {
   name: string;
   email: string;
   phone?: string;
-  role: "admin" | "manager" | "user";
+  role: Role;
+  executorKind?: string;
+  centerId?: { _id: string; name: string; code: string } | string | null;
   department?: string;
   permissions: string[];
   active: boolean;
@@ -82,6 +93,7 @@ export default function AdminPanelPage() {
   const [role, setRole] = useState("all");
   const [dept, setDept] = useState("all");
   const [departments, setDepartments] = useState<string[]>([]);
+  const [centers, setCenters] = useState<{ _id: string; name: string; code: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -103,6 +115,7 @@ export default function AdminPanelPage() {
   useEffect(() => {
     load();
     api<{ departments: string[] }>("/users/departments").then((d) => setDepartments(d.departments)).catch(() => setDepartments([]));
+    api<{ centers: { _id: string; name: string; code: string }[] }>("/centers").then((d) => setCenters(d.centers)).catch(() => setCenters([]));
   }, [load]);
 
   const toggleActive = async (m: Member) => {
@@ -143,9 +156,11 @@ export default function AdminPanelPage() {
           </Select>
           <Select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="all">All Roles</option>
-            <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
-            <option value="user">User</option>
+            {USER_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABELS[r]}
+              </option>
+            ))}
           </Select>
           <Select value={dept} onChange={(e) => setDept(e.target.value)}>
             <option value="all">All Departments</option>
@@ -196,7 +211,9 @@ export default function AdminPanelPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="p-3"><Badge tone={roleTone(m.role)}>{m.role}</Badge></td>
+                    <td className="p-3">
+                      <Badge tone={roleTone(m.role)}>{formatRoleLine(m.role, m.executorKind)}</Badge>
+                    </td>
                     <td className="p-3 text-zinc-700 dark:text-zinc-200">{m.department || <span className="text-zinc-400">No Department</span>}</td>
                     <td className="p-3">
                       <div className="flex flex-wrap gap-1">
@@ -261,6 +278,7 @@ export default function AdminPanelPage() {
 
       {createOpen && (
         <CreateUserModal
+          centers={centers}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); load(); }}
         />
@@ -268,6 +286,7 @@ export default function AdminPanelPage() {
       {editing && (
         <EditUserModal
           key={editing._id}
+          centers={centers}
           user={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
@@ -277,12 +296,24 @@ export default function AdminPanelPage() {
   );
 }
 
-function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
+function CreateUserModal({
+  onClose,
+  onCreated,
+  centers,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  centers: { _id: string; name: string; code: string }[];
+}) {
+  const { user: me } = useAuth();
+  const assignable = rolesAssignableBy((me?.role || "executor") as Role);
   const [form, setForm] = useState({
     name: "",
     email: "",
     phone: "",
-    role: "user",
+    role: (assignable.includes("executor") ? "executor" : assignable[0]) as Role,
+    executorKind: "" as string,
+    centerId: "",
     department: "",
     title: "",
     avatarUrl: "",
@@ -299,6 +330,10 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
     }));
 
   const submit = async () => {
+    if (!form.centerId) {
+      setErr("Center is required.");
+      return;
+    }
     setSaving(true);
     setErr("");
     try {
@@ -317,14 +352,40 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        <Select value={form.centerId} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+          <option value="">Select center…</option>
+          {centers.map((c) => (
+            <option key={c._id} value={c._id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
         <Input placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
         <Input placeholder="Job title (optional)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         <Input placeholder="Avatar image URL (optional)" value={form.avatarUrl} onChange={(e) => setForm({ ...form, avatarUrl: e.target.value })} />
-        <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-          <option value="user">User</option>
-          <option value="manager">Manager</option>
-          <option value="admin">Admin</option>
+        <Select
+          value={form.role}
+          onChange={(e) => {
+            const r = e.target.value as Role;
+            setForm({ ...form, role: r, executorKind: r === "executor" ? form.executorKind : "" });
+          }}
+        >
+          {assignable.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABELS[r]}
+            </option>
+          ))}
         </Select>
+        {form.role === "executor" && (
+          <Select value={form.executorKind} onChange={(e) => setForm({ ...form, executorKind: e.target.value })}>
+            <option value="">Executor type…</option>
+            {EXECUTOR_KIND_OPTIONS.map((k) => (
+              <option key={k} value={k}>
+                {ROLE_LABELS.executor} · {EXECUTOR_KIND_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        )}
         <Input placeholder="Initial password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
       </div>
       <PermissionPicker selected={form.permissions} onToggle={togglePerm} />
@@ -337,9 +398,21 @@ function CreateUserModal({ onClose, onCreated }: { onClose: () => void; onCreate
   );
 }
 
-function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () => void; onSaved: () => void }) {
+function EditUserModal({
+  user,
+  onClose,
+  onSaved,
+  centers,
+}: {
+  user: Member;
+  onClose: () => void;
+  onSaved: () => void;
+  centers: { _id: string; name: string; code: string }[];
+}) {
   const { user: me } = useAuth();
-  const isAdmin = me?.role === "admin";
+  const canSetPassword = me?.role === "ceo" || me?.role === "centre_head";
+  const assignable = rolesAssignableBy((me?.role || "executor") as Role);
+  const roleOptions = Array.from(new Set([...assignable, user.role]));
 
   const [form, setForm] = useState({
     name: user.name,
@@ -349,6 +422,8 @@ function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () =
     title: user.title || "",
     avatarUrl: user.avatarUrl || "",
     role: user.role,
+    executorKind: user.executorKind || "",
+    centerId: typeof user.centerId === "object" && user.centerId ? user.centerId._id : String(user.centerId || ""),
     permissions: [...(user.permissions || [])],
     active: user.active !== false,
   });
@@ -370,13 +445,18 @@ function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () =
         setErr("New password and confirmation do not match.");
         return;
       }
-      if (!isAdmin) {
-        setErr("Only admins can change passwords from here.");
+      if (!canSetPassword) {
+        setErr("Only the CEO or a Centre Head can change passwords from here.");
         return;
       }
     }
     setSaving(true);
     try {
+      if (!form.centerId) {
+        setErr("Center is required.");
+        setSaving(false);
+        return;
+      }
       await api(`/users/${user._id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -387,11 +467,13 @@ function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () =
           title: form.title,
           avatarUrl: form.avatarUrl,
           role: form.role,
+          executorKind: form.role === "executor" ? form.executorKind : "",
+          centerId: form.centerId,
           permissions: form.permissions,
           active: form.active,
         }),
       });
-      if (isAdmin && newPassword.trim()) {
+      if (canSetPassword && newPassword.trim()) {
         await api(`/users/${user._id}/reset-password`, {
           method: "POST",
           body: JSON.stringify({ password: newPassword.trim() }),
@@ -411,14 +493,40 @@ function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () =
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        <Select value={form.centerId} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+          <option value="">Select center…</option>
+          {centers.map((c) => (
+            <option key={c._id} value={c._id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
         <Input placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
         <Input placeholder="Job title (optional)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         <Input placeholder="Avatar image URL (optional)" value={form.avatarUrl} onChange={(e) => setForm({ ...form, avatarUrl: e.target.value })} />
-        <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value as Member["role"] })}>
-          <option value="user">User</option>
-          <option value="manager">Manager</option>
-          <option value="admin">Admin</option>
+        <Select
+          value={form.role}
+          onChange={(e) => {
+            const r = e.target.value as Role;
+            setForm({ ...form, role: r, executorKind: r === "executor" ? form.executorKind : "" });
+          }}
+        >
+          {roleOptions.map((r) => (
+            <option key={r} value={r}>
+              {ROLE_LABELS[r]}
+            </option>
+          ))}
         </Select>
+        {form.role === "executor" && (
+          <Select value={form.executorKind} onChange={(e) => setForm({ ...form, executorKind: e.target.value })}>
+            <option value="">Executor type…</option>
+            {EXECUTOR_KIND_OPTIONS.map((k) => (
+              <option key={k} value={k}>
+                {EXECUTOR_KIND_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        )}
         <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900/60">
           <input
             type="checkbox"
@@ -430,7 +538,7 @@ function EditUserModal({ user, onClose, onSaved }: { user: Member; onClose: () =
         </label>
       </div>
 
-      {isAdmin && (
+      {canSetPassword && (
         <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50/50 p-3 dark:border-zinc-800 dark:bg-zinc-900/40">
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Set new password (optional)</div>
           <p className="mt-1 text-[11px] text-zinc-500">Leave blank to keep the current password.</p>

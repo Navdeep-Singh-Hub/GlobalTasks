@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
+import { formatRoleLine, isManagement } from "@/lib/roles";
 import { api } from "@/lib/api";
 import { Bell, LogOut, UserPlus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -40,6 +41,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [open]);
 
   if (!user) return <>{children}</>;
+  const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "" : "";
 
   return (
     <div className="flex min-h-screen bg-surface-muted dark:bg-[#0b1220]">
@@ -51,6 +53,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               <span className="text-zinc-500">Welcome</span>
               <span className="bg-brand-gradient bg-clip-text text-transparent">Global Child Wellness Centre</span>
             </div>
+            {user.role !== "ceo" && centerName && (
+              <div className="mt-1">
+                <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
+                  Center: {centerName}
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="relative flex items-center gap-2" ref={panelRef}>
@@ -68,21 +77,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               )}
             </button>
 
-            <a
-              href="/admin"
-              className="hidden h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 hover:border-brand-200 hover:text-brand-600 sm:flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-              aria-label="Invite"
-              title="Add user"
-            >
-              <UserPlus className="h-[18px] w-[18px]" />
-            </a>
+            {isManagement(user.role) && (
+              <a
+                href="/admin"
+                className="hidden h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 hover:border-brand-200 hover:text-brand-600 sm:flex dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                aria-label="Admin panel"
+                title="User management"
+              >
+                <UserPlus className="h-[18px] w-[18px]" />
+              </a>
+            )}
 
             <ThemeToggle />
 
             <div className="hidden items-center gap-2 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900 md:flex">
               <div className="text-right leading-tight">
                 <div className="font-semibold">{user.name}</div>
-                <div className="text-[10px] uppercase tracking-wide text-zinc-500">{user.role}</div>
+                <div className="text-[10px] tracking-wide text-zinc-500">{formatRoleLine(user.role, user.executorKind)}</div>
               </div>
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-brand-gradient text-[11px] font-bold text-white shadow-brand">
                 {user.name.charAt(0).toUpperCase()}

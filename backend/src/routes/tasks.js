@@ -1,13 +1,22 @@
 import { Router } from "express";
 import { Task, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from "../models/Task.js";
 import { User } from "../models/User.js";
-import { authRequired, requireRoles } from "../middleware/auth.js";
+import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
+import { isManagement, isCeo } from "../constants/roles.js";
 import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
 import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
+import { TaskEvent } from "../models/TaskEvent.js";
 
 const router = Router();
 router.use(authRequired);
+router.use(requireCenterAssigned);
+
+async function actor(req) {
+  if (req._actor) return req._actor;
+  req._actor = await User.findById(req.userId).select("_id role centerId").lean();
+  return req._actor;
+}
 
 const ADMIN_TASK_FIELDS = new Set([
   "title",
@@ -21,14 +30,19 @@ const ADMIN_TASK_FIELDS = new Set([
   "voiceNoteUrl",
   "tags",
   "project",
+  "departmentId",
+  "centerId",
+  "functionTag",
+  "requiredInputsSchema",
+  "inputPayload",
 ]);
 
 function assertTaskPatchPermission(req, body) {
   for (const k of Object.keys(body)) {
-    if (ADMIN_TASK_FIELDS.has(k) && req.userRole !== "admin") {
-      return "Only admins can edit these task fields";
+    if (ADMIN_TASK_FIELDS.has(k) && !isCeo(req.userRole)) {
+      return "Only the CEO can edit these task fields";
     }
-    if (k === "assignees" && !["admin", "manager"].includes(req.userRole)) {
+    if (k === "assignees" && !isManagement(req.userRole)) {
       return "Insufficient permissions to reassign tasks";
     }
   }
@@ -64,7 +78,7 @@ async function advanceIfRecurring(task, actorId, actorName) {
 }
 
 function buildFilter(query, userId, role) {
-  const { search, status, priority, assignee, taskType, recurring, myTasks, approval } = query;
+  const { search, status, priority, assignee, taskType, recurring, myTasks, approval, departmentId, centerId, functionTag } = query;
   const trashOnly = query.trash === "only" || query.bin === "only";
   /** Default lists active tasks; trash/recycle lists soft-deleted only. */
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
@@ -77,6 +91,9 @@ function buildFilter(query, userId, role) {
   }
   if (priority && priority !== "all") filter.priority = priority;
   if (assignee && assignee !== "all") filter.assignees = assignee;
+  if (departmentId && departmentId !== "all") filter.departmentId = departmentId;
+  if (centerId && centerId !== "all") filter.centerId = centerId;
+  if (functionTag && functionTag !== "all") filter.functionTag = functionTag;
   if (taskType && taskType !== "all") filter.taskType = taskType;
   if (recurring === "true") filter.taskType = { $in: RECURRING };
   if (recurring === "false") filter.taskType = "one_time";
@@ -93,7 +110,7 @@ function buildFilter(query, userId, role) {
   }
 
   if (myTasks === "true") filter.assignees = userId;
-  else if (role === "user") filter.assignees = userId;
+  else if (role === "executor") filter.assignees = userId;
 
   return filter;
 }
@@ -103,7 +120,9 @@ router.get("/meta", (_req, res) => {
 });
 
 router.get("/", async (req, res) => {
+  const me = await actor(req);
   const filter = buildFilter(req.query, req.userId, req.userRole);
+  if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
@@ -112,6 +131,8 @@ router.get("/", async (req, res) => {
       .populate("assignees", "name email avatarUrl role")
       .populate("createdBy", "name email")
       .populate("project", "name")
+      .populate("departmentId", "name code")
+      .populate("centerId", "name code")
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit),
@@ -122,21 +143,48 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/:id", async (req, res) => {
+  const me = await actor(req);
   const task = await Task.findById(req.params.id)
     .populate("assignees", "name email avatarUrl role")
     .populate("createdBy", "name email")
-    .populate("project", "name");
+    .populate("project", "name")
+    .populate("departmentId", "name code")
+    .populate("centerId", "name code");
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+  if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access tasks from your center only" });
+  }
   res.json({ task });
 });
 
 router.post("/", async (req, res, next) => {
   try {
+    const me = await actor(req);
     const payload = { ...req.body, createdBy: req.userId };
     if (!payload.title || !payload.dueDate) return res.status(400).json({ message: "Title and due date required" });
+    if (!payload.departmentId) return res.status(400).json({ message: "Department is required" });
+    if (!payload.functionTag || !String(payload.functionTag).trim()) {
+      return res.status(400).json({ message: "Function tag is required" });
+    }
+    if (!payload.centerId) return res.status(400).json({ message: "Center is required" });
+    if (!isCeo(req.userRole) && String(payload.centerId) !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can only create tasks in your center" });
+    }
     if (!Array.isArray(payload.assignees)) payload.assignees = payload.assignees ? [payload.assignees] : [];
+    if (payload.assignees.length) {
+      const crossCenter = await User.countDocuments({ _id: { $in: payload.assignees }, centerId: { $ne: payload.centerId } });
+      if (crossCenter > 0) return res.status(400).json({ message: "All assignees must belong to the selected center" });
+    }
+    if (!payload.requiredInputsSchema) payload.requiredInputsSchema = { type: "object", properties: {}, required: [] };
+    if (!payload.inputPayload) payload.inputPayload = {};
     if (payload.requiresApproval) payload.approvalStatus = "none";
     const task = await Task.create(payload);
+    await TaskEvent.create({
+      taskId: task._id,
+      actorId: req.userId,
+      eventType: "created",
+      meta: { status: task.status },
+    });
 
     const creator = await User.findById(req.userId).lean();
     if (task.assignees?.length) {
@@ -165,8 +213,12 @@ router.post("/", async (req, res, next) => {
 
 router.patch("/:id", async (req, res, next) => {
   try {
+    const me = await actor(req);
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can edit tasks from your center only" });
+    }
 
     const denied = assertTaskPatchPermission(req, req.body);
     if (denied) return res.status(403).json({ message: denied });
@@ -187,6 +239,11 @@ router.patch("/:id", async (req, res, next) => {
       "voiceNoteUrl",
       "tags",
       "project",
+      "departmentId",
+      "centerId",
+      "functionTag",
+      "requiredInputsSchema",
+      "inputPayload",
     ];
     for (const k of allowedFields) {
       if (k in req.body) {
@@ -201,9 +258,29 @@ router.patch("/:id", async (req, res, next) => {
     if ("taskType" in req.body && req.body.taskType === "one_time") {
       task.recurrence = { forever: true, includeSunday: false, weekOff: "Sunday", endDate: null };
     }
+    if ("centerId" in req.body && !isCeo(req.userRole) && String(req.body.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can only set your center on tasks" });
+    }
+    if (task.assignees?.length) {
+      const crossCenter = await User.countDocuments({ _id: { $in: task.assignees }, centerId: { $ne: task.centerId } });
+      if (crossCenter > 0) return res.status(400).json({ message: "All assignees must belong to task center" });
+    }
 
     const requestedComplete = "status" in req.body && req.body.status === "completed";
-    if (requestedComplete && req.userRole !== "admin") {
+    const requiredFields = Array.isArray(task.requiredInputsSchema?.required) ? task.requiredInputsSchema.required : [];
+    const payloadKeys = task.inputPayload && typeof task.inputPayload === "object" ? Object.keys(task.inputPayload) : [];
+    const filledRequired = requiredFields.filter((k) => payloadKeys.includes(k) && task.inputPayload[k] !== "" && task.inputPayload[k] !== null)
+      .length;
+    task.inputCompletionPercent = requiredFields.length ? Math.round((filledRequired / requiredFields.length) * 100) : 100;
+    if (requestedComplete && requiredFields.length && filledRequired < requiredFields.length) {
+      return res.status(400).json({
+        message: "Required inputs missing",
+        errors: requiredFields
+          .filter((k) => !payloadKeys.includes(k) || task.inputPayload[k] === "" || task.inputPayload[k] === null)
+          .map((field) => ({ field, issue: "required" })),
+      });
+    }
+    if (requestedComplete && !isCeo(req.userRole)) {
       task.status = "awaiting_approval";
       task.approvalStatus = "pending";
       task.requiresApproval = true;
@@ -213,6 +290,12 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     await task.save();
+    await TaskEvent.create({
+      taskId: task._id,
+      actorId: req.userId,
+      eventType: "updated",
+      meta: { status: task.status },
+    });
 
     const justCompleted = prevStatus !== "completed" && task.status === "completed";
     if (justCompleted && !task.requiresApproval) {
@@ -221,10 +304,10 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
-      const admins = await User.find({ role: "admin", active: { $ne: false } }).select("_id").lean();
-      if (admins.length) {
+      const ceos = await User.find({ role: "ceo", active: { $ne: false } }).select("_id").lean();
+      if (ceos.length) {
         await notifyMany(
-          admins.map((a) => a._id),
+          ceos.map((a) => a._id),
           {
             type: "task_approval_request",
             title: "Completion pending approval",
@@ -251,28 +334,30 @@ router.patch("/:id", async (req, res, next) => {
 });
 
 router.post("/bulk", async (req, res) => {
+  const me = await actor(req);
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
+  const scope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
 
   if (action === "delete") {
-    await Task.updateMany({ _id: { $in: ids } }, { $set: { deletedAt: new Date() } });
+    await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: new Date() } });
     return res.json({ ok: true });
   }
   if (action === "hard_delete") {
-    if (req.userRole !== "admin") return res.status(403).json({ message: "Only admins can permanently delete tasks" });
+    if (!isCeo(req.userRole)) return res.status(403).json({ message: "Only the CEO can permanently delete multiple tasks" });
     await Task.deleteMany({ _id: { $in: ids } });
     return res.json({ ok: true });
   }
   if (action === "restore") {
-    await Task.updateMany({ _id: { $in: ids } }, { $set: { deletedAt: null } });
+    await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: null } });
     return res.json({ ok: true });
   }
 
   if (status === "completed") {
     const actor = await User.findById(req.userId).lean();
-    const tasks = await Task.find({ _id: { $in: ids } });
+    const tasks = await Task.find({ _id: { $in: ids }, ...scope });
     for (const t of tasks) {
-      if (req.userRole !== "admin") {
+      if (!isCeo(req.userRole)) {
         t.status = "awaiting_approval";
         t.approvalStatus = "pending";
         t.requiresApproval = true;
@@ -284,11 +369,11 @@ router.post("/bulk", async (req, res) => {
       }
       await t.save();
     }
-    if (req.userRole !== "admin") {
-      const admins = await User.find({ role: "admin", active: { $ne: false } }).select("_id").lean();
-      if (admins.length) {
+    if (!isCeo(req.userRole)) {
+      const ceos = await User.find({ role: "ceo", active: { $ne: false } }).select("_id").lean();
+      if (ceos.length) {
         await notifyMany(
-          admins.map((a) => a._id),
+          ceos.map((a) => a._id),
           {
             type: "task_approval_request",
             title: "Completions pending approval",
@@ -302,12 +387,12 @@ router.post("/bulk", async (req, res) => {
   }
 
   if (status) {
-    await Task.updateMany({ _id: { $in: ids } }, { $set: { status } });
+    await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { status } });
   }
   res.json({ ok: true });
 });
 
-router.post("/:id/approve", requireRoles("admin"), async (req, res) => {
+router.post("/:id/approve", requireRoles("ceo"), async (req, res) => {
   const task = await Task.findById(req.params.id);
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
   task.approvalStatus = "approved";
@@ -316,6 +401,7 @@ router.post("/:id/approve", requireRoles("admin"), async (req, res) => {
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();
+  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: {} });
   const actor = await User.findById(req.userId).lean();
   await advanceIfRecurring(task, req.userId, actor?.name);
   if (task.assignees?.length) {
@@ -329,7 +415,7 @@ router.post("/:id/approve", requireRoles("admin"), async (req, res) => {
   res.json({ task });
 });
 
-router.post("/:id/reject", requireRoles("admin"), async (req, res) => {
+router.post("/:id/reject", requireRoles("ceo"), async (req, res) => {
   try {
     const { mode = "reassign", remarks } = req.body || {};
     if (!["no_action", "reassign"].includes(mode)) {
@@ -352,6 +438,7 @@ router.post("/:id/reject", requireRoles("admin"), async (req, res) => {
       task.requiresApproval = false;
     }
     await task.save();
+    await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "rejected", meta: { mode, remarks: text } });
 
     const actor = await User.findById(req.userId).lean();
     await logActivity({
@@ -387,18 +474,28 @@ router.post("/:id/reject", requireRoles("admin"), async (req, res) => {
   }
 });
 
-router.delete("/:id", requireRoles("admin"), async (req, res) => {
-  await Task.findByIdAndUpdate(req.params.id, { deletedAt: new Date() });
+router.delete("/:id", requireManagement, async (req, res) => {
+  const me = await actor(req);
+  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const task = await Task.findOneAndUpdate(where, { deletedAt: new Date() });
+  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: true } });
   res.json({ ok: true });
 });
 
 router.post("/:id/restore", async (req, res) => {
-  await Task.findByIdAndUpdate(req.params.id, { deletedAt: null });
+  const me = await actor(req);
+  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const task = await Task.findOneAndUpdate(where, { deletedAt: null });
+  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
   res.json({ ok: true });
 });
 
-router.delete("/:id/hard", requireRoles("admin", "manager"), async (req, res) => {
-  await Task.findByIdAndDelete(req.params.id);
+router.delete("/:id/hard", requireRoles("ceo", "centre_head"), async (req, res) => {
+  const me = await actor(req);
+  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const task = await Task.findOne(where);
+  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });
+  await Task.deleteOne(where);
   res.json({ ok: true });
 });
 

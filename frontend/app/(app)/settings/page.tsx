@@ -2,6 +2,7 @@
 
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
+import { formatRoleLine } from "@/lib/roles";
 import { Bell, Settings as SettingsIcon, Shield, UserCircle2 } from "lucide-react";
 
 export default function SettingsPage() {
@@ -16,7 +17,10 @@ export default function SettingsPage() {
         <div className="space-y-1 text-[12.5px] text-zinc-600 dark:text-zinc-300">
           <div><span className="font-semibold">Name:</span> {user?.name}</div>
           <div><span className="font-semibold">Email:</span> {user?.email}</div>
-          <div><span className="font-semibold">Role:</span> <span className="capitalize">{user?.role}</span></div>
+          <div>
+            <span className="font-semibold">Role:</span>{" "}
+            <span>{user ? formatRoleLine(user.role, user.executorKind) : "—"}</span>
+          </div>
         </div>
       ),
     },

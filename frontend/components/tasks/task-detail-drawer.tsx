@@ -4,6 +4,7 @@ import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/ba
 import { Button } from "@/components/ui/button";
 import { api, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { isCeo } from "@/lib/roles";
 import {
   CalendarDays,
   Download,
@@ -74,7 +75,7 @@ export function TaskDetailDrawer({
   onUpdated?: () => void;
 }) {
   const { user: me } = useAuth();
-  const isAdmin = me?.role === "admin";
+  const isAdmin = isCeo(me?.role);
 
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -320,7 +321,7 @@ export function TaskDetailDrawer({
               <>
                 {(task.status === "awaiting_approval" || task.approvalStatus === "pending") && (
                   <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
-                    <strong>Waiting for admin approval.</strong> An admin must approve before this task is marked completed
+                    <strong>Waiting for CEO approval.</strong> The CEO must approve before this task is marked completed
                     {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
                   </div>
                 )}

@@ -115,9 +115,11 @@ export default function LoginPage() {
             <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-brand-700 dark:text-brand-200">Demo accounts</div>
             <div className="flex flex-wrap gap-1.5 text-[11px]">
               {[
-                { email: "admin@globaltasks.demo", label: "Admin" },
-                { email: "manager@globaltasks.demo", label: "Manager" },
-                { email: "user@globaltasks.demo", label: "User" },
+                { email: "admin@globaltasks.demo", label: "CEO" },
+                { email: "manager@globaltasks.demo", label: "Centre Head" },
+                { email: "coordinator@globaltasks.demo", label: "Coordinator" },
+                { email: "supervisor@globaltasks.demo", label: "Supervisor" },
+                { email: "user@globaltasks.demo", label: "Executor" },
               ].map((x) => (
                 <button key={x.email} type="button" onClick={() => quickFill(x.email)} className="rounded-full border border-brand-200 bg-white px-2.5 py-1 font-semibold text-brand-700 hover:bg-brand-100 dark:border-brand-900/40 dark:bg-zinc-900 dark:text-brand-200">
                   {x.label}

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ChevronDown, Users } from "lucide-react";
+import { ROLE_LABELS, USER_ROLES, type Role } from "@/lib/roles";
 
 type Member = {
   user: { _id: string; name: string; email: string; role: string; title?: string };
@@ -12,8 +13,10 @@ type Member = {
   completion: number;
 };
 
+type FilterKey = "all" | Role;
+
 export function TeamFocus({ members }: { members: Member[] }) {
-  const [filter, setFilter] = useState<"all" | "admin" | "manager" | "user">("all");
+  const [filter, setFilter] = useState<FilterKey>("all");
   const [open, setOpen] = useState(false);
 
   const list = useMemo(() => members.filter((m) => filter === "all" || m.user.role === filter), [members, filter]);
@@ -35,18 +38,18 @@ export function TeamFocus({ members }: { members: Member[] }) {
             onClick={() => setOpen((v) => !v)}
             className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold capitalize dark:border-zinc-700 dark:bg-zinc-900"
           >
-            <Users className="h-3.5 w-3.5" /> {filter === "all" ? "All team" : filter}
+            <Users className="h-3.5 w-3.5" /> {filter === "all" ? "All team" : ROLE_LABELS[filter]}
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
           {open && (
-            <div className="absolute right-0 top-11 z-20 w-36 overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-              {(["all", "admin", "manager", "user"] as const).map((k) => (
+            <div className="absolute right-0 top-11 z-20 min-w-[10rem] overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+              {(["all", ...USER_ROLES] as const).map((k) => (
                 <button
                   key={k}
                   onClick={() => { setFilter(k); setOpen(false); }}
-                  className="flex w-full px-3 py-2 text-left text-xs font-medium capitalize hover:bg-zinc-50 dark:hover:bg-zinc-800"
+                  className="flex w-full px-3 py-2 text-left text-xs font-medium hover:bg-zinc-50 dark:hover:bg-zinc-800"
                 >
-                  {k === "all" ? "All team" : k}
+                  {k === "all" ? "All team" : ROLE_LABELS[k]}
                 </button>
               ))}
             </div>

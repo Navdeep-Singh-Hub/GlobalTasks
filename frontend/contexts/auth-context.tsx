@@ -2,13 +2,16 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { api, getToken, setToken } from "@/lib/api";
+import type { Role } from "@/lib/roles";
 
-export type Role = "admin" | "manager" | "user";
+export type { Role };
 export type User = {
   _id: string;
   email: string;
   name: string;
   role: Role;
+  executorKind?: string;
+  centerId?: { _id: string; name?: string; code?: string } | string | null;
   title?: string;
   avatarUrl?: string;
   phone?: string;
@@ -21,7 +24,7 @@ type AuthState = {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (payload: { email: string; password: string; name: string; role?: Role }) => Promise<void>;
+  register: (payload: { email: string; password: string; name: string }) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 };
@@ -61,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(data.user);
   }, []);
 
-  const register = useCallback(async (payload: { email: string; password: string; name: string; role?: Role }) => {
+  const register = useCallback(async (payload: { email: string; password: string; name: string }) => {
     const data = await api<{ token: string; user: User }>("/auth/register", {
       method: "POST",
       body: JSON.stringify(payload),

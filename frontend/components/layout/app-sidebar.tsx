@@ -1,7 +1,9 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { useAuth, type Role } from "@/contexts/auth-context";
+import { useAuth } from "@/contexts/auth-context";
+import type { Role } from "@/lib/roles";
+import { NAV_ALL, NAV_CEO_ONLY, NAV_MANAGEMENT, formatRoleLine } from "@/lib/roles";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -14,6 +16,7 @@ import {
   MessageCircle,
   Trash2,
   Zap,
+  Activity,
   Plug,
   ShieldCheck,
   Settings,
@@ -35,21 +38,22 @@ type NavItem = {
 };
 
 const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "manager", "user"] },
-  { href: "/pending-single", label: "Pending Single", icon: CheckSquare, roles: ["admin", "manager", "user"] },
-  { href: "/pending-recurring", label: "Pending Recurring", icon: Repeat, roles: ["admin", "manager", "user"], accent: "count" },
-  { href: "/master-single", label: "Master Single", icon: Package, roles: ["admin", "manager"] },
-  { href: "/master-recurring", label: "Master Recurring", icon: History, roles: ["admin", "manager"] },
-  { href: "/assign-task", label: "Assign Task", icon: UserPlus, roles: ["admin", "manager"] },
-  { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: ["admin"] },
-  { href: "/task-shift", label: "Task Shift", icon: Shuffle, roles: ["admin", "manager"] },
-  { href: "/chat-support", label: "Chat Support", icon: MessageCircle, roles: ["admin", "manager", "user"] },
-  { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: ["admin", "manager"] },
-  { href: "/performance", label: "Performance", icon: Zap, roles: ["admin", "manager"] },
-  { href: "/integrations", label: "Integrations", icon: Plug, roles: ["admin"], badge: "NEW", accent: "new" },
-  { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: ["admin"] },
-  { href: "/settings", label: "Settings", icon: Settings, roles: ["admin", "manager", "user"] },
-  { href: "/help", label: "Help & Support", icon: LifeBuoy, roles: ["admin", "manager", "user"] },
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: NAV_ALL },
+  { href: "/pending-single", label: "Pending Single", icon: CheckSquare, roles: NAV_ALL },
+  { href: "/pending-recurring", label: "Pending Recurring", icon: Repeat, roles: NAV_ALL, accent: "count" },
+  { href: "/master-single", label: "Master Single", icon: Package, roles: NAV_MANAGEMENT },
+  { href: "/master-recurring", label: "Master Recurring", icon: History, roles: NAV_MANAGEMENT },
+  { href: "/assign-task", label: "Assign Task", icon: UserPlus, roles: NAV_MANAGEMENT },
+  { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: NAV_CEO_ONLY },
+  { href: "/task-shift", label: "Task Shift", icon: Shuffle, roles: NAV_MANAGEMENT },
+  { href: "/chat-support", label: "Chat Support", icon: MessageCircle, roles: NAV_ALL },
+  { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },
+  { href: "/performance", label: "Performance", icon: Zap, roles: NAV_MANAGEMENT },
+  { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_MANAGEMENT },
+  { href: "/integrations", label: "Integrations", icon: Plug, roles: NAV_CEO_ONLY, badge: "NEW", accent: "new" },
+  { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: NAV_MANAGEMENT },
+  { href: "/settings", label: "Settings", icon: Settings, roles: NAV_ALL },
+  { href: "/help", label: "Help & Support", icon: LifeBuoy, roles: NAV_ALL },
 ];
 
 export function AppSidebar() {
@@ -84,6 +88,7 @@ export function AppSidebar() {
   if (!user) return null;
   const role = user.role;
   const items = NAV.filter((n) => n.roles.includes(role));
+  const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "Center" : "";
 
   return (
     <aside
@@ -175,7 +180,12 @@ export function AppSidebar() {
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <div className="truncate text-xs font-semibold">{user.name}</div>
-              <div className="text-[10px] capitalize text-zinc-500">{user.role}</div>
+              <div className="text-[10px] text-zinc-500">{formatRoleLine(user.role, user.executorKind)}</div>
+              {role !== "ceo" && centerName && (
+                <div className="mt-1 inline-flex rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
+                  {centerName}
+                </div>
+              )}
             </div>
           )}
         </div>

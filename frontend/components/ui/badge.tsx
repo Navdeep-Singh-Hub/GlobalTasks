@@ -75,9 +75,20 @@ export function cadenceTone(c?: string): Tone {
 
 export function roleTone(r?: string): Tone {
   switch (r) {
-    case "admin": return "rose";
-    case "manager": return "amber";
-    case "user": return "emerald";
-    default: return "zinc";
+    case "ceo":
+    case "admin":
+      return "rose";
+    case "centre_head":
+    case "manager":
+      return "amber";
+    case "coordinator":
+      return "violet";
+    case "supervisor":
+      return "sky";
+    case "executor":
+    case "user":
+      return "emerald";
+    default:
+      return "zinc";
   }
 }
