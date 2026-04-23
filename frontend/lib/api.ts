@@ -1,5 +1,15 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api";
-export const API_ORIGIN = API_BASE.replace(/\/api\/?$/, "");
+function normalizeNextPublicApiUrl(input: string): string {
+  const raw = (input || "").trim();
+  if (!raw) return "http://localhost:5000/api";
+  // Remove trailing slashes
+  let s = raw.replace(/\/+$/g, "");
+  // If user points to bare host (Render), append /api
+  if (!/\/api$/i.test(s)) s = `${s}/api`;
+  return s;
+}
+
+const API_BASE = normalizeNextPublicApiUrl(process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api");
+export const API_ORIGIN = API_BASE.replace(/\/api\/?$/i, "");
 
 export function assetUrl(relOrAbs: string): string {
   if (!relOrAbs) return "";

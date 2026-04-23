@@ -29,9 +29,35 @@ const io = setupSocket(server);
 setSocket(io);
 
 const PORT = process.env.PORT || 5000;
-const origins = ["http://localhost:3000", "http://127.0.0.1:3000", process.env.CLIENT_ORIGIN || "http://localhost:3000"];
+const defaultOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+const envOrigins = [
+  ...(process.env.CLIENT_ORIGINS || "")
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean)
+    .map((o) => o.replace(/\/+$/g, "")),
+  (process.env.CLIENT_ORIGIN || "").trim().replace(/\/+$/g, ""),
+].filter(Boolean);
+const allowedOrigins = new Set([...defaultOrigins, ...envOrigins]);
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  const o = String(origin).replace(/\/+$/g, "");
+  if (allowedOrigins.has(o)) return true;
+  // allow optional trailing slash mismatch: https://foo/ vs https://foo
+  if (allowedOrigins.has(`${o}/`)) return true;
+  if (String(origin).endsWith("/") && allowedOrigins.has(String(origin).replace(/\/+$/g, ""))) return true;
+  return false;
+}
 
-app.use(cors({ origin: origins, credentials: true }));
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (isAllowedOrigin(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked for origin: ${origin || "none"}`));
+    },
+    credentials: true,
+  })
+);
 app.use(express.json({ limit: "2mb" }));
 
 const UPLOAD_DIR = path.resolve(process.cwd(), "uploads");
