@@ -153,7 +153,7 @@ export default function TherapistPerformancePage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div>
         <div className="chip border border-zinc-200 bg-white text-zinc-500">
           <Activity className="h-3 w-3" /> Therapist tracker
@@ -162,8 +162,8 @@ export default function TherapistPerformancePage() {
         <p className="mt-1 text-sm text-zinc-500">Center-wise therapist measurements and date-wise session tracking for upper-level roles.</p>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="grid gap-3 md:grid-cols-4">
+      <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Therapist</span>
             <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>
@@ -202,12 +202,12 @@ export default function TherapistPerformancePage() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Therapist Measurements</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Showing {rows.length} of {rowsTotal} therapist records.
         </p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[860px] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -249,23 +249,29 @@ export default function TherapistPerformancePage() {
             </tbody>
           </table>
         </div>
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+          <Button type="button" variant="outline" className="w-full sm:w-auto" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
             Previous
           </Button>
-          <span className="text-xs text-zinc-500">Page {page}</span>
-          <Button type="button" variant="outline" disabled={page * 25 >= rowsTotal} onClick={() => setPage((p) => p + 1)}>
+          <span className="text-center text-xs text-zinc-500 sm:px-2">Page {page}</span>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={page * 25 >= rowsTotal}
+            onClick={() => setPage((p) => p + 1)}
+          >
             Next
           </Button>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+      <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Showing {sessions.length} of {sessionsTotal} session entries.
         </p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[920px] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -312,14 +318,21 @@ export default function TherapistPerformancePage() {
             </tbody>
           </table>
         </div>
-        <div className="mt-3 flex items-center justify-end gap-2">
-          <Button type="button" variant="outline" disabled={sessionsPage <= 1} onClick={() => setSessionsPage((p) => Math.max(1, p - 1))}>
-            Previous
-          </Button>
-          <span className="text-xs text-zinc-500">Page {sessionsPage}</span>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
           <Button
             type="button"
             variant="outline"
+            className="w-full sm:w-auto"
+            disabled={sessionsPage <= 1}
+            onClick={() => setSessionsPage((p) => Math.max(1, p - 1))}
+          >
+            Previous
+          </Button>
+          <span className="text-center text-xs text-zinc-500 sm:px-2">Page {sessionsPage}</span>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
             disabled={sessionsPage * 30 >= sessionsTotal}
             onClick={() => setSessionsPage((p) => p + 1)}
           >
@@ -329,7 +342,7 @@ export default function TherapistPerformancePage() {
       </div>
 
       {canMark && (
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
           <h2 className="text-lg font-bold">Give Supervisor Marks</h2>
           <div className="mt-3 space-y-3">
             {sessions.slice(0, 30).map((s) => (
@@ -348,7 +361,7 @@ export default function TherapistPerformancePage() {
                   </div>
                   <div className="text-xs text-zinc-500">Current marks: {s.supervisorScore || 0}/5</div>
                 </div>
-                <div className="mt-3 grid gap-2 md:grid-cols-[120px_1fr_auto]">
+                <div className="mt-3 grid gap-2 sm:grid-cols-[120px_1fr] lg:grid-cols-[120px_1fr_auto]">
                   <label className="space-y-1">
                     <span className="text-xs font-semibold text-zinc-500">Score /5</span>
                     <Input
@@ -372,8 +385,8 @@ export default function TherapistPerformancePage() {
                       rows={2}
                     />
                   </label>
-                  <div className="flex items-end">
-                    <Button type="button" onClick={() => void saveMarks(s._id)} className="gap-2">
+                  <div className="flex items-end sm:col-span-2 lg:col-span-1">
+                    <Button type="button" onClick={() => void saveMarks(s._id)} className="w-full gap-2 sm:w-auto">
                       <Star className="h-4 w-4" /> Save marks
                     </Button>
                   </div>

@@ -45,7 +45,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-surface-muted px-4 py-12 dark:bg-[#0b1220]">
+    <div className="safe-x safe-b relative flex min-h-[100dvh] min-h-screen items-center justify-center overflow-x-hidden bg-surface-muted px-4 py-10 sm:py-12 dark:bg-[#0b1220]">
       <div className="pointer-events-none absolute -left-24 top-0 h-96 w-96 rounded-full bg-brand-gradient-soft blur-3xl" />
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-accent-cyan/10 blur-3xl" />
 
@@ -53,7 +53,7 @@ export default function LoginPage() {
         initial={{ opacity: 0, y: 14 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="relative grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-zinc-200/80 bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.18)] md:grid-cols-[1.05fr_1fr] dark:border-zinc-800 dark:bg-zinc-950"
+        className="relative grid w-full max-w-[min(100%,1100px)] overflow-hidden rounded-[22px] border border-zinc-200/80 bg-white shadow-[0_30px_80px_-20px_rgba(15,23,42,0.18)] sm:rounded-[28px] md:grid-cols-[1.05fr_1fr] dark:border-zinc-800 dark:bg-zinc-950"
       >
         <div className="relative hidden overflow-hidden bg-brand-gradient p-10 text-white md:block">
           <div className="absolute -left-16 -top-16 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
@@ -79,7 +79,7 @@ export default function LoginPage() {
           </div>
         </div>
 
-        <div className="p-8 md:p-10">
+        <div className="p-6 sm:p-8 md:p-10">
           <div>
             <h2 className="text-xl font-bold tracking-tight">Welcome back</h2>
             <p className="mt-1 text-sm text-zinc-500">Sign in to continue to your workspace.</p>

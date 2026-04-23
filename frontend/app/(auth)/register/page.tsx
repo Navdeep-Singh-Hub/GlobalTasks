@@ -41,11 +41,11 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-surface-muted px-4 py-12 dark:bg-[#0b1220]">
+    <div className="safe-x safe-b relative flex min-h-[100dvh] min-h-screen items-center justify-center overflow-x-hidden bg-surface-muted px-4 py-10 sm:py-12 dark:bg-[#0b1220]">
       <div className="pointer-events-none absolute -left-24 top-0 h-96 w-96 rounded-full bg-brand-gradient-soft blur-3xl" />
       <div className="pointer-events-none absolute -right-24 bottom-0 h-80 w-80 rounded-full bg-accent-cyan/10 blur-3xl" />
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md">
-        <div className="rounded-[24px] border border-zinc-200/80 bg-white p-8 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.18)] dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="rounded-[22px] border border-zinc-200/80 bg-white p-6 shadow-[0_30px_80px_-20px_rgba(15,23,42,0.18)] sm:rounded-[24px] sm:p-8 dark:border-zinc-800 dark:bg-zinc-950">
           <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-brand-600">
             <Sparkles className="h-3 w-3" /> GlobalTasks
           </div>

@@ -38,14 +38,14 @@ export default function RecycleBinPage() {
           <div className="p-10 text-center text-sm text-zinc-500">Bin is empty.</div>
         ) : (
           items.map((t) => (
-            <div key={t._id} className="flex items-center justify-between rounded-xl border border-zinc-100 p-3 text-sm dark:border-zinc-800">
-              <div>
+            <div key={t._id} className="flex flex-col gap-3 rounded-xl border border-zinc-100 p-3 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
+              <div className="min-w-0">
                 <div className="font-semibold">{t.title}</div>
                 <div className="text-xs text-zinc-500">Deleted {t.deletedAt ? new Date(t.deletedAt).toLocaleString() : ""}</div>
               </div>
-              <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={async () => { await api(`/tasks/${t._id}/restore`, { method: "POST" }); load(); }}>Restore</Button>
-                <Button size="sm" variant="danger" onClick={async () => { await api(`/tasks/${t._id}/hard`, { method: "DELETE" }); load(); }}>Delete forever</Button>
+              <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={async () => { await api(`/tasks/${t._id}/restore`, { method: "POST" }); load(); }}>Restore</Button>
+                <Button size="sm" variant="danger" className="w-full sm:w-auto" onClick={async () => { await api(`/tasks/${t._id}/hard`, { method: "DELETE" }); load(); }}>Delete forever</Button>
               </div>
             </div>
           ))

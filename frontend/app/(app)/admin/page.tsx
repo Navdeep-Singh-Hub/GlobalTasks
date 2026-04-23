@@ -124,27 +124,31 @@ export default function AdminPanelPage() {
   };
 
   return (
-    <div className="space-y-5">
-      <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+    <div className="space-y-4 sm:space-y-5">
+      <div className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
             <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-brand-gradient text-white shadow-brand">
               <ShieldCheck className="h-5 w-5" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">Admin Panel</h1>
+              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Admin Panel</h1>
               <p className="text-xs text-zinc-500">Govern workspace access, roles and permissions.</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" className="gap-2"><CreditCard className="h-4 w-4" /> View Plan</Button>
-            <Button variant="gradient" className="gap-2" onClick={() => setCreateOpen(true)}><UserPlus className="h-4 w-4" /> Create User</Button>
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
+            <Button variant="outline" className="w-full gap-2 sm:w-auto">
+              <CreditCard className="h-4 w-4" /> View Plan
+            </Button>
+            <Button variant="gradient" className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
+              <UserPlus className="h-4 w-4" /> Create User
+            </Button>
           </div>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="grid gap-3 md:grid-cols-4">
+      <div className="rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
             <Input placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
@@ -169,15 +173,15 @@ export default function AdminPanelPage() {
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="flex items-center justify-between border-b border-zinc-100 p-5 dark:border-zinc-800">
+      <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-zinc-800 sm:p-5">
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-brand-500" />
             <h2 className="text-sm font-bold">User Management ({members.length})</h2>
           </div>
           <Filter className="h-4 w-4 text-zinc-400" />
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[960px] text-[12.5px]">
             <thead className="bg-zinc-50/70 text-[10.5px] uppercase tracking-[0.08em] text-zinc-500 dark:bg-zinc-900">
               <tr>

@@ -23,6 +23,7 @@ import {
   LifeBuoy,
   ChevronLeft,
   ChevronRight,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -56,20 +57,30 @@ const NAV: NavItem[] = [
   { href: "/help", label: "Help & Support", icon: LifeBuoy, roles: NAV_ALL },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({
+  variant = "desktop",
+  mobileOpen = false,
+  onCloseMobile,
+}: {
+  variant?: "desktop" | "mobile";
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}) {
   const { user } = useAuth();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [pendingCount, setPendingCount] = useState<number | null>(null);
 
   useEffect(() => {
+    if (variant === "mobile") return;
     const saved = typeof window !== "undefined" ? localStorage.getItem("sidebar_collapsed") : null;
     if (saved) setCollapsed(saved === "1");
-  }, []);
+  }, [variant]);
 
   useEffect(() => {
+    if (variant === "mobile") return;
     if (typeof window !== "undefined") localStorage.setItem("sidebar_collapsed", collapsed ? "1" : "0");
-  }, [collapsed]);
+  }, [collapsed, variant]);
 
   useEffect(() => {
     let cancel = false;
@@ -90,16 +101,17 @@ export function AppSidebar() {
   const items = NAV.filter((n) => n.roles.includes(role));
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "Center" : "";
 
-  return (
+  const shell = (
     <aside
       className={cn(
         "relative flex shrink-0 flex-col border-r border-zinc-200 bg-white transition-all duration-200 dark:border-zinc-800 dark:bg-zinc-950",
-        collapsed ? "w-[68px]" : "w-[236px]"
+        variant === "desktop" && (collapsed ? "w-[68px]" : "w-[236px]"),
+        variant === "mobile" && "h-full w-[min(88vw,300px)] border-r-0 shadow-2xl"
       )}
     >
       <div className="flex h-16 items-center justify-between border-b border-zinc-100 px-4 dark:border-zinc-800">
         {!collapsed ? (
-          <Link href="/dashboard" className="flex items-center gap-2.5">
+          <Link href="/dashboard" className="flex items-center gap-2.5" onClick={() => onCloseMobile?.()}>
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-[13px] font-black tracking-tight text-white shadow-brand">
               GT
             </div>
@@ -109,24 +121,39 @@ export function AppSidebar() {
             </div>
           </Link>
         ) : (
-          <Link href="/dashboard" className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-[13px] font-black text-white shadow-brand">
+          <Link
+            href="/dashboard"
+            className="mx-auto flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient text-[13px] font-black text-white shadow-brand"
+            onClick={() => onCloseMobile?.()}
+          >
             GT
           </Link>
         )}
-        <button
-          type="button"
-          onClick={() => setCollapsed((v) => !v)}
-          className={cn(
-            "flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-sm hover:text-brand-600 dark:border-zinc-700 dark:bg-zinc-900",
-            collapsed && "absolute -right-3 top-6"
-          )}
-          aria-label="Toggle sidebar"
-        >
-          {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
-        </button>
+        {variant === "mobile" ? (
+          <button
+            type="button"
+            onClick={() => onCloseMobile?.()}
+            className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-600 hover:text-brand-600 dark:border-zinc-700 dark:bg-zinc-900"
+            aria-label="Close menu"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            className={cn(
+              "flex h-7 w-7 items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 shadow-sm hover:text-brand-600 dark:border-zinc-700 dark:bg-zinc-900",
+              collapsed && "absolute -right-3 top-6"
+            )}
+            aria-label="Toggle sidebar"
+          >
+            {collapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronLeft className="h-3.5 w-3.5" />}
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 py-4">
+      <nav className="flex-1 space-y-0.5 overflow-y-auto overscroll-y-contain px-2 py-4">
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
@@ -135,12 +162,13 @@ export function AppSidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={() => onCloseMobile?.()}
               className={cn(
                 "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
                 active
                   ? "bg-brand-gradient text-white shadow-brand"
                   : "text-zinc-600 hover:bg-brand-50 hover:text-brand-700 dark:text-zinc-300 dark:hover:bg-zinc-800/80 dark:hover:text-white",
-                collapsed && "justify-center px-2"
+                collapsed && variant === "desktop" && "justify-center px-2"
               )}
               title={collapsed ? item.label : undefined}
             >
@@ -167,11 +195,11 @@ export function AppSidebar() {
         })}
       </nav>
 
-      <div className={cn("border-t border-zinc-100 p-3 dark:border-zinc-800", collapsed && "px-2")}>
+      <div className={cn("border-t border-zinc-100 p-3 dark:border-zinc-800", collapsed && variant === "desktop" && "px-2")}>
         <div
           className={cn(
             "flex items-center gap-3 rounded-xl bg-gradient-to-r from-brand-50 to-accent-cyan/10 p-2.5 dark:from-brand-900/20 dark:to-accent-cyan/10",
-            collapsed && "justify-center bg-transparent p-0"
+            collapsed && variant === "desktop" && "justify-center bg-transparent p-0"
           )}
         >
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-gradient text-xs font-bold text-white shadow-brand">
@@ -192,4 +220,21 @@ export function AppSidebar() {
       </div>
     </aside>
   );
+
+  if (variant === "mobile") {
+    if (!mobileOpen) return null;
+    return (
+      <div className="fixed inset-0 z-50 lg:hidden">
+        <button
+          type="button"
+          className="absolute inset-0 bg-black/40 backdrop-blur-[1px]"
+          aria-label="Close navigation overlay"
+          onClick={() => onCloseMobile?.()}
+        />
+        <div className="absolute inset-y-0 left-0 flex">{shell}</div>
+      </div>
+    );
+  }
+
+  return <div className="hidden lg:flex">{shell}</div>;
 }

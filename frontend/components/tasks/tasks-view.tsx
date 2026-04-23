@@ -171,6 +171,15 @@ export function TasksView({
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      if (window.matchMedia("(max-width: 767px)").matches) setView("cards");
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const idList = useMemo(() => tasks.map((t) => t._id), [tasks]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
@@ -194,15 +203,16 @@ export function TasksView({
   const displayedId = (i: number) => 1200 + i;
 
   return (
-    <div className="space-y-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+    <div className="space-y-4 sm:space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="chip border border-zinc-200 bg-white text-zinc-500">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
             {preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"} · Admin view
           </div>
-          <h1 className="mt-3 text-2xl font-bold tracking-tight">
-            {title} <span className="text-sm font-normal text-brand-600">(Admin View - All Team)</span>
+          <h1 className="mt-3 text-xl font-bold tracking-tight sm:text-2xl">
+            {title}{" "}
+            <span className="hidden font-normal text-brand-600 sm:inline sm:text-sm">(Admin View - All Team)</span>
           </h1>
           <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
           <p className="mt-1 text-[12px] text-zinc-500">
@@ -210,11 +220,11 @@ export function TasksView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => setShowFilters((v) => !v)}>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setShowFilters((v) => !v)}>
             <Filter className="h-4 w-4" /> {showFilters ? "Hide Filters" : "Show Filters"}
           </Button>
-          <div className="inline-flex rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950">
+          <div className="inline-flex w-full rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950 sm:w-auto">
             <button
               type="button"
               onClick={() => setView("cards")}
@@ -234,9 +244,9 @@ export function TasksView({
       </div>
 
       {showFilters && (
-        <div className="animate-fade-in rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="grid gap-3 md:grid-cols-4">
-            <div className="relative md:col-span-2">
+        <div className="animate-fade-in rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-4">
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+            <div className="relative sm:col-span-2">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
               <Input placeholder="Search tasks, description…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
             </div>
@@ -260,7 +270,7 @@ export function TasksView({
                 {Object.entries(CADENCE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>
             )}
-            <div className="flex items-center gap-2 md:col-span-3">
+            <div className="flex flex-wrap items-center gap-2 sm:col-span-2 md:col-span-3">
               {selected.length > 0 && (
                 <>
                   <span className="text-xs font-semibold text-zinc-500">{selected.length} selected</span>
@@ -278,8 +288,8 @@ export function TasksView({
       {tasks.length === 0 ? (
         <EmptyState loading={loading} />
       ) : view === "table" ? (
-        <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="overflow-x-auto">
+        <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
+          <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
             <table
               className={cn(
                 "w-full text-[12.5px]",
@@ -390,12 +400,12 @@ export function TasksView({
                       </td>
                       <td className="p-3 text-zinc-700 dark:text-zinc-200">{new Date(t.dueDate).toLocaleDateString()}</td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-0.5">
+                        <div className="flex items-center justify-end gap-0.5 sm:gap-0.5">
                           <button
                             type="button"
                             onClick={() => setDetailId(t._id)}
                             title="View details"
-                            className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 dark:hover:bg-zinc-800"
+                            className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
                           >
                             <Eye className="h-3.5 w-3.5" />
                           </button>
@@ -405,7 +415,7 @@ export function TasksView({
                                 type="button"
                                 onClick={() => void approveTask(t._id)}
                                 title="Approve & complete"
-                                className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-400"
+                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600 sm:h-7 sm:w-7 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-400"
                               >
                                 <CheckCircle2 className="h-3.5 w-3.5" />
                               </button>
@@ -413,7 +423,7 @@ export function TasksView({
                                 type="button"
                                 onClick={() => setRejectFor({ id: t._id, title: t.title })}
                                 title="Reject…"
-                                className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-rose-50 hover:text-rose-600 sm:h-7 sm:w-7 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
                               >
                                 <XCircle className="h-3.5 w-3.5" />
                               </button>
@@ -425,7 +435,7 @@ export function TasksView({
                                 type="button"
                                 onClick={() => setEditId(t._id)}
                                 title="Edit task"
-                                className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 dark:hover:bg-zinc-800"
+                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                               </button>
@@ -433,7 +443,7 @@ export function TasksView({
                                 type="button"
                                 onClick={() => openDeleteSingle(t._id)}
                                 title="Delete task"
-                                className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 dark:hover:bg-zinc-800"
+                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
                               </button>
@@ -449,7 +459,7 @@ export function TasksView({
           </div>
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {tasks.map((t, idx) => (
             <div
               key={t._id}
@@ -592,7 +602,7 @@ export function TasksView({
 
 function EmptyState({ loading }: { loading: boolean }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-zinc-300 bg-white p-16 text-center shadow-card dark:border-zinc-700 dark:bg-zinc-950">
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white p-10 text-center shadow-card dark:border-zinc-700 dark:bg-zinc-950 sm:rounded-2xl sm:p-16">
       <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
         {loading ? <Layers className="h-6 w-6 text-zinc-400 animate-pulse" /> : <Inbox className="h-6 w-6 text-zinc-400" />}
       </div>

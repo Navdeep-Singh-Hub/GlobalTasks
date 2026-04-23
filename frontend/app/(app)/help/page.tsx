@@ -17,7 +17,7 @@ export default function HelpPage() {
         <h1 className="mt-3 text-2xl font-bold tracking-tight">Help & support</h1>
         <p className="mt-1 text-sm text-zinc-500">Product tours, patterns, and support escalation.</p>
       </div>
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
         {guides.map((g) => (
           <div key={g.title} className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gradient-soft text-brand-600">

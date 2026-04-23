@@ -18,11 +18,14 @@ export default function IntegrationsPage() {
         <div className="chip border border-zinc-200 bg-white text-zinc-500">
           <Plug className="h-3 w-3" /> Connect
         </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Integrations <span className="ml-2 rounded-full bg-rose-500 px-2 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wider text-white">New</span></h1>
+        <h1 className="mt-3 flex flex-col gap-2 text-2xl font-bold tracking-tight sm:flex-row sm:flex-wrap sm:items-center">
+          <span>Integrations</span>
+          <span className="w-fit rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">New</span>
+        </h1>
         <p className="mt-1 text-sm text-zinc-500">Ship tasks into the tools your team already uses.</p>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {INTEGRATIONS.map((it) => (
           <div key={it.name} className="group rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card transition-all hover:-translate-y-0.5 hover:shadow-soft dark:border-zinc-800 dark:bg-zinc-950">
             <div className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br text-white ${it.color}`}>

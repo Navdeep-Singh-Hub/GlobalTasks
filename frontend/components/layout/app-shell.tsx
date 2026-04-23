@@ -5,14 +5,17 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
 import { formatRoleLine, isManagement } from "@/lib/roles";
 import { api } from "@/lib/api";
-import { Bell, LogOut, UserPlus } from "lucide-react";
+import { Bell, LogOut, Menu, UserPlus } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 type Notif = { _id: string; title: string; message: string; read: boolean; createdAt: string };
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notif[]>([]);
   const [unread, setUnread] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -32,37 +35,67 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   useEffect(() => {
-    const onDoc = (e: MouseEvent) => {
+    const onDoc = (e: MouseEvent | TouchEvent) => {
       if (!panelRef.current) return;
       if (!panelRef.current.contains(e.target as Node)) setOpen(false);
     };
-    if (open) document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    if (open) {
+      document.addEventListener("mousedown", onDoc);
+      document.addEventListener("touchstart", onDoc, { passive: true });
+    }
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+    };
   }, [open]);
+
+  useEffect(() => {
+    setNavOpen(false);
+    setOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [navOpen]);
 
   if (!user) return <>{children}</>;
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "" : "";
 
   return (
-    <div className="flex min-h-screen bg-surface-muted dark:bg-[#0b1220]">
-      <AppSidebar />
+    <div className="flex min-h-[100dvh] min-h-screen bg-surface-muted dark:bg-[#0b1220]">
+      <AppSidebar variant="desktop" />
+      <AppSidebar variant="mobile" mobileOpen={navOpen} onCloseMobile={() => setNavOpen(false)} />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-zinc-200 bg-white/80 px-5 backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/75">
-          <div className="flex-1 text-center">
-            <div className="inline-flex items-center gap-2 text-[15px] font-semibold tracking-tight">
+        <header className="safe-x sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-zinc-200 bg-white/80 py-2 pl-2 pr-3 backdrop-blur sm:gap-3 sm:px-5 dark:border-zinc-800 dark:bg-zinc-950/75">
+          <button
+            type="button"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:border-brand-200 hover:text-brand-600 lg:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            aria-label="Open navigation"
+            onClick={() => setNavOpen(true)}
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+
+          <div className="min-w-0 flex-1 text-center">
+            <div className="mx-auto inline-flex max-w-full flex-wrap items-center justify-center gap-x-2 gap-y-1 text-[13px] font-semibold tracking-tight sm:text-[15px]">
               <span className="text-zinc-500">Welcome</span>
               <span className="bg-brand-gradient bg-clip-text text-transparent">Global Child Wellness Centre</span>
             </div>
             {user.role !== "ceo" && centerName && (
               <div className="mt-1">
-                <span className="inline-flex rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
+                <span className="inline-flex max-w-full truncate rounded-full border border-zinc-200 bg-white px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
                   Center: {centerName}
                 </span>
               </div>
             )}
           </div>
 
-          <div className="relative flex items-center gap-2" ref={panelRef}>
+          <div className="relative flex shrink-0 items-center gap-2" ref={panelRef}>
             <button
               type="button"
               onClick={() => setOpen((v) => !v)}
@@ -111,7 +144,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             {open && (
-              <div className="absolute right-0 top-12 z-40 w-[360px] animate-pop-in rounded-2xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="absolute right-0 top-12 z-40 w-[min(calc(100vw-2rem),360px)] max-w-[360px] animate-pop-in rounded-2xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
                 <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-zinc-800">
                   <div>
                     <div className="text-sm font-semibold">Notifications</div>
@@ -157,7 +190,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-5 py-6 lg:px-8">
+        <div className="safe-x safe-b flex-1 overflow-y-auto overscroll-y-contain px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1400px] animate-fade-in">{children}</div>
         </div>
       </main>

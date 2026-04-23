@@ -45,20 +45,21 @@ export default function TaskShiftPage() {
         <p className="mt-1 text-sm text-zinc-500">Bulk-reassign pending tasks from one team member to another.</p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="min-w-[220px]">
+      <div className="flex flex-col gap-3 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:flex-row sm:flex-wrap sm:items-center sm:rounded-2xl">
+        <div className="w-full min-w-0 sm:min-w-[220px] sm:max-w-xs sm:flex-1">
           <Select value={target} onChange={(e) => setTarget(e.target.value)}>
             <option value="">Shift to user…</option>
             {users.map((u) => <option key={u._id} value={u._id}>{u.name}</option>)}
           </Select>
         </div>
-        <Button variant="gradient" onClick={shift} disabled={!selected.length || !target}>
+        <Button variant="gradient" className="w-full sm:w-auto" onClick={shift} disabled={!selected.length || !target}>
           Shift {selected.length} task{selected.length === 1 ? "" : "s"}
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <table className="w-full text-sm">
+      <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
+        <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <table className="w-full min-w-[640px] text-sm">
           <thead className="bg-zinc-50/70 text-[10.5px] uppercase tracking-[0.08em] text-zinc-500 dark:bg-zinc-900">
             <tr>
               <th className="w-10 p-3"></th>
@@ -87,6 +88,7 @@ export default function TaskShiftPage() {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

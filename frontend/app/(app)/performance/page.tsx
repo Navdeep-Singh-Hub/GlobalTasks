@@ -1,10 +1,16 @@
 "use client";
 
+import { TeamThroughputChart } from "@/components/performance/team-throughput-chart";
 import { api } from "@/lib/api";
 import { formatRoleLine } from "@/lib/roles";
 import { Zap } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+
+const TeamThroughputChartClient = dynamic(() => Promise.resolve(TeamThroughputChart), {
+  ssr: false,
+  loading: () => <div className="h-full w-full animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />,
+});
 
 type Member = {
   user: { _id: string; name: string; role: string; executorKind?: string };
@@ -29,7 +35,7 @@ export default function PerformancePage() {
   }));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div>
         <div className="chip border border-zinc-200 bg-white text-zinc-500">
           <Zap className="h-3 w-3" /> Analytics
@@ -38,23 +44,13 @@ export default function PerformancePage() {
         <p className="mt-1 text-sm text-zinc-500">Throughput and reliability of each team member.</p>
       </div>
 
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <div className="h-[340px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData}>
-              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 6" vertical={false} />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12 }} />
-              <Bar dataKey="Completed" stackId="a" fill="#10b981" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="Pending" stackId="a" fill="#f59e0b" />
-              <Bar dataKey="Overdue" stackId="a" fill="#ef4444" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+      <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+        <div className="h-[280px] min-w-0 sm:h-[340px]">
+          <TeamThroughputChartClient data={chartData} />
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {data.map((m) => (
           <div key={m.user._id} className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
             <div className="flex items-center gap-3">

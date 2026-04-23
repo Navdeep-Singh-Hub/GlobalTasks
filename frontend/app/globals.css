@@ -27,6 +27,16 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* iOS/Android safe areas */
+.safe-x {
+  padding-left: max(1rem, env(safe-area-inset-left));
+  padding-right: max(1rem, env(safe-area-inset-right));
+}
+.safe-b {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
 /* Custom scrollbars */

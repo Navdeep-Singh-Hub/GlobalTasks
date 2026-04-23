@@ -1,12 +1,47 @@
 "use client";
 
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import dynamic from "next/dynamic";
 
 type Point = { label: string; planned: number; completed: number };
 
+const AreaChartBlock = dynamic(
+  () =>
+    import("recharts").then(({ Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis }) => {
+      function Inner({ data }: { data: Point[] }) {
+        return (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -14 }}>
+              <defs>
+                <linearGradient id="plannedFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1e8ee1" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#1e8ee1" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="completedFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke="#eef2f7" strokeDasharray="3 6" vertical={false} />
+              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+              <Tooltip
+                contentStyle={{ borderRadius: 12, border: "1px solid #e5e7eb", fontSize: 12 }}
+                formatter={(v, n) => [String(v), String(n).replace(/^\w/, (c) => c.toUpperCase())]}
+              />
+              <Area type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={2.5} fill="url(#completedFill)" />
+              <Area type="monotone" dataKey="planned" stroke="#1e8ee1" strokeWidth={2.5} fill="url(#plannedFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        );
+      }
+      return Inner;
+    }),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" /> }
+);
+
 export function DeliveryCurve({ data, planned, completed }: { data: Point[]; planned: number; completed: number }) {
   return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+    <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
@@ -28,30 +63,8 @@ export function DeliveryCurve({ data, planned, completed }: { data: Point[]; pla
         </div>
       </div>
 
-      <div className="mt-5 h-[260px] w-full">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 6, right: 8, bottom: 0, left: -14 }}>
-            <defs>
-              <linearGradient id="plannedFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#1e8ee1" stopOpacity={0.35} />
-                <stop offset="100%" stopColor="#1e8ee1" stopOpacity={0} />
-              </linearGradient>
-              <linearGradient id="completedFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-              </linearGradient>
-            </defs>
-            <CartesianGrid stroke="#eef2f7" strokeDasharray="3 6" vertical={false} />
-            <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#64748b" }} axisLine={false} tickLine={false} />
-            <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-            <Tooltip
-              contentStyle={{ borderRadius: 12, border: "1px solid #e5e7eb", fontSize: 12 }}
-              formatter={(v, n) => [String(v), String(n).replace(/^\w/, (c) => c.toUpperCase())]}
-            />
-            <Area type="monotone" dataKey="completed" stroke="#10b981" strokeWidth={2.5} fill="url(#completedFill)" />
-            <Area type="monotone" dataKey="planned" stroke="#1e8ee1" strokeWidth={2.5} fill="url(#plannedFill)" />
-          </AreaChart>
-        </ResponsiveContainer>
+      <div className="mt-5 h-[220px] w-full min-w-0 sm:h-[260px]">
+        <AreaChartBlock data={data} />
       </div>
     </div>
   );

@@ -193,7 +193,7 @@ export function AssignTaskForm() {
   };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       {drafts.map((d, idx) => (
         <DraftCard
           key={d.id}
@@ -219,11 +219,11 @@ export function AssignTaskForm() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-        <Button variant="outline" onClick={resetAll} className="gap-2">
+      <div className="flex flex-col gap-3 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:rounded-2xl">
+        <Button variant="outline" onClick={resetAll} className="w-full gap-2 sm:w-auto">
           <RotateCcw className="h-4 w-4" /> Reset All
         </Button>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center justify-end gap-3 sm:justify-start">
           <button
             type="button"
             onClick={addDraft}
@@ -232,7 +232,7 @@ export function AssignTaskForm() {
           >
             <Plus className="h-5 w-5" />
           </button>
-          <Button variant="gradient" onClick={submit} disabled={submitting} className="gap-2">
+          <Button variant="gradient" onClick={submit} disabled={submitting} className="min-w-0 flex-1 gap-2 sm:flex-initial">
             <Zap className="h-4 w-4" />
             {submitting ? "Creating…" : "Create All Tasks"}
             <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10.5px] font-bold">{createdCount}</span>
@@ -271,9 +271,9 @@ function DraftCard({
   const typeLabel = TYPES.find((t) => t.value === draft.taskType)?.label || "One Time";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-center justify-between gap-3 border-b border-zinc-100 p-5 dark:border-zinc-800">
-        <div className="flex items-center gap-3">
+    <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
+      <div className="flex flex-col gap-3 border-b border-zinc-100 p-4 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:p-5">
+        <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gradient text-[13px] font-bold text-white shadow-brand">
             {String(index).padStart(2, "0")}
           </div>
@@ -289,16 +289,22 @@ function DraftCard({
             <div className="text-xs text-zinc-500">{typeLabel} task</div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" className="gap-1.5"><Download className="h-3.5 w-3.5" /> Template</Button>
-          <Button variant="gradient" size="sm" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" /> Upload Template</Button>
+        <div className="flex w-full flex-wrap items-stretch gap-2 sm:w-auto sm:justify-end">
+          <Button variant="outline" size="sm" className="min-h-10 flex-1 gap-1.5 sm:flex-initial">
+            <Download className="h-3.5 w-3.5" /> Template
+          </Button>
+          <Button variant="gradient" size="sm" className="min-h-10 flex-1 gap-1.5 sm:flex-initial">
+            <Sparkles className="h-3.5 w-3.5" /> Upload Template
+          </Button>
           {onRemove && (
-            <button onClick={onRemove} className="text-xs text-zinc-400 hover:text-rose-500" title="Remove task">×</button>
+            <button onClick={onRemove} className="min-h-10 px-2 text-xs text-zinc-400 hover:text-rose-500 sm:ml-1" title="Remove task">
+              ×
+            </button>
           )}
         </div>
       </div>
 
-      <div className="grid gap-5 p-5 md:grid-cols-2">
+      <div className="grid gap-4 p-4 sm:gap-5 sm:p-5 md:grid-cols-2">
         <Field label="Task Title" required>
           <Input placeholder="Enter task title" value={draft.title} onChange={(e) => onChange({ title: e.target.value })} />
         </Field>
@@ -411,7 +417,7 @@ function DraftCard({
               </div>
             </Field>
             {isRecurring && (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-900">
                   <input
                     type="checkbox"

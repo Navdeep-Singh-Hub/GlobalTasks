@@ -37,18 +37,18 @@ export default function DashboardPage() {
   const completedTotal = summary?.deliveryCurve.reduce((a, b) => a + b.completed, 0) || 0;
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-zinc-200/80 bg-white p-6 shadow-card dark:border-zinc-800 dark:bg-zinc-950 md:p-8">
+    <div className="space-y-5 sm:space-y-6">
+      <section className="relative overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-3xl sm:p-6 md:p-8">
         <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-gradient-soft blur-3xl" />
         <div className="pointer-events-none absolute -left-16 bottom-0 h-48 w-48 rounded-full bg-accent-cyan/10 blur-3xl" />
 
-        <div className="relative grid gap-6 md:grid-cols-[1.35fr_1fr] md:items-end">
+        <div className="relative grid gap-5 sm:gap-6 md:grid-cols-[1.35fr_1fr] md:items-end">
           <div>
             <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
               <Sparkles className="h-3 w-3" />
               Command center
             </div>
-            <h1 className="mt-3 text-3xl font-bold tracking-tight md:text-4xl">
+            <h1 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl md:text-4xl">
               Welcome back, <span className="bg-brand-gradient bg-clip-text text-transparent">{user?.name?.split(" ")[0] || "Admin"}</span>
             </h1>
             <div className="mt-4 flex flex-wrap items-center gap-2">

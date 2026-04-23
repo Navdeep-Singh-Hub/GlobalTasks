@@ -91,7 +91,7 @@ export function PendingRecurringDailySessions() {
   };
 
   return (
-    <section className="rounded-2xl border-2 border-brand-200/80 bg-gradient-to-br from-brand-50/90 to-white p-5 shadow-card dark:border-brand-900/50 dark:from-brand-950/40 dark:to-zinc-950">
+    <section className="rounded-xl border-2 border-brand-200/80 bg-gradient-to-br from-brand-50/90 to-white p-4 shadow-card dark:border-brand-900/50 dark:from-brand-950/40 dark:to-zinc-950 sm:rounded-2xl sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-100 pb-4 dark:border-brand-900/40">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-brand-600 dark:text-brand-400">Daily · Therapists</div>
@@ -101,13 +101,13 @@ export function PendingRecurringDailySessions() {
             rows, then save all at once.
           </p>
         </div>
-        <label className="space-y-1">
+        <label className="w-full space-y-1 sm:w-auto">
           <span className="text-xs font-semibold text-zinc-500">Date</span>
-          <Input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} className="w-[160px]" />
+          <Input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} className="w-full sm:w-[160px]" />
         </label>
       </div>
 
-      <div className="mt-4 flex items-center justify-end gap-2">
+      <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
         <span className="text-xs font-medium text-zinc-500">More sessions</span>
         <button
           type="button"
@@ -208,9 +208,9 @@ export function PendingRecurringDailySessions() {
         </div>
       )}
 
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-brand-100 pt-4 dark:border-brand-900/40">
+      <div className="mt-4 flex flex-col gap-3 border-t border-brand-100 pt-4 dark:border-brand-900/40 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[11px] text-zinc-500">Saved sessions appear on Therapist Performance for supervisors.</p>
-        <Button type="button" onClick={() => void submit()} disabled={submitting} className="gap-2">
+        <Button type="button" onClick={() => void submit()} disabled={submitting} className="w-full gap-2 sm:w-auto">
           {submitting ? "Saving…" : "Save all sessions"}
         </Button>
       </div>

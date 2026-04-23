@@ -1,6 +1,6 @@
 "use client";
 
-import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
+import dynamic from "next/dynamic";
 
 const COLORS: Record<string, string> = {
   pending: "#f5b614",
@@ -18,25 +18,11 @@ const LABELS: Record<string, string> = {
   overdue: "Overdue",
 };
 
-export function StatusDonut({ data }: { data: { name: string; value: number }[] }) {
-  const total = data.reduce((a, b) => a + b.value, 0) || 1;
-  return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            Status breakdown
-          </div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Live task states</h3>
-        </div>
-        <div className="rounded-full bg-zinc-50 px-3 py-1 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-900">
-          {total} total
-        </div>
-      </div>
-
-      <div className="mt-4 grid items-center gap-4 md:grid-cols-[220px_1fr]">
-        <div className="relative h-[200px]">
+const StatusDonutChart = dynamic(
+  () =>
+    import("recharts").then(({ Cell, Pie, PieChart, ResponsiveContainer }) => {
+      function Inner({ data }: { data: { name: string; value: number }[] }) {
+        return (
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -53,6 +39,33 @@ export function StatusDonut({ data }: { data: { name: string; value: number }[] 
               </Pie>
             </PieChart>
           </ResponsiveContainer>
+        );
+      }
+      return Inner;
+    }),
+  { ssr: false, loading: () => <div className="h-full w-full animate-pulse rounded-full bg-zinc-100 dark:bg-zinc-900" /> }
+);
+
+export function StatusDonut({ data }: { data: { name: string; value: number }[] }) {
+  const total = data.reduce((a, b) => a + b.value, 0) || 1;
+  return (
+    <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
+            Status breakdown
+          </div>
+          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Live task states</h3>
+        </div>
+        <div className="rounded-full bg-zinc-50 px-3 py-1 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-900">
+          {total} total
+        </div>
+      </div>
+
+      <div className="mt-4 grid min-w-0 items-center gap-4 md:grid-cols-[220px_1fr]">
+        <div className="relative mx-auto h-[200px] w-full max-w-[240px] min-w-0 md:mx-0 md:max-w-none">
+          <StatusDonutChart data={data} />
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
             <div className="text-2xl font-bold tracking-tight">{total}</div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Tasks</div>
