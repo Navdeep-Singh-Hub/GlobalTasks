@@ -55,9 +55,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    if (!navOpen) return;
     const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    if (navOpen) {
+      document.body.style.overflow = "hidden";
+    } else if (document.body.style.overflow === "hidden") {
+      document.body.style.overflow = "";
+    }
     return () => {
       document.body.style.overflow = prev;
     };
@@ -67,7 +70,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "" : "";
 
   return (
-    <div className="flex min-h-[100dvh] min-h-screen bg-surface-muted dark:bg-[#0b1220]">
+    <div className="flex h-[100dvh] overflow-hidden bg-surface-muted dark:bg-[#0b1220]">
       <AppSidebar variant="desktop" />
       <AppSidebar variant="mobile" mobileOpen={navOpen} onCloseMobile={() => setNavOpen(false)} />
       <main className="flex min-w-0 flex-1 flex-col">
@@ -190,7 +193,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="safe-x safe-b flex-1 overflow-y-auto overscroll-y-contain px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
+        <div className="safe-x safe-b flex-1 overflow-y-auto overscroll-y-contain touch-pan-y [-webkit-overflow-scrolling:touch] px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1400px] animate-fade-in">{children}</div>
         </div>
       </main>
