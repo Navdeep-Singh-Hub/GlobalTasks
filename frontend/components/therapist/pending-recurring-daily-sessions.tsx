@@ -15,8 +15,6 @@ type SessionRow = {
   patientName: string;
   durationMinutes: string;
   startedAt: string;
-  targetAssigned: string;
-  targetAchieved: string;
   videoUploaded: boolean;
 };
 
@@ -26,8 +24,6 @@ function newRow(): SessionRow {
     patientName: "",
     durationMinutes: "30",
     startedAt: "",
-    targetAssigned: "1",
-    targetAchieved: "0",
     videoUploaded: false,
   };
 }
@@ -52,15 +48,6 @@ export function PendingRecurringDailySessions() {
       setMessage({ type: "err", text: "Add at least one session with a patient name." });
       return;
     }
-    for (const r of filled) {
-      const ta = Math.max(0, Number(r.targetAssigned) || 0);
-      const tg = Math.max(0, Number(r.targetAchieved) || 0);
-      if (ta > 0 && tg > ta) {
-        setMessage({ type: "err", text: `Targets achieved cannot exceed assigned for "${r.patientName.trim()}".` });
-        return;
-      }
-    }
-
     setSubmitting(true);
     setMessage(null);
     try {
@@ -73,8 +60,6 @@ export function PendingRecurringDailySessions() {
             patientName: r.patientName.trim(),
             startedAt: r.startedAt,
             durationMinutes: Number(r.durationMinutes) || 0,
-            targetAssigned: Number(r.targetAssigned) || 0,
-            targetAchieved: Number(r.targetAchieved) || 0,
             videoUploaded: r.videoUploaded,
             videoUrl: "",
           }),
@@ -121,12 +106,10 @@ export function PendingRecurringDailySessions() {
       </div>
 
       <div className="mt-3 space-y-3">
-        <div className="hidden gap-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 md:grid md:grid-cols-[minmax(0,1.2fr)_100px_120px_100px_100px_140px_40px] md:px-1">
+        <div className="hidden gap-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 md:grid md:grid-cols-[minmax(0,1.2fr)_100px_120px_140px_40px] md:px-1">
           <span>Patient</span>
           <span>Duration (min)</span>
           <span>Start time</span>
-          <span>Targets assigned</span>
-          <span>Targets achieved</span>
           <span>Video uploaded</span>
           <span />
         </div>
@@ -134,7 +117,7 @@ export function PendingRecurringDailySessions() {
         {rows.map((r) => (
           <div
             key={r.id}
-            className="grid gap-2 rounded-xl border border-zinc-200 bg-white/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/80 md:grid-cols-[minmax(0,1.2fr)_100px_120px_100px_100px_140px_40px] md:items-end"
+            className="grid gap-2 rounded-xl border border-zinc-200 bg-white/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/80 md:grid-cols-[minmax(0,1.2fr)_100px_120px_140px_40px] md:items-end"
           >
             <label className="space-y-1 md:col-span-1">
               <span className="text-xs font-semibold text-zinc-500 md:hidden">Patient name</span>
@@ -152,24 +135,6 @@ export function PendingRecurringDailySessions() {
             <label className="space-y-1">
               <span className="text-xs font-semibold text-zinc-500 md:hidden">Start time</span>
               <Input type="time" value={r.startedAt} onChange={(e) => patchRow(r.id, { startedAt: e.target.value })} />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-semibold text-zinc-500 md:hidden">Targets assigned</span>
-              <Input
-                type="number"
-                min={0}
-                value={r.targetAssigned}
-                onChange={(e) => patchRow(r.id, { targetAssigned: e.target.value })}
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-xs font-semibold text-zinc-500 md:hidden">Targets achieved</span>
-              <Input
-                type="number"
-                min={0}
-                value={r.targetAchieved}
-                onChange={(e) => patchRow(r.id, { targetAchieved: e.target.value })}
-              />
             </label>
             <label className="flex items-center gap-2 rounded-lg border border-zinc-200 px-3 py-2 text-xs font-medium dark:border-zinc-700">
               <input

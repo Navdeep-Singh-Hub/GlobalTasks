@@ -4,6 +4,7 @@ import { User } from "../models/User.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo } from "../constants/roles.js";
+import { getVisibleUserIds } from "../services/hierarchy.js";
 
 const router = Router();
 router.use(authRequired);
@@ -33,6 +34,8 @@ router.get("/", async (req, res) => {
   if (status === "active") q.active = true;
   if (status === "inactive") q.active = false;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds) q._id = { $in: visibleIds };
 
   const users = await User.find(q)
     .populate("centerId", "name code")
@@ -83,6 +86,19 @@ router.post("/", requireManagement, async (req, res, next) => {
       const existingCentreHead = await User.findOne({ role: "centre_head", centerId, _id: { $ne: req.userId } }).lean();
       if (existingCentreHead) return res.status(409).json({ message: "This center already has a Centre Head" });
     }
+    let reportsToId = reportsTo || null;
+    if (role === "executor" && executorKind === "therapist") {
+      if (!reportsToId) {
+        return res.status(400).json({ message: "Supervisor is required for therapist executor" });
+      }
+      const supervisor = await User.findById(reportsToId).select("_id role centerId").lean();
+      if (!supervisor || supervisor.role !== "supervisor") {
+        return res.status(400).json({ message: "Therapist must be mapped to a supervisor" });
+      }
+      if (String(supervisor.centerId || "") !== String(centerId)) {
+        return res.status(400).json({ message: "Therapist supervisor must belong to the same center" });
+      }
+    }
     const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) return res.status(409).json({ message: "Email already in use" });
 
@@ -96,7 +112,7 @@ router.post("/", requireManagement, async (req, res, next) => {
       department,
       departmentPrimary,
       centerId,
-      reportsTo,
+      reportsTo: reportsToId,
       title: title || "",
       avatarUrl: avatarUrl || "",
       permissions: permissions?.length ? permissions : ["view_tasks"],
@@ -128,7 +144,7 @@ router.patch("/:id", requireManagement, async (req, res, next) => {
       if (taken) return res.status(409).json({ message: "Email already in use" });
       user.email = normalized;
     }
-    if (role !== undefined) {
+    if (role !== undefined && role !== user.role) {
       if (!USER_ROLES.includes(role)) return res.status(400).json({ message: "Invalid role" });
       if (!canAssignRole(req.userRole, role)) return res.status(403).json({ message: "You cannot assign this role" });
       user.role = role;
@@ -158,6 +174,18 @@ router.patch("/:id", requireManagement, async (req, res, next) => {
       if (existingCentreHead) return res.status(409).json({ message: "This center already has a Centre Head" });
     }
     if (reportsTo !== undefined) user.reportsTo = reportsTo || null;
+    if (user.role === "executor" && user.executorKind === "therapist") {
+      if (!user.reportsTo) {
+        return res.status(400).json({ message: "Supervisor is required for therapist executor" });
+      }
+      const supervisor = await User.findById(user.reportsTo).select("_id role centerId").lean();
+      if (!supervisor || supervisor.role !== "supervisor") {
+        return res.status(400).json({ message: "Therapist must be mapped to a supervisor" });
+      }
+      if (String(supervisor.centerId || "") !== String(user.centerId || "")) {
+        return res.status(400).json({ message: "Therapist supervisor must belong to the same center" });
+      }
+    }
     if (phone !== undefined) user.phone = phone;
     if (Array.isArray(permissions)) user.permissions = permissions;
     if (typeof active === "boolean") {

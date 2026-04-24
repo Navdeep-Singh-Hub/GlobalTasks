@@ -6,6 +6,7 @@ import { User } from "../models/User.js";
 import { TherapistSession } from "../models/TherapistSession.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo, isManagement } from "../constants/roles.js";
+import { getDescendantUsers } from "../services/hierarchy.js";
 
 const router = Router();
 router.use(authRequired);
@@ -314,11 +315,6 @@ router.post("/therapist-sessions", async (req, res) => {
   const sessionDate = String(req.body.sessionDate || new Date().toISOString().slice(0, 10));
   const patientName = String(req.body.patientName || "").trim();
   if (!patientName) return res.status(400).json({ message: "Patient name is required" });
-  const targetAssigned = Math.max(0, Number(req.body.targetAssigned) || 0);
-  const targetAchieved = Math.max(0, Number(req.body.targetAchieved) || 0);
-  if (targetAchieved > targetAssigned && targetAssigned > 0) {
-    return res.status(400).json({ message: "Achieved targets cannot exceed assigned targets" });
-  }
   const durationMinutes =
     Number(req.body.durationMinutes) > 0
       ? Number(req.body.durationMinutes)
@@ -345,8 +341,6 @@ router.post("/therapist-sessions", async (req, res) => {
     newActivityText: String(req.body.newActivityText || ""),
     monthlyTestDone: !!req.body.monthlyTestDone,
     monthlyTestNotes: String(req.body.monthlyTestNotes || ""),
-    targetAssigned,
-    targetAchieved,
     createdBy: req.userId,
   });
 
@@ -373,6 +367,18 @@ router.get("/therapist-sessions", async (req, res) => {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  if (req.userRole === "supervisor") {
+    const descendants = await getDescendantUsers(req.userId, me?.centerId || null);
+    const therapistIds = descendants
+      .filter((u) => u.role === "executor" && u.executorKind === "therapist")
+      .map((u) => u._id);
+    if (!therapistIds.length) q.therapistId = null;
+    else if (q.therapistId) {
+      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else {
+      q.therapistId = { $in: therapistIds };
+    }
+  }
 
   const [sessions, total] = await Promise.all([
     TherapistSession.find(q)
@@ -430,6 +436,18 @@ router.get("/therapist-performance", async (req, res) => {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  if (req.userRole === "supervisor") {
+    const descendants = await getDescendantUsers(req.userId, me?.centerId || null);
+    const therapistIds = descendants
+      .filter((u) => u.role === "executor" && u.executorKind === "therapist")
+      .map((u) => u._id);
+    if (!therapistIds.length) q.therapistId = null;
+    else if (q.therapistId) {
+      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else {
+      q.therapistId = { $in: therapistIds };
+    }
+  }
 
   const summary = await TherapistSession.aggregate([
     { $match: q },
@@ -439,8 +457,6 @@ router.get("/therapist-performance", async (req, res) => {
         sessions: { $sum: 1 },
         patientsCovered: { $addToSet: "$patientName" },
         attendanceDays: { $addToSet: "$sessionDate" },
-        targetAssigned: { $sum: "$targetAssigned" },
-        targetAchieved: { $sum: "$targetAchieved" },
         planUpdates15d: { $sum: { $cond: [{ $eq: ["$planUpdated15d", true] }, 1, 0] } },
         newActivities15d: { $sum: { $cond: [{ $eq: ["$newActivity15d", true] }, 1, 0] } },
         monthlyTests: { $sum: { $cond: [{ $eq: ["$monthlyTestDone", true] }, 1, 0] } },
@@ -452,11 +468,6 @@ router.get("/therapist-performance", async (req, res) => {
         sessions: 1,
         patientsCovered: { $size: "$patientsCovered" },
         attendanceDays: { $size: "$attendanceDays" },
-        targetAssigned: 1,
-        targetAchieved: 1,
-        targetCompletionPercent: {
-          $cond: [{ $gt: ["$targetAssigned", 0] }, { $round: [{ $multiply: [{ $divide: ["$targetAchieved", "$targetAssigned"] }, 100] }, 1] }, 0],
-        },
         planUpdates15d: 1,
         newActivities15d: 1,
         monthlyTests: 1,
@@ -472,7 +483,7 @@ router.get("/therapist-performance", async (req, res) => {
   const rows = summary
     .map((s) => ({ therapist: byId.get(String(s._id)) || null, ...s }))
     .filter((row) => !!row.therapist)
-    .sort((a, b) => b.targetCompletionPercent - a.targetCompletionPercent);
+    .sort((a, b) => b.sessions - a.sessions || b.avgSupervisorScore - a.avgSupervisorScore);
   const total = rows.length;
   const pagedRows = rows.slice(skip, skip + limit);
   const payload = { rows: pagedRows, total, page, limit };

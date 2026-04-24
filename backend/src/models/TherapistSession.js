@@ -20,8 +20,6 @@ const therapistSessionSchema = new mongoose.Schema(
     newActivityText: { type: String, default: "", trim: true },
     monthlyTestDone: { type: Boolean, default: false },
     monthlyTestNotes: { type: String, default: "", trim: true },
-    targetAssigned: { type: Number, default: 0, min: 0 },
-    targetAchieved: { type: Number, default: 0, min: 0 },
     supervisorScore: { type: Number, default: 0, min: 0, max: 5 },
     supervisorRemarks: { type: String, default: "", trim: true },
     markedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },

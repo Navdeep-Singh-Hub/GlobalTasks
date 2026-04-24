@@ -23,8 +23,6 @@ type SessionItem = {
   newActivityText?: string;
   monthlyTestDone?: boolean;
   monthlyTestNotes?: string;
-  targetAssigned?: number;
-  targetAchieved?: number;
   supervisorScore?: number;
   supervisorRemarks?: string;
   therapistId: TherapistUser;
@@ -36,9 +34,6 @@ type PerformanceRow = {
   sessions: number;
   patientsCovered: number;
   attendanceDays: number;
-  targetAssigned: number;
-  targetAchieved: number;
-  targetCompletionPercent: number;
   planUpdates15d: number;
   newActivities15d: number;
   monthlyTests: number;
@@ -117,8 +112,7 @@ export default function TherapistPerformancePage() {
   const totals = useMemo(
     () => ({
       sessions: rows.reduce((a, b) => a + (b.sessions || 0), 0),
-      achieved: rows.reduce((a, b) => a + (b.targetAchieved || 0), 0),
-      assigned: rows.reduce((a, b) => a + (b.targetAssigned || 0), 0),
+      patients: rows.reduce((a, b) => a + (b.patientsCovered || 0), 0),
     }),
     [rows]
   );
@@ -186,7 +180,7 @@ export default function TherapistPerformancePage() {
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
             <div className="font-semibold">Overview</div>
             <div className="mt-1 text-zinc-500">
-              {totals.sessions} sessions, {totals.achieved}/{totals.assigned} targets achieved
+              {totals.sessions} sessions, {totals.patients} patients covered
             </div>
           </div>
         </div>
@@ -215,7 +209,6 @@ export default function TherapistPerformancePage() {
                 <th className="px-2 py-2">Sessions</th>
                 <th className="px-2 py-2">Patients</th>
                 <th className="px-2 py-2">Attendance days</th>
-                <th className="px-2 py-2">Targets %</th>
                 <th className="px-2 py-2">15d Plan</th>
                 <th className="px-2 py-2">15d Activity</th>
                 <th className="px-2 py-2">Monthly Tests</th>
@@ -232,7 +225,6 @@ export default function TherapistPerformancePage() {
                   <td className="px-2 py-2">{r.sessions}</td>
                   <td className="px-2 py-2">{r.patientsCovered}</td>
                   <td className="px-2 py-2">{r.attendanceDays}</td>
-                  <td className="px-2 py-2">{r.targetCompletionPercent}%</td>
                   <td className="px-2 py-2">{r.planUpdates15d}</td>
                   <td className="px-2 py-2">{r.newActivities15d}</td>
                   <td className="px-2 py-2">{r.monthlyTests}</td>
@@ -241,7 +233,7 @@ export default function TherapistPerformancePage() {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={9} className="px-2 py-8 text-center text-zinc-500">
+                  <td colSpan={8} className="px-2 py-8 text-center text-zinc-500">
                     No therapist records for this filter.
                   </td>
                 </tr>
@@ -280,7 +272,6 @@ export default function TherapistPerformancePage() {
                 <th className="px-2 py-2">Patient</th>
                 <th className="px-2 py-2">Start</th>
                 <th className="px-2 py-2">Duration</th>
-                <th className="px-2 py-2">Targets</th>
                 <th className="px-2 py-2">Video</th>
                 <th className="px-2 py-2">Marks</th>
               </tr>
@@ -293,9 +284,6 @@ export default function TherapistPerformancePage() {
                   <td className="px-2 py-2">{s.patientName}</td>
                   <td className="px-2 py-2">{s.startedAt || "—"}</td>
                   <td className="px-2 py-2">{s.durationMinutes || 0} min</td>
-                  <td className="px-2 py-2">
-                    {(s.targetAchieved || 0)}/{s.targetAssigned || 0}
-                  </td>
                   <td className="px-2 py-2">
                     {s.videoUrl ? (
                       <a href={assetUrl(s.videoUrl)} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
@@ -310,7 +298,7 @@ export default function TherapistPerformancePage() {
               ))}
               {!sessions.length && (
                 <tr>
-                  <td colSpan={8} className="px-2 py-8 text-center text-zinc-500">
+                  <td colSpan={7} className="px-2 py-8 text-center text-zinc-500">
                     No sessions found for selected filters.
                   </td>
                 </tr>

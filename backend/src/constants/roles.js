@@ -36,7 +36,7 @@ export function isCeo(role) {
   return normalizeRole(role) === "ceo";
 }
 
-/** More senior (lower rank number) may create or set this role. */
+/** More senior (lower rank number) may create/set strictly junior roles only. */
 export function canAssignRole(actorRole, targetRole) {
   const a = normalizeRole(actorRole);
   const t = normalizeRole(targetRole);
@@ -44,5 +44,5 @@ export function canAssignRole(actorRole, targetRole) {
   const ra = ROLE_RANK[a];
   const rt = ROLE_RANK[t];
   if (!ra || !rt) return false;
-  return ra <= rt;
+  return ra < rt;
 }

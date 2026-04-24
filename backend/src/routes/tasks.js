@@ -7,6 +7,7 @@ import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
 import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import { TaskEvent } from "../models/TaskEvent.js";
+import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
 
 const router = Router();
 router.use(authRequired);
@@ -123,6 +124,18 @@ router.get("/", async (req, res) => {
   const me = await actor(req);
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds) {
+    if (filter.assignees && typeof filter.assignees === "string") {
+      if (!visibleIds.includes(String(filter.assignees))) {
+        filter._id = { $in: [] };
+      }
+    } else if (filter.assignees?.$in) {
+      filter.assignees.$in = filter.assignees.$in.filter((id) => visibleIds.includes(String(id)));
+    } else {
+      filter.assignees = { $in: visibleIds };
+    }
+  }
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
@@ -144,6 +157,7 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const me = await actor(req);
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const task = await Task.findById(req.params.id)
     .populate("assignees", "name email avatarUrl role")
     .populate("createdBy", "name email")
@@ -153,6 +167,12 @@ router.get("/:id", async (req, res) => {
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
   if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
+  }
+  if (visibleIds && req.userRole !== "centre_head") {
+    const assignees = (task.assignees || []).map((a) => String(a._id || a));
+    if (!assignees.some((id) => visibleIds.includes(id))) {
+      return res.status(403).json({ message: "You can access tasks for your hierarchy only" });
+    }
   }
   res.json({ task });
 });
@@ -171,6 +191,14 @@ router.post("/", async (req, res, next) => {
       return res.status(403).json({ message: "You can only create tasks in your center" });
     }
     if (!Array.isArray(payload.assignees)) payload.assignees = payload.assignees ? [payload.assignees] : [];
+    const assignableIds = await getAssignableAssigneeIds({ actorId: req.userId, actorRole: req.userRole, centerId: payload.centerId });
+    if (payload.assignees.length) {
+      if (assignableIds.length === 0) return res.status(403).json({ message: "You cannot assign tasks to users" });
+      const invalidAssignee = payload.assignees.find((id) => !assignableIds.includes(String(id)));
+      if (invalidAssignee) {
+        return res.status(403).json({ message: "You can only assign tasks to your allowed hierarchy users" });
+      }
+    }
     if (payload.assignees.length) {
       const crossCenter = await User.countDocuments({ _id: { $in: payload.assignees }, centerId: { $ne: payload.centerId } });
       if (crossCenter > 0) return res.status(400).json({ message: "All assignees must belong to the selected center" });
@@ -214,10 +242,17 @@ router.post("/", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const me = await actor(req);
+    const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
+    }
+    if (visibleIds && req.userRole !== "centre_head") {
+      const assignees = (task.assignees || []).map((a) => String(a));
+      if (!assignees.some((id) => visibleIds.includes(id))) {
+        return res.status(403).json({ message: "You can edit tasks for your hierarchy only" });
+      }
     }
 
     const denied = assertTaskPatchPermission(req, req.body);
@@ -260,6 +295,16 @@ router.patch("/:id", async (req, res, next) => {
     }
     if ("centerId" in req.body && !isCeo(req.userRole) && String(req.body.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can only set your center on tasks" });
+    }
+    if ("assignees" in req.body) {
+      const assignableIds = await getAssignableAssigneeIds({ actorId: req.userId, actorRole: req.userRole, centerId: task.centerId });
+      if (task.assignees?.length) {
+        if (assignableIds.length === 0) return res.status(403).json({ message: "You cannot assign tasks to users" });
+        const invalidAssignee = task.assignees.find((id) => !assignableIds.includes(String(id)));
+        if (invalidAssignee) {
+          return res.status(403).json({ message: "You can only assign tasks to your allowed hierarchy users" });
+        }
+      }
     }
     if (task.assignees?.length) {
       const crossCenter = await User.countDocuments({ _id: { $in: task.assignees }, centerId: { $ne: task.centerId } });
@@ -338,6 +383,8 @@ router.post("/bulk", async (req, res) => {
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
   const scope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds) scope.assignees = { $in: visibleIds };
 
   if (action === "delete") {
     await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: new Date() } });
@@ -477,6 +524,8 @@ router.post("/:id/reject", requireRoles("ceo"), async (req, res) => {
 router.delete("/:id", requireManagement, async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
   const task = await Task.findOneAndUpdate(where, { deletedAt: new Date() });
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: true } });
   res.json({ ok: true });
@@ -485,6 +534,8 @@ router.delete("/:id", requireManagement, async (req, res) => {
 router.post("/:id/restore", async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
   const task = await Task.findOneAndUpdate(where, { deletedAt: null });
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
   res.json({ ok: true });
@@ -493,6 +544,8 @@ router.post("/:id/restore", async (req, res) => {
 router.delete("/:id/hard", requireRoles("ceo", "centre_head"), async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
   const task = await Task.findOne(where);
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });
   await Task.deleteOne(where);

@@ -6,6 +6,7 @@ import { Activity } from "../models/Activity.js";
 import { Escalation } from "../models/Escalation.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo } from "../constants/roles.js";
+import { getVisibleUserIds } from "../services/hierarchy.js";
 
 const router = Router();
 router.use(authRequired);
@@ -29,11 +30,13 @@ function rangeForScope(scope) {
 
 router.get("/summary", async (req, res) => {
   const me = await actor(req);
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const scope = String(req.query.scope || "month");
   const base = { deletedAt: null, ...rangeForScope(scope) };
   if (req.query.centerId) base.centerId = req.query.centerId;
   if (req.query.departmentId) base.departmentId = req.query.departmentId;
   if (!isCeo(req.userRole)) base.centerId = me?.centerId || null;
+  if (visibleIds && req.userRole !== "centre_head") base.assignees = { $in: visibleIds };
   const projectFilter = isCeo(req.userRole)
     ? { status: "active" }
     : { status: "active", owner: { $in: await User.find({ centerId: me?.centerId || null }).distinct("_id") } };
@@ -67,6 +70,7 @@ router.get("/summary", async (req, res) => {
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const monthlyMatch = { deletedAt: null, createdAt: { $gte: sixMonthsAgo } };
   if (!isCeo(req.userRole)) monthlyMatch.centerId = me?.centerId || null;
+  if (visibleIds && req.userRole !== "centre_head") monthlyMatch.assignees = { $in: visibleIds };
   const monthly = await Task.aggregate([
     { $match: monthlyMatch },
     {
@@ -109,7 +113,13 @@ router.get("/summary", async (req, res) => {
 router.get("/team-performance", async (_req, res) => {
   const me = await actor(_req);
   const userFilter = { active: true };
+  const visibleIds = await getVisibleUserIds({ actorId: _req.userId, actorRole: _req.userRole, centerId: me?.centerId || null });
   if (!isCeo(_req.userRole)) userFilter.centerId = me?.centerId || null;
+  if (visibleIds) userFilter._id = { $in: visibleIds };
+  if (_req.userRole === "centre_head") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
+  if (_req.userRole === "coordinator") userFilter.role = { $in: ["supervisor", "executor"] };
+  if (_req.userRole === "supervisor") userFilter.role = "executor";
+  if (_req.userRole === "executor") userFilter._id = _req.userId;
   const users = await User.find(userFilter).select("_id name email role executorKind avatarUrl title").lean();
   const results = await Promise.all(
     users.map(async (u) => {
@@ -142,12 +152,19 @@ router.get("/team-performance", async (_req, res) => {
 
 router.get("/activity", async (req, res) => {
   const me = await actor(req);
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const limit = Math.min(50, Number(req.query.limit) || 10);
   let items = [];
   if (isCeo(req.userRole)) {
     items = await Activity.find().sort({ createdAt: -1 }).limit(limit).lean();
   } else {
-    const taskIds = await Task.find({ centerId: me?.centerId || null }).select("_id").limit(2000).lean();
+    const taskIds = await Task.find({
+      centerId: me?.centerId || null,
+      ...(visibleIds && req.userRole !== "centre_head" ? { assignees: { $in: visibleIds } } : {}),
+    })
+      .select("_id")
+      .limit(2000)
+      .lean();
     items = await Activity.find({ task: { $in: taskIds.map((t) => t._id) } }).sort({ createdAt: -1 }).limit(limit).lean();
   }
   res.json({ items });
@@ -172,13 +189,25 @@ router.get("/escalations", async (req, res) => {
 
 router.get("/search", async (req, res) => {
   const me = await actor(req);
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const q = String(req.query.q || "").trim();
   if (!q) return res.json({ tasks: [], projects: [], users: [] });
   const centerScope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
   const [tasks, projects, users] = await Promise.all([
-    Task.find({ title: new RegExp(q, "i"), deletedAt: null, ...centerScope }).limit(8).lean(),
+    Task.find({
+      title: new RegExp(q, "i"),
+      deletedAt: null,
+      ...centerScope,
+      ...(visibleIds && req.userRole !== "centre_head" ? { assignees: { $in: visibleIds } } : {}),
+    })
+      .limit(8)
+      .lean(),
     Project.find({ name: new RegExp(q, "i") }).limit(8).lean(),
-    User.find({ $or: [{ name: new RegExp(q, "i") }, { email: new RegExp(q, "i") }], ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) })
+    User.find({
+      $or: [{ name: new RegExp(q, "i") }, { email: new RegExp(q, "i") }],
+      ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
+      ...(visibleIds ? { _id: { $in: visibleIds } } : {}),
+    })
       .limit(8)
       .lean(),
   ]);

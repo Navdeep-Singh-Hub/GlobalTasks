@@ -22,11 +22,11 @@ export const EXECUTOR_KIND_LABELS: Record<string, string> = {
 
 export const EXECUTOR_KIND_OPTIONS = ["therapist", "reception", "marketing", "support"] as const;
 
-/** Roles this actor may assign when creating/editing users (same rank or more junior). */
+/** Roles this actor may assign when creating/editing users (strictly junior). */
 export function rolesAssignableBy(actor: Role): Role[] {
   const idx = USER_ROLES.indexOf(actor);
   if (idx < 0) return ["executor"];
-  return [...USER_ROLES.slice(idx)];
+  return [...USER_ROLES.slice(idx + 1)];
 }
 
 export function isManagement(role: string | undefined): boolean {

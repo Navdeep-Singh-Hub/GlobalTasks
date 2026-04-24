@@ -36,6 +36,7 @@ type Member = {
   role: Role;
   executorKind?: string;
   centerId?: { _id: string; name: string; code: string } | string | null;
+  reportsTo?: { _id: string; name: string; role: Role } | string | null;
   department?: string;
   permissions: string[];
   active: boolean;
@@ -318,6 +319,7 @@ function CreateUserModal({
     role: (assignable.includes("executor") ? "executor" : assignable[0]) as Role,
     executorKind: "" as string,
     centerId: "",
+    reportsTo: "",
     department: "",
     title: "",
     avatarUrl: "",
@@ -326,6 +328,17 @@ function CreateUserModal({
   });
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
+  const [supervisors, setSupervisors] = useState<Member[]>([]);
+
+  useEffect(() => {
+    if (!form.centerId) {
+      setSupervisors([]);
+      return;
+    }
+    api<{ users: Member[] }>(`/users?role=supervisor&centerId=${form.centerId}`)
+      .then((d) => setSupervisors(d.users))
+      .catch(() => setSupervisors([]));
+  }, [form.centerId]);
 
   const togglePerm = (p: string) =>
     setForm((f) => ({
@@ -338,10 +351,20 @@ function CreateUserModal({
       setErr("Center is required.");
       return;
     }
+    if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {
+      setErr("Supervisor is required for therapist.");
+      return;
+    }
     setSaving(true);
     setErr("");
     try {
-      await api("/users", { method: "POST", body: JSON.stringify(form) });
+      await api("/users", {
+        method: "POST",
+        body: JSON.stringify({
+          ...form,
+          reportsTo: form.reportsTo || null,
+        }),
+      });
       onCreated();
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Failed to create user");
@@ -371,7 +394,12 @@ function CreateUserModal({
           value={form.role}
           onChange={(e) => {
             const r = e.target.value as Role;
-            setForm({ ...form, role: r, executorKind: r === "executor" ? form.executorKind : "" });
+            setForm({
+              ...form,
+              role: r,
+              executorKind: r === "executor" ? form.executorKind : "",
+              reportsTo: r === "executor" && form.executorKind === "therapist" ? form.reportsTo : "",
+            });
           }}
         >
           {assignable.map((r) => (
@@ -381,11 +409,30 @@ function CreateUserModal({
           ))}
         </Select>
         {form.role === "executor" && (
-          <Select value={form.executorKind} onChange={(e) => setForm({ ...form, executorKind: e.target.value })}>
+          <Select
+            value={form.executorKind}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                executorKind: e.target.value,
+                reportsTo: e.target.value === "therapist" ? prev.reportsTo : "",
+              }))
+            }
+          >
             <option value="">Executor type…</option>
             {EXECUTOR_KIND_OPTIONS.map((k) => (
               <option key={k} value={k}>
                 {ROLE_LABELS.executor} · {EXECUTOR_KIND_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        )}
+        {form.role === "executor" && form.executorKind === "therapist" && (
+          <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
+            <option value="">Select supervisor…</option>
+            {supervisors.map((s) => (
+              <option key={s._id} value={s._id}>
+                {s.name}
               </option>
             ))}
           </Select>
@@ -428,6 +475,7 @@ function EditUserModal({
     role: user.role,
     executorKind: user.executorKind || "",
     centerId: typeof user.centerId === "object" && user.centerId ? user.centerId._id : String(user.centerId || ""),
+    reportsTo: typeof user.reportsTo === "object" && user.reportsTo ? user.reportsTo._id : String(user.reportsTo || ""),
     permissions: [...(user.permissions || [])],
     active: user.active !== false,
   });
@@ -435,6 +483,17 @@ function EditUserModal({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
+  const [supervisors, setSupervisors] = useState<Member[]>([]);
+
+  useEffect(() => {
+    if (!form.centerId) {
+      setSupervisors([]);
+      return;
+    }
+    api<{ users: Member[] }>(`/users?role=supervisor&centerId=${form.centerId}`)
+      .then((d) => setSupervisors(d.users))
+      .catch(() => setSupervisors([]));
+  }, [form.centerId]);
 
   const togglePerm = (p: string) =>
     setForm((f) => ({
@@ -461,6 +520,11 @@ function EditUserModal({
         setSaving(false);
         return;
       }
+      if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {
+        setErr("Supervisor is required for therapist.");
+        setSaving(false);
+        return;
+      }
       await api(`/users/${user._id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -473,6 +537,7 @@ function EditUserModal({
           role: form.role,
           executorKind: form.role === "executor" ? form.executorKind : "",
           centerId: form.centerId,
+          reportsTo: form.reportsTo || null,
           permissions: form.permissions,
           active: form.active,
         }),
@@ -512,7 +577,12 @@ function EditUserModal({
           value={form.role}
           onChange={(e) => {
             const r = e.target.value as Role;
-            setForm({ ...form, role: r, executorKind: r === "executor" ? form.executorKind : "" });
+            setForm({
+              ...form,
+              role: r,
+              executorKind: r === "executor" ? form.executorKind : "",
+              reportsTo: r === "executor" && form.executorKind === "therapist" ? form.reportsTo : "",
+            });
           }}
         >
           {roleOptions.map((r) => (
@@ -522,11 +592,30 @@ function EditUserModal({
           ))}
         </Select>
         {form.role === "executor" && (
-          <Select value={form.executorKind} onChange={(e) => setForm({ ...form, executorKind: e.target.value })}>
+          <Select
+            value={form.executorKind}
+            onChange={(e) =>
+              setForm((prev) => ({
+                ...prev,
+                executorKind: e.target.value,
+                reportsTo: e.target.value === "therapist" ? prev.reportsTo : "",
+              }))
+            }
+          >
             <option value="">Executor type…</option>
             {EXECUTOR_KIND_OPTIONS.map((k) => (
               <option key={k} value={k}>
                 {EXECUTOR_KIND_LABELS[k]}
+              </option>
+            ))}
+          </Select>
+        )}
+        {form.role === "executor" && form.executorKind === "therapist" && (
+          <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
+            <option value="">Select supervisor…</option>
+            {supervisors.map((s) => (
+              <option key={s._id} value={s._id}>
+                {s.name}
               </option>
             ))}
           </Select>
