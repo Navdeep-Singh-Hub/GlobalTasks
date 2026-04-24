@@ -23,6 +23,18 @@ const userSchema = new mongoose.Schema(
     lastAccessAt: { type: Date, default: null },
     avatarUrl: { type: String, default: "" },
     title: { type: String, default: "" },
+    weekOffDays: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: (arr) =>
+          Array.isArray(arr) &&
+          arr.every((d) =>
+            ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes(String(d || "").toLowerCase())
+          ),
+        message: "Invalid week off days",
+      },
+    },
   },
   { timestamps: true }
 );

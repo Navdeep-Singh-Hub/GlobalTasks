@@ -23,3 +23,11 @@ services:
         sync: false
       - key: CLIENT_ORIGINS
         sync: false
+      - key: WHATSAPP_DIGEST_SCHEDULER_ENABLED
+        value: "true"
+      - key: WHATSAPP_DIGEST_TIMEZONE
+        value: Asia/Kolkata
+      - key: WHATSAPP_MORNING_AT
+        value: "09:45"
+      - key: WHATSAPP_EVENING_AT
+        value: "17:59"

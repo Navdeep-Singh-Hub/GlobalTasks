@@ -7,6 +7,7 @@ import { TherapistSession } from "../models/TherapistSession.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
+import { isWeekOffOnDate } from "../utils/weekoff.js";
 
 const router = Router();
 router.use(authRequired);
@@ -295,7 +296,7 @@ router.get("/export", async (req, res) => {
 
 router.post("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
-  const meUser = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary").lean();
+  const meUser = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
   const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
   if (!isTherapist && !isManagement(req.userRole)) {
     return res.status(403).json({ message: "Only therapists or management can submit sessions" });
@@ -304,7 +305,7 @@ router.post("/therapist-sessions", async (req, res) => {
   const therapistId = isTherapist ? req.userId : String(req.body.therapistId || "");
   if (!therapistId) return res.status(400).json({ message: "Therapist is required" });
 
-  const therapist = await User.findById(therapistId).select("_id role executorKind centerId departmentPrimary").lean();
+  const therapist = await User.findById(therapistId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
   if (!therapist || therapist.role !== "executor" || therapist.executorKind !== "therapist") {
     return res.status(400).json({ message: "Selected user is not a therapist" });
   }
@@ -313,6 +314,9 @@ router.post("/therapist-sessions", async (req, res) => {
   }
 
   const sessionDate = String(req.body.sessionDate || new Date().toISOString().slice(0, 10));
+  if (isWeekOffOnDate(therapist.weekOffDays || [], sessionDate)) {
+    return res.status(400).json({ message: "Session cannot be uploaded on therapist week off day." });
+  }
   const patientName = String(req.body.patientName || "").trim();
   if (!patientName) return res.status(400).json({ message: "Patient name is required" });
   const durationMinutes =

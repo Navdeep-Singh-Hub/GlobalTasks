@@ -45,7 +45,10 @@ type Member = {
   lastAccessAt?: string | null;
   title?: string;
   avatarUrl?: string;
+  weekOffDays?: string[];
 };
+
+const WEEK_DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
 
 const ALL_PERMISSIONS = [
   "view_tasks",
@@ -341,6 +344,7 @@ function CreateUserModal({
     department: "",
     title: "",
     avatarUrl: "",
+    weekOffDays: [] as string[],
     password: "welcome123",
     permissions: ["view_tasks"] as string[],
   });
@@ -362,6 +366,11 @@ function CreateUserModal({
     setForm((f) => ({
       ...f,
       permissions: f.permissions.includes(p) ? f.permissions.filter((x) => x !== p) : [...f.permissions, p],
+    }));
+  const toggleWeekOff = (day: string) =>
+    setForm((f) => ({
+      ...f,
+      weekOffDays: f.weekOffDays.includes(day) ? f.weekOffDays.filter((d) => d !== day) : [...f.weekOffDays, day],
     }));
 
   const submit = async () => {
@@ -460,6 +469,24 @@ function CreateUserModal({
           </Select>
         )}
         <Input placeholder="Initial password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+        <div className="md:col-span-2">
+          <div className="mb-1.5 text-[12.5px] font-semibold text-zinc-700 dark:text-zinc-200">Week off days</div>
+          <div className="flex flex-wrap gap-1.5">
+            {WEEK_DAYS.map((d) => {
+              const on = form.weekOffDays.includes(d);
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => toggleWeekOff(d)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize transition ${on ? "bg-brand-gradient text-white shadow-brand" : "border border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900"}`}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        </div>
       </div>
       <PermissionPicker selected={form.permissions} onToggle={togglePerm} />
       {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700">{err}</div>}
@@ -494,6 +521,7 @@ function EditUserModal({
     department: user.department || "",
     title: user.title || "",
     avatarUrl: user.avatarUrl || "",
+    weekOffDays: [...(user.weekOffDays || [])],
     role: user.role,
     executorKind: user.executorKind || "",
     centerId: typeof user.centerId === "object" && user.centerId ? user.centerId._id : String(user.centerId || ""),
@@ -521,6 +549,11 @@ function EditUserModal({
     setForm((f) => ({
       ...f,
       permissions: f.permissions.includes(p) ? f.permissions.filter((x) => x !== p) : [...f.permissions, p],
+    }));
+  const toggleWeekOff = (day: string) =>
+    setForm((f) => ({
+      ...f,
+      weekOffDays: f.weekOffDays.includes(day) ? f.weekOffDays.filter((d) => d !== day) : [...f.weekOffDays, day],
     }));
 
   const submit = async () => {
@@ -556,6 +589,7 @@ function EditUserModal({
           department: form.department,
           title: form.title,
           avatarUrl: form.avatarUrl,
+          weekOffDays: form.weekOffDays,
           role: form.role,
           executorKind: form.role === "executor" ? form.executorKind : "",
           centerId: form.centerId,
@@ -642,6 +676,24 @@ function EditUserModal({
             ))}
           </Select>
         )}
+        <div className="md:col-span-2">
+          <div className="mb-1.5 text-[12.5px] font-semibold text-zinc-700 dark:text-zinc-200">Week off days</div>
+          <div className="flex flex-wrap gap-1.5">
+            {WEEK_DAYS.map((d) => {
+              const on = form.weekOffDays.includes(d);
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => toggleWeekOff(d)}
+                  className={`rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize transition ${on ? "bg-brand-gradient text-white shadow-brand" : "border border-zinc-200 bg-white text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900"}`}
+                >
+                  {d}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 dark:border-zinc-700 dark:bg-zinc-900/60">
           <input
             type="checkbox"

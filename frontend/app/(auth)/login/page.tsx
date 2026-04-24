@@ -39,11 +39,6 @@ export default function LoginPage() {
     }
   }
 
-  const quickFill = (emailVal: string) => {
-    setEmail(emailVal);
-    setPassword("demo123");
-  };
-
   return (
     <div className="safe-x safe-b relative flex min-h-[100dvh] min-h-screen items-center justify-center overflow-x-hidden bg-surface-muted px-4 py-10 sm:py-12 dark:bg-[#0b1220]">
       <div className="pointer-events-none absolute -left-24 top-0 h-96 w-96 rounded-full bg-brand-gradient-soft blur-3xl" />
@@ -110,23 +105,6 @@ export default function LoginPage() {
               {loading ? "Signing in…" : "Sign in"}
             </Button>
           </form>
-
-          <div className="mt-5 rounded-2xl border border-dashed border-brand-200 bg-brand-50/60 p-3 dark:border-brand-900/40 dark:bg-brand-900/10">
-            <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-brand-700 dark:text-brand-200">Demo accounts</div>
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
-              {[
-                { email: "admin@globaltasks.demo", label: "CEO" },
-                { email: "manager@globaltasks.demo", label: "Centre Head" },
-                { email: "coordinator@globaltasks.demo", label: "Coordinator" },
-                { email: "supervisor@globaltasks.demo", label: "Supervisor" },
-                { email: "user@globaltasks.demo", label: "Executor" },
-              ].map((x) => (
-                <button key={x.email} type="button" onClick={() => quickFill(x.email)} className="rounded-full border border-brand-200 bg-white px-2.5 py-1 font-semibold text-brand-700 hover:bg-brand-100 dark:border-brand-900/40 dark:bg-zinc-900 dark:text-brand-200">
-                  {x.label}
-                </button>
-              ))}
-            </div>
-          </div>
 
           <p className="mt-5 text-center text-[11.5px] text-zinc-500">
             New here?{" "}

@@ -8,6 +8,7 @@ import { logActivity } from "../services/activityService.js";
 import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
+import { isWeekOffToday } from "../utils/weekoff.js";
 
 const router = Router();
 router.use(authRequired);
@@ -312,6 +313,12 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     const requestedComplete = "status" in req.body && req.body.status === "completed";
+    if (requestedComplete && (task.assignees || []).some((id) => String(id) === String(req.userId))) {
+      const meUser = await User.findById(req.userId).select("_id weekOffDays").lean();
+      if (isWeekOffToday(meUser?.weekOffDays || [])) {
+        return res.status(400).json({ message: "You cannot mark tasks on your week off day." });
+      }
+    }
     const requiredFields = Array.isArray(task.requiredInputsSchema?.required) ? task.requiredInputsSchema.required : [];
     const payloadKeys = task.inputPayload && typeof task.inputPayload === "object" ? Object.keys(task.inputPayload) : [];
     const filledRequired = requiredFields.filter((k) => payloadKeys.includes(k) && task.inputPayload[k] !== "" && task.inputPayload[k] !== null)
@@ -401,6 +408,12 @@ router.post("/bulk", async (req, res) => {
   }
 
   if (status === "completed") {
+    if (req.userRole === "executor") {
+      const meUser = await User.findById(req.userId).select("_id weekOffDays").lean();
+      if (isWeekOffToday(meUser?.weekOffDays || [])) {
+        return res.status(400).json({ message: "You cannot mark tasks on your week off day." });
+      }
+    }
     const actor = await User.findById(req.userId).lean();
     const tasks = await Task.find({ _id: { $in: ids }, ...scope });
     for (const t of tasks) {

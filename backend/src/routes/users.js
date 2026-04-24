@@ -14,6 +14,7 @@ import { authRequired, requireCenterAssigned, requireManagement, requireRoles } 
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
+import { normalizeWeekOffDays } from "../utils/weekoff.js";
 
 const router = Router();
 router.use(authRequired);
@@ -75,6 +76,7 @@ router.post("/", requireManagement, async (req, res, next) => {
       reportsTo = null,
       title = "",
       avatarUrl = "",
+      weekOffDays = [],
       permissions,
       password = "welcome123",
     } = req.body;
@@ -112,6 +114,7 @@ router.post("/", requireManagement, async (req, res, next) => {
     if (existing) return res.status(409).json({ message: "Email already in use" });
 
     const ek = role === "executor" && executorKind ? executorKind : "";
+    const normalizedWeekOff = normalizeWeekOffDays(weekOffDays);
     const user = await User.create({
       name,
       email: email.toLowerCase(),
@@ -124,6 +127,7 @@ router.post("/", requireManagement, async (req, res, next) => {
       reportsTo: reportsToId,
       title: title || "",
       avatarUrl: avatarUrl || "",
+      weekOffDays: normalizedWeekOff,
       permissions: permissions?.length ? permissions : ["view_tasks"],
       passwordHash: await bcrypt.hash(password, 10),
     });
@@ -142,7 +146,7 @@ router.patch("/:id", requireManagement, async (req, res, next) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: "User not found" });
-    const { name, email, role, title, avatarUrl, department, departmentPrimary, centerId, reportsTo, phone, permissions, active, executorKind } =
+    const { name, email, role, title, avatarUrl, department, departmentPrimary, centerId, reportsTo, phone, permissions, active, executorKind, weekOffDays } =
       req.body;
     const me = await actor(req);
     if (name !== undefined) user.name = name;
@@ -196,6 +200,7 @@ router.patch("/:id", requireManagement, async (req, res, next) => {
       }
     }
     if (phone !== undefined) user.phone = phone;
+    if (weekOffDays !== undefined) user.weekOffDays = normalizeWeekOffDays(weekOffDays);
     if (Array.isArray(permissions)) user.permissions = permissions;
     if (typeof active === "boolean") {
       user.active = active;

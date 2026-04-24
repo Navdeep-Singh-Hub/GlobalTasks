@@ -22,6 +22,7 @@ import { setupSocket } from "./realtime/socket.js";
 import { setSocket } from "./services/notificationService.js";
 import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
 import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
+import { startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
 
 const app = express();
 const server = createServer(app);
@@ -96,6 +97,8 @@ connectDatabase(uri)
     await ensureMasterData();
     startTrashPurgeScheduler();
     startEscalationScheduler();
+    const digestEnabled = String(process.env.WHATSAPP_DIGEST_SCHEDULER_ENABLED || "true").toLowerCase() === "true";
+    if (digestEnabled) startWhatsAppTaskDigestScheduler();
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   })
   .catch((e) => {
