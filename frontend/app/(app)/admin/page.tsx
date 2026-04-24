@@ -345,7 +345,7 @@ function CreateUserModal({
     title: "",
     avatarUrl: "",
     weekOffDays: [] as string[],
-    password: "welcome123",
+    password: "",
     permissions: ["view_tasks"] as string[],
   });
   const [err, setErr] = useState("");
@@ -380,6 +380,10 @@ function CreateUserModal({
     }
     if (!form.phone.trim()) {
       setErr("Phone number is required.");
+      return;
+    }
+    if (!form.password.trim()) {
+      setErr("Password is required.");
       return;
     }
     if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {

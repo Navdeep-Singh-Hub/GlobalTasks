@@ -78,9 +78,10 @@ router.post("/", requireManagement, async (req, res, next) => {
       avatarUrl = "",
       weekOffDays = [],
       permissions,
-      password = "welcome123",
+      password = "",
     } = req.body;
     if (!name || !email || !String(phone || "").trim()) return res.status(400).json({ message: "Name, email and phone are required" });
+    if (!String(password || "").trim()) return res.status(400).json({ message: "Password is required" });
     if (!centerId) return res.status(400).json({ message: "Center is required" });
     if (!USER_ROLES.includes(role)) return res.status(400).json({ message: "Invalid role" });
     if (!canAssignRole(req.userRole, role)) {
