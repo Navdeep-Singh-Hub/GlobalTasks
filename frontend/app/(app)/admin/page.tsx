@@ -23,6 +23,7 @@ import {
   Pencil,
   Search,
   ShieldCheck,
+  Trash2,
   UserPlus,
   Users,
 } from "lucide-react";
@@ -88,6 +89,7 @@ function PermissionPicker({
 }
 
 export default function AdminPanelPage() {
+  const { user: me } = useAuth();
   const [members, setMembers] = useState<Member[]>([]);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("active");
@@ -121,6 +123,13 @@ export default function AdminPanelPage() {
 
   const toggleActive = async (m: Member) => {
     await api(`/users/${m._id}`, { method: "PATCH", body: JSON.stringify({ active: !m.active }) });
+    load();
+  };
+
+  const deleteUserPermanent = async (m: Member) => {
+    const ok = window.confirm(`Permanently delete ${m.name} and all linked data? This cannot be undone.`);
+    if (!ok) return;
+    await api(`/users/${m._id}`, { method: "DELETE" });
     load();
   };
 
@@ -271,6 +280,15 @@ export default function AdminPanelPage() {
                         >
                           <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${m.active ? "left-[18px]" : "left-0.5"}`} />
                         </button>
+                        {me?.role === "ceo" && m._id !== me._id && (
+                          <button
+                            onClick={() => void deleteUserPermanent(m)}
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 dark:hover:bg-zinc-800"
+                            title="Delete user permanently"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -349,6 +367,10 @@ function CreateUserModal({
   const submit = async () => {
     if (!form.centerId) {
       setErr("Center is required.");
+      return;
+    }
+    if (!form.phone.trim()) {
+      setErr("Phone number is required.");
       return;
     }
     if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {

@@ -1,6 +1,15 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { User } from "../models/User.js";
+import { Task } from "../models/Task.js";
+import { TaskEvent } from "../models/TaskEvent.js";
+import { Activity } from "../models/Activity.js";
+import { Notification } from "../models/Notification.js";
+import { Escalation } from "../models/Escalation.js";
+import { DailyReport } from "../models/DailyReport.js";
+import { TherapistSession } from "../models/TherapistSession.js";
+import { Project } from "../models/Project.js";
+import { TaskTemplate } from "../models/TaskTemplate.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo } from "../constants/roles.js";
@@ -69,7 +78,7 @@ router.post("/", requireManagement, async (req, res, next) => {
       permissions,
       password = "welcome123",
     } = req.body;
-    if (!name || !email) return res.status(400).json({ message: "Name and email required" });
+    if (!name || !email || !String(phone || "").trim()) return res.status(400).json({ message: "Name, email and phone are required" });
     if (!centerId) return res.status(400).json({ message: "Center is required" });
     if (!USER_ROLES.includes(role)) return res.status(400).json({ message: "Invalid role" });
     if (!canAssignRole(req.userRole, role)) {
@@ -209,6 +218,49 @@ router.post("/:id/reset-password", requireRoles("ceo", "centre_head"), async (re
   const pwd = req.body.password || "welcome123";
   user.passwordHash = await bcrypt.hash(pwd, 10);
   await user.save();
+  res.json({ ok: true });
+});
+
+router.delete("/:id", requireRoles("ceo"), async (req, res) => {
+  const userId = String(req.params.id || "");
+  if (!userId) return res.status(400).json({ message: "User id is required" });
+  if (userId === String(req.userId)) return res.status(400).json({ message: "CEO cannot delete own account" });
+
+  const user = await User.findById(userId).select("_id name role").lean();
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  const taskIds = await Task.find({
+    $or: [{ createdBy: user._id }, { assignees: user._id }],
+  })
+    .distinct("_id");
+
+  await Promise.all([
+    Task.deleteMany({ _id: { $in: taskIds } }),
+    TaskEvent.deleteMany({
+      $or: [{ taskId: { $in: taskIds } }, { actorId: user._id }],
+    }),
+    Escalation.deleteMany({ taskId: { $in: taskIds } }),
+    Activity.deleteMany({
+      $or: [{ actor: user._id }, { task: { $in: taskIds } }],
+    }),
+    Notification.deleteMany({ user: user._id }),
+    DailyReport.deleteMany({ userId: user._id }),
+    TherapistSession.deleteMany({
+      $or: [{ therapistId: user._id }, { createdBy: user._id }, { markedBy: user._id }],
+    }),
+    Project.deleteMany({ owner: user._id }),
+    TaskTemplate.deleteMany({ createdBy: user._id }),
+    User.updateMany({ reportsTo: user._id }, { $set: { reportsTo: null } }),
+    User.deleteOne({ _id: user._id }),
+  ]);
+
+  await logActivity({
+    actor: req.userId,
+    type: "user_deleted",
+    message: `${user.name} and linked data were permanently deleted`,
+    meta: { deletedUserId: String(user._id), deletedUserRole: user.role },
+  });
+
   res.json({ ok: true });
 });
 
