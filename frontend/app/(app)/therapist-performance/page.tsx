@@ -5,8 +5,8 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
 import { formatRoleLine, isManagement } from "@/lib/roles";
-import { Activity, Star } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, ChevronDown, ChevronRight, Star } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 type TherapistUser = { _id: string; name: string; email: string; role: string; executorKind?: string };
 type SessionItem = {
@@ -54,6 +54,7 @@ export default function TherapistPerformancePage() {
   const [to, setTo] = useState("");
   const [scoreDraft, setScoreDraft] = useState<Record<string, { score: string; remarks: string }>>({});
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [expandedSessionTherapists, setExpandedSessionTherapists] = useState<Record<string, boolean>>({});
 
   const canManage = isManagement(user?.role);
   const canMark = user?.role === "supervisor";
@@ -116,6 +117,32 @@ export default function TherapistPerformancePage() {
     }),
     [rows]
   );
+
+  const sessionGroups = useMemo(() => {
+    const m = new Map<string, { therapist: TherapistUser; items: SessionItem[] }>();
+    for (const s of sessions) {
+      const th = s.therapistId;
+      const id = th?._id || "__none__";
+      if (!m.has(id)) {
+        m.set(id, { therapist: th || { _id: id, name: "—", email: "", role: "executor", executorKind: "therapist" }, items: [] });
+      }
+      m.get(id)!.items.push(s);
+    }
+    for (const g of m.values()) {
+      g.items.sort((a, b) => {
+        const d = String(b.sessionDate).localeCompare(String(a.sessionDate));
+        if (d !== 0) return d;
+        return String(a.startedAt || "").localeCompare(String(b.startedAt || ""));
+      });
+    }
+    return Array.from(m.entries())
+      .map(([id, v]) => ({ id, ...v }))
+      .sort((a, b) => a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
+  }, [sessions]);
+
+  useEffect(() => {
+    setExpandedSessionTherapists({});
+  }, [sessionsPage, therapistId, from, to]);
 
   async function saveMarks(sessionId: string) {
     const existing = sessions.find((s) => s._id === sessionId);
@@ -261,44 +288,111 @@ export default function TherapistPerformancePage() {
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          Showing {sessions.length} of {sessionsTotal} session entries.
+          {sessionGroups.length} therapist{sessionGroups.length === 1 ? "" : "s"} on this page — {sessions.length} of {sessionsTotal} total session
+          {sessionsTotal === 1 ? "" : "s"}. Open a row to see patient and time for each session.
         </p>
         <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-          <table className="w-full min-w-[920px] text-sm">
+          <table className="w-full min-w-[min(100%,360px)] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
-                <th className="px-2 py-2">Date</th>
                 <th className="px-2 py-2">Therapist</th>
-                <th className="px-2 py-2">Patient</th>
-                <th className="px-2 py-2">Start</th>
-                <th className="px-2 py-2">Duration</th>
-                <th className="px-2 py-2">Video</th>
-                <th className="px-2 py-2">Marks</th>
+                <th className="px-2 py-2 text-right">Sessions</th>
               </tr>
             </thead>
             <tbody>
-              {sessions.map((s) => (
-                <tr key={s._id} className="border-t border-zinc-100 dark:border-zinc-800">
-                  <td className="px-2 py-2">{s.sessionDate}</td>
-                  <td className="px-2 py-2">{s.therapistId?.name || "—"}</td>
-                  <td className="px-2 py-2">{s.patientName}</td>
-                  <td className="px-2 py-2">{s.startedAt || "—"}</td>
-                  <td className="px-2 py-2">{s.durationMinutes || 0} min</td>
-                  <td className="px-2 py-2">
-                    {s.videoUrl ? (
-                      <a href={assetUrl(s.videoUrl)} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
-                        View
-                      </a>
-                    ) : (
-                      "No"
+              {sessionGroups.map((g) => {
+                const open = Boolean(expandedSessionTherapists[g.id]);
+                return (
+                  <Fragment key={g.id}>
+                    <tr
+                      tabIndex={0}
+                      aria-expanded={open}
+                      aria-label={`${g.therapist.name} — ${g.items.length} session(s), ${open ? "expanded" : "collapsed"}`}
+                      className="cursor-pointer border-t border-zinc-100 select-none outline-none hover:bg-zinc-50/90 focus-visible:ring-2 focus-visible:ring-brand-500/30 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
+                      onClick={() => setExpandedSessionTherapists((p) => ({ ...p, [g.id]: !p[g.id] }))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setExpandedSessionTherapists((p) => ({ ...p, [g.id]: !p[g.id] }));
+                        }
+                      }}
+                    >
+                      <td className="px-2 py-2 align-top">
+                        <div className="flex items-start gap-2">
+                          {open ? (
+                            <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
+                          ) : (
+                            <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500" aria-hidden />
+                          )}
+                          <div>
+                            <div className="font-semibold text-zinc-900 dark:text-zinc-100">{g.therapist.name}</div>
+                            <div className="text-xs text-zinc-500">{g.therapist.email || "—"}</div>
+                            <div className="mt-0.5 text-xs text-zinc-400 sm:hidden">
+                              {open ? "Tap to hide details" : "Tap for session list"}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-2 py-2 text-right tabular-nums align-top text-zinc-800 dark:text-zinc-200">{g.items.length}</td>
+                    </tr>
+                    {open && (
+                      <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                        <td colSpan={2} className="px-0 pb-3 pt-0">
+                          <div className="ml-1 border-l-2 border-brand-200/80 pl-3 dark:border-brand-800/50 sm:ml-6 sm:pl-4">
+                            <div className="max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+                              <table className="w-full min-w-[640px] text-sm">
+                                <thead className="text-left text-xs uppercase text-zinc-500">
+                                  <tr>
+                                    <th className="px-2 py-1.5">Date</th>
+                                    <th className="px-2 py-1.5">Patient</th>
+                                    <th className="px-2 py-1.5">Start</th>
+                                    <th className="px-2 py-1.5">Duration</th>
+                                    <th className="px-2 py-1.5">Video</th>
+                                    <th className="px-2 py-1.5">Marks</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {g.items.map((s) => (
+                                    <tr
+                                      key={s._id}
+                                      className="border-t border-zinc-100 bg-white/80 dark:border-zinc-800 dark:bg-zinc-950/40"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <td className="px-2 py-1.5">{s.sessionDate}</td>
+                                      <td className="px-2 py-1.5">{s.patientName}</td>
+                                      <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
+                                      <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
+                                      <td className="px-2 py-1.5">
+                                        {s.videoUrl ? (
+                                          <a
+                                            href={assetUrl(s.videoUrl)}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="text-brand-600 hover:underline"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            View
+                                          </a>
+                                        ) : (
+                                          "No"
+                                        )}
+                                      </td>
+                                      <td className="px-2 py-1.5">{s.supervisorScore || 0}/5</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className="px-2 py-2">{s.supervisorScore || 0}/5</td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
               {!sessions.length && (
                 <tr>
-                  <td colSpan={7} className="px-2 py-8 text-center text-zinc-500">
+                  <td colSpan={2} className="px-2 py-8 text-center text-zinc-500">
                     No sessions found for selected filters.
                   </td>
                 </tr>

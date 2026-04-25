@@ -48,7 +48,15 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
     const ids = await User.find({ centerId }).distinct("_id");
     return ids.map(String);
   }
-  if (actorRole === "coordinator" || actorRole === "supervisor") {
+  if (actorRole === "coordinator") {
+    const ids = await User.find({
+      centerId,
+      role: { $in: ["supervisor", "executor"] },
+      active: true,
+    }).distinct("_id");
+    return ids.map(String);
+  }
+  if (actorRole === "supervisor") {
     const descendants = await getDescendantUsers(actorId, centerId);
     return [String(actorId), ...descendants.map((u) => String(u._id))];
   }
@@ -69,9 +77,17 @@ export async function getAssignableAssigneeIds({ actorId, actorRole, centerId })
     }).distinct("_id");
     return ids.map(String);
   }
+  if (actorRole === "coordinator") {
+    const ids = await User.find({
+      centerId,
+      role: { $in: ["supervisor", "executor"] },
+      active: true,
+    }).distinct("_id");
+    return ids.map(String);
+  }
 
   const descendants = await getDescendantUsers(actorId, centerId);
-  const allowedRoles = actorRole === "coordinator" ? new Set(["supervisor", "executor"]) : new Set(["executor"]);
+  const allowedRoles = new Set(["executor"]);
   return descendants.filter((u) => allowedRoles.has(u.role)).map((u) => String(u._id));
 }
 

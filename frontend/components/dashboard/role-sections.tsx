@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, ListChecks, Timer, TriangleAlert, Users } from "lucide-react";
+import { useMemo, useState } from "react";
 import { KpiCard } from "./kpi-card";
 import { DeliveryCurve } from "./delivery-curve";
 import { TeamFocus } from "./team-focus";
@@ -120,13 +121,82 @@ export function CoordinatorDashboard({
   plannedTotal: number;
   completedTotal: number;
 }) {
+  const [headcountView, setHeadcountView] = useState<"supervisors" | "executors">("executors");
+  const detailRows = useMemo(
+    () =>
+      team
+        .filter((m) => (headcountView === "supervisors" ? m.user.role === "supervisor" : m.user.role === "executor"))
+        .sort((a, b) => {
+          if (b.total !== a.total) return b.total - a.total;
+          if (b.pending !== a.pending) return b.pending - a.pending;
+          return a.user.name.localeCompare(b.user.name, undefined, { sensitivity: "base" });
+        }),
+    [team, headcountView]
+  );
+
   return (
     <>
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Supervisors" value={coordinator?.supervisors ?? "—"} icon={Users} tone="brand" hint="Reporting to you" />
-        <KpiCard label="Executors" value={coordinator?.executors ?? "—"} icon={ListChecks} tone="violet" hint="Managed headcount" />
+        <button type="button" onClick={() => setHeadcountView("supervisors")} className="text-left">
+          <KpiCard
+            label="Supervisors"
+            value={coordinator?.supervisors ?? "—"}
+            icon={Users}
+            tone="brand"
+            hint={headcountView === "supervisors" ? "Showing supervisor-wise counts below" : "Click to view supervisor-wise counts"}
+          />
+        </button>
+        <button type="button" onClick={() => setHeadcountView("executors")} className="text-left">
+          <KpiCard
+            label="Executors"
+            value={coordinator?.executors ?? "—"}
+            icon={ListChecks}
+            tone="violet"
+            hint={headcountView === "executors" ? "Showing executor-wise counts below" : "Click to view executor-wise counts"}
+          />
+        </button>
         <KpiCard label="Departments tracked" value={coordinator?.byDepartment?.length ?? "—"} icon={CheckCircle2} tone="emerald" hint="Active departments" />
         <KpiCard label="Task completion trends" value={summary?.cards.completed ?? "—"} icon={Timer} tone="amber" hint="Completion in selected scope" />
+      </section>
+
+      <section className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-base font-bold">{headcountView === "executors" ? "Executor-wise counts" : "Supervisor-wise counts"}</h3>
+          <div className="text-xs text-zinc-500">Showing {detailRows.length} member(s)</div>
+        </div>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-[700px] text-sm">
+            <thead className="text-left text-xs uppercase text-zinc-500">
+              <tr>
+                <th className="px-2 py-2">Name</th>
+                <th className="px-2 py-2">Role</th>
+                <th className="px-2 py-2">Total</th>
+                <th className="px-2 py-2">Pending</th>
+                <th className="px-2 py-2">Overdue</th>
+                <th className="px-2 py-2">Completed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailRows.map((m) => (
+                <tr key={m.user._id} className="border-t border-zinc-100 dark:border-zinc-800">
+                  <td className="px-2 py-2 font-medium">{m.user.name}</td>
+                  <td className="px-2 py-2 capitalize">{m.user.role}</td>
+                  <td className="px-2 py-2">{m.total}</td>
+                  <td className="px-2 py-2">{m.pending}</td>
+                  <td className="px-2 py-2">{m.overdue}</td>
+                  <td className="px-2 py-2">{m.completed}</td>
+                </tr>
+              ))}
+              {!detailRows.length && (
+                <tr>
+                  <td colSpan={6} className="px-2 py-6 text-center text-zinc-500">
+                    No {headcountView} found in this center.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">

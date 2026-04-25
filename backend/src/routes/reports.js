@@ -168,15 +168,14 @@ router.get("/coordinator", async (req, res) => {
   const me = await actor(req);
   const coordinatorId = req.query.coordinatorId || req.userId;
   const supervisors = await User.find({
-    reportsTo: coordinatorId,
+    role: "supervisor",
     active: true,
     ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
   })
     .select("_id name role")
     .lean();
-  const supervisorIds = supervisors.map((u) => u._id);
   const executors = await User.find({
-    reportsTo: { $in: supervisorIds },
+    role: "executor",
     active: true,
     ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
   })

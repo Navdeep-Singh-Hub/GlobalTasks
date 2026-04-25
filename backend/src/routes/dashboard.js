@@ -150,6 +150,66 @@ router.get("/team-performance", async (_req, res) => {
   res.json({ members: results });
 });
 
+/** Task titles for dashboard drill-down (same visibility as team-performance). */
+router.get("/member-tasks", async (req, res) => {
+  const assigneeId = String(req.query.assigneeId || "").trim();
+  if (!assigneeId) return res.status(400).json({ message: "assigneeId is required" });
+
+  const me = await actor(req);
+  const userFilter = { active: true, _id: assigneeId };
+  if (!isCeo(req.userRole)) userFilter.centerId = me?.centerId || null;
+
+  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (visibleIds && !visibleIds.includes(String(assigneeId))) {
+    return res.status(403).json({ message: "Not allowed to view this member" });
+  }
+
+  if (req.userRole === "centre_head") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
+  else if (req.userRole === "coordinator") userFilter.role = { $in: ["supervisor", "executor"] };
+  else if (req.userRole === "supervisor") userFilter.role = "executor";
+  else if (req.userRole === "executor") {
+    if (String(assigneeId) !== String(req.userId)) return res.status(403).json({ message: "Not allowed" });
+  }
+
+  const member = await User.findOne(userFilter).select("_id").lean();
+  if (!member) return res.status(404).json({ message: "Member not found" });
+
+  const centerScope = isCeo(req.userRole) ? {} : { centerId: me?.centerId || null };
+  const base = { assignees: assigneeId, deletedAt: null, ...centerScope };
+  const now = new Date();
+
+  const [completed, pending, overdue] = await Promise.all([
+    Task.find({ ...base, status: "completed" })
+      .select("title dueDate updatedAt")
+      .sort({ updatedAt: -1 })
+      .limit(100)
+      .lean(),
+    Task.find({ ...base, status: "pending" })
+      .select("title dueDate status")
+      .sort({ dueDate: 1 })
+      .limit(100)
+      .lean(),
+    Task.find({ ...base, status: { $ne: "completed" }, dueDate: { $lt: now } })
+      .select("title dueDate status")
+      .sort({ dueDate: 1 })
+      .limit(100)
+      .lean(),
+  ]);
+
+  const fmt = (t) => ({
+    _id: String(t._id),
+    title: t.title || "Untitled",
+    dueDate: t.dueDate ? new Date(t.dueDate).toISOString() : null,
+    status: t.status,
+  });
+
+  res.json({
+    completed: completed.map(fmt),
+    pending: pending.map(fmt),
+    overdue: overdue.map(fmt),
+  });
+});
+
 router.get("/activity", async (req, res) => {
   const me = await actor(req);
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
