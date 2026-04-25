@@ -128,13 +128,13 @@ export default function TherapistPerformancePage() {
       }
       m.get(id)!.items.push(s);
     }
-    for (const g of m.values()) {
+    Array.from(m.values()).forEach((g) => {
       g.items.sort((a, b) => {
         const d = String(b.sessionDate).localeCompare(String(a.sessionDate));
         if (d !== 0) return d;
         return String(a.startedAt || "").localeCompare(String(b.startedAt || ""));
       });
-    }
+    });
     return Array.from(m.entries())
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
