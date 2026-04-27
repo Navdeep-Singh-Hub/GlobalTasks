@@ -6,7 +6,8 @@ import { useAuth } from "@/contexts/auth-context";
 
 export default function PendingRecurringPage() {
   const { user } = useAuth();
-  const showTherapistDailyLog = user?.role === "executor" && user?.executorKind === "therapist";
+  const showTherapistDailyLog =
+    (user?.role === "executor" && user?.executorKind === "therapist") || user?.role === "supervisor";
 
   return (
     <div className={showTherapistDailyLog ? "space-y-8" : "space-y-5"}>

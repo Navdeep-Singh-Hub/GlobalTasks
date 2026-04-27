@@ -18,7 +18,7 @@ const perfCache = new Map();
 
 async function actor(req) {
   if (req._actor) return req._actor;
-  req._actor = await User.findById(req.userId).select("_id role centerId").lean();
+  req._actor = await User.findById(req.userId).select("_id role executorKind centerId").lean();
   return req._actor;
 }
 
@@ -357,8 +357,9 @@ router.post("/therapist-sessions", async (req, res) => {
 
 router.get("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) {
-    return res.status(403).json({ message: "Insufficient permissions" });
+  const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
+  if (!isManagement(req.userRole) && !isTherapist) {
+    return res.status(403).json({ message: "Only therapists or management can view sessions" });
   }
   const { page, limit, skip } = parsePageLimit(req.query, 30, 100);
 
@@ -369,6 +370,7 @@ router.get("/therapist-sessions", async (req, res) => {
     if (req.query.to) q.sessionDate.$lte = String(req.query.to);
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
+  if (isTherapist) q.therapistId = req.userId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
   if (req.userRole === "supervisor") {
     const descendants = await getDescendantUsers(req.userId, me?.centerId || null);

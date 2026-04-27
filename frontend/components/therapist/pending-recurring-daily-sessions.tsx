@@ -1,10 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
+import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -18,6 +19,16 @@ type SessionRow = {
   videoUploaded: boolean;
 };
 
+type UploadedSession = {
+  _id: string;
+  sessionDate: string;
+  patientName: string;
+  startedAt?: string;
+  durationMinutes?: number;
+  videoUploaded?: boolean;
+  therapistId?: { _id: string; name: string } | null;
+};
+
 function newRow(): SessionRow {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -29,10 +40,47 @@ function newRow(): SessionRow {
 }
 
 export function PendingRecurringDailySessions() {
+  const { user } = useAuth();
+  const isSupervisor = user?.role === "supervisor";
+  const [therapists, setTherapists] = useState<{ _id: string; name: string; executorKind?: string; role: string }[]>([]);
+  const [therapistId, setTherapistId] = useState("");
   const [sessionDate, setSessionDate] = useState(todayIsoDate);
   const [rows, setRows] = useState<SessionRow[]>(() => [newRow()]);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+  const [uploadedSessions, setUploadedSessions] = useState<UploadedSession[]>([]);
+  const [loadingUploaded, setLoadingUploaded] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [viewDate, setViewDate] = useState(todayIsoDate);
+
+  useEffect(() => {
+    if (!isSupervisor) return;
+    api<{ users: { _id: string; name: string; executorKind?: string; role: string }[] }>("/users")
+      .then((d) => {
+        const list = d.users.filter((u) => u.role === "executor" && u.executorKind === "therapist");
+        setTherapists(list);
+      })
+      .catch(() => setTherapists([]));
+  }, [isSupervisor]);
+
+  const selectedTherapistName = useMemo(
+    () => therapists.find((t) => t._id === therapistId)?.name || "",
+    [therapists, therapistId]
+  );
+
+  useEffect(() => {
+    if (!user) return;
+    const qs = new URLSearchParams();
+    qs.set("limit", "100");
+    qs.set("from", viewDate);
+    qs.set("to", viewDate);
+    if (isSupervisor && therapistId) qs.set("therapistId", therapistId);
+    setLoadingUploaded(true);
+    api<{ sessions: UploadedSession[] }>(`/reports/therapist-sessions?${qs.toString()}`)
+      .then((d) => setUploadedSessions(Array.isArray(d.sessions) ? d.sessions : []))
+      .catch(() => setUploadedSessions([]))
+      .finally(() => setLoadingUploaded(false));
+  }, [user, isSupervisor, therapistId, viewDate, refreshToken]);
 
   const addRow = useCallback(() => setRows((r) => [...r, newRow()]), []);
   const removeRow = useCallback((id: string) => {
@@ -44,6 +92,10 @@ export function PendingRecurringDailySessions() {
 
   const submit = async () => {
     const filled = rows.filter((r) => r.patientName.trim());
+    if (isSupervisor && !therapistId) {
+      setMessage({ type: "err", text: "Select therapist first." });
+      return;
+    }
     if (!filled.length) {
       setMessage({ type: "err", text: "Add at least one session with a patient name." });
       return;
@@ -62,12 +114,14 @@ export function PendingRecurringDailySessions() {
             durationMinutes: Number(r.durationMinutes) || 0,
             videoUploaded: r.videoUploaded,
             videoUrl: "",
+            therapistId: isSupervisor ? therapistId : undefined,
           }),
         });
       }
       setRows([newRow()]);
       setSessionDate(todayIsoDate());
       setMessage({ type: "ok", text: `Saved ${filled.length} session(s).` });
+      setRefreshToken((v) => v + 1);
     } catch (e) {
       setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not save sessions." });
     } finally {
@@ -86,10 +140,25 @@ export function PendingRecurringDailySessions() {
             rows, then save all at once.
           </p>
         </div>
-        <label className="w-full space-y-1 sm:w-auto">
-          <span className="text-xs font-semibold text-zinc-500">Date</span>
-          <Input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} className="w-full sm:w-[160px]" />
-        </label>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          {isSupervisor && (
+            <label className="space-y-1 sm:min-w-[220px]">
+              <span className="text-xs font-semibold text-zinc-500">Therapist</span>
+              <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>
+                <option value="">Select therapist</option>
+                {therapists.map((t) => (
+                  <option key={t._id} value={t._id}>
+                    {t.name}
+                  </option>
+                ))}
+              </Select>
+            </label>
+          )}
+          <label className="space-y-1 sm:w-auto">
+            <span className="text-xs font-semibold text-zinc-500">Date</span>
+            <Input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} className="w-full sm:w-[160px]" />
+          </label>
+        </div>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
@@ -174,10 +243,61 @@ export function PendingRecurringDailySessions() {
       )}
 
       <div className="mt-4 flex flex-col gap-3 border-t border-brand-100 pt-4 dark:border-brand-900/40 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[11px] text-zinc-500">Saved sessions appear on Therapist Performance for supervisors.</p>
+        <p className="text-[11px] text-zinc-500">
+          {isSupervisor
+            ? `Saving for: ${selectedTherapistName || "select a therapist"}`
+            : "Saved sessions appear on Therapist Performance for supervisors."}
+        </p>
         <Button type="button" onClick={() => void submit()} disabled={submitting} className="w-full gap-2 sm:w-auto">
           {submitting ? "Saving…" : "Save all sessions"}
         </Button>
+      </div>
+
+      <div className="mt-5 rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Recent uploaded sessions</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            {isSupervisor && (
+              <span className="text-[11px] text-zinc-500">{selectedTherapistName ? `Filter: ${selectedTherapistName}` : "Filter: All therapists"}</span>
+            )}
+            <label className="flex items-center gap-2 text-[11px] text-zinc-500">
+              <span>Date</span>
+              <Input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="h-8 min-w-[148px] px-2.5 text-xs" />
+            </label>
+          </div>
+        </div>
+        {loadingUploaded ? (
+          <p className="mt-3 text-xs text-zinc-500">Loading sessions...</p>
+        ) : uploadedSessions.length ? (
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[620px] text-sm">
+              <thead className="text-left text-[11px] uppercase text-zinc-500">
+                <tr>
+                  <th className="px-2 py-1.5">Date</th>
+                  <th className="px-2 py-1.5">Patient</th>
+                  <th className="px-2 py-1.5">Start</th>
+                  <th className="px-2 py-1.5">Duration</th>
+                  {isSupervisor && <th className="px-2 py-1.5">Therapist</th>}
+                  <th className="px-2 py-1.5">Video</th>
+                </tr>
+              </thead>
+              <tbody>
+                {uploadedSessions.map((s) => (
+                  <tr key={s._id} className="border-t border-zinc-100 dark:border-zinc-800">
+                    <td className="px-2 py-1.5">{s.sessionDate}</td>
+                    <td className="px-2 py-1.5">{s.patientName}</td>
+                    <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
+                    <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
+                    {isSupervisor && <td className="px-2 py-1.5">{s.therapistId?.name || "—"}</td>}
+                    <td className="px-2 py-1.5">{s.videoUploaded ? "Yes" : "No"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-3 text-xs text-zinc-500">No uploaded sessions found for {viewDate}.</p>
+        )}
       </div>
     </section>
   );
