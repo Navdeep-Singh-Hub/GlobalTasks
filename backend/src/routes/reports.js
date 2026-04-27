@@ -297,24 +297,20 @@ router.post("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
   const meUser = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
   const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
-  if (!isTherapist && !isManagement(req.userRole)) {
-    return res.status(403).json({ message: "Only therapists or management can submit sessions" });
+  const isSupervisor = meUser?.role === "supervisor";
+  if (!isTherapist && !isSupervisor) {
+    return res.status(403).json({ message: "Only therapists or supervisors can submit sessions" });
   }
 
-  const therapistId = isTherapist ? req.userId : String(req.body.therapistId || "");
-  if (!therapistId) return res.status(400).json({ message: "Therapist is required" });
-
-  const therapist = await User.findById(therapistId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
-  if (!therapist || therapist.role !== "executor" || therapist.executorKind !== "therapist") {
-    return res.status(400).json({ message: "Selected user is not a therapist" });
-  }
-  if (!isCeo(req.userRole) && String(therapist.centerId || "") !== String(me?.centerId || "")) {
-    return res.status(403).json({ message: "Therapist must belong to your center" });
+  const uploader = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
+  if (!uploader) return res.status(404).json({ message: "User not found" });
+  if (!isCeo(req.userRole) && String(uploader.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "User must belong to your center" });
   }
 
   const sessionDate = String(req.body.sessionDate || new Date().toISOString().slice(0, 10));
-  if (isWeekOffOnDate(therapist.weekOffDays || [], sessionDate)) {
-    return res.status(400).json({ message: "Session cannot be uploaded on therapist week off day." });
+  if (isWeekOffOnDate(uploader.weekOffDays || [], sessionDate)) {
+    return res.status(400).json({ message: "Session cannot be uploaded on week off day." });
   }
   const patientName = String(req.body.patientName || "").trim();
   if (!patientName) return res.status(400).json({ message: "Patient name is required" });
@@ -324,9 +320,9 @@ router.post("/therapist-sessions", async (req, res) => {
       : Number(req.body.startedAt && req.body.endedAt ? 30 : 0);
 
   const session = await TherapistSession.create({
-    therapistId: therapist._id,
-    centerId: therapist.centerId,
-    departmentId: therapist.departmentPrimary || null,
+    therapistId: uploader._id,
+    centerId: uploader.centerId,
+    departmentId: uploader.departmentPrimary || null,
     sessionDate,
     patientName,
     patientCode: String(req.body.patientCode || ""),
@@ -358,8 +354,9 @@ router.post("/therapist-sessions", async (req, res) => {
 router.get("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
   const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
-  if (!isManagement(req.userRole) && !isTherapist) {
-    return res.status(403).json({ message: "Only therapists or management can view sessions" });
+  const isSupervisor = req.userRole === "supervisor" && me?.role === "supervisor";
+  if (!isManagement(req.userRole) && !isTherapist && !isSupervisor) {
+    return res.status(403).json({ message: "Only therapists or supervisors can view sessions" });
   }
   const { page, limit, skip } = parsePageLimit(req.query, 30, 100);
 
@@ -371,8 +368,9 @@ router.get("/therapist-sessions", async (req, res) => {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (isTherapist) q.therapistId = req.userId;
+  if (isSupervisor && String(req.query.scope || "").toLowerCase() === "self") q.therapistId = req.userId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  if (req.userRole === "supervisor") {
+  if (req.userRole === "supervisor" && !q.therapistId) {
     const descendants = await getDescendantUsers(req.userId, me?.centerId || null);
     const therapistIds = descendants
       .filter((u) => u.role === "executor" && u.executorKind === "therapist")

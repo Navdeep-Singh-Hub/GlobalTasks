@@ -9,6 +9,10 @@ function normalizePhone(phone) {
   return raw.startsWith("+") ? raw.slice(1) : raw;
 }
 
+export function isWhatsAppConfigured() {
+  return Boolean(API_URL && ACCESS_TOKEN);
+}
+
 export async function sendWhatsAppText({ to, text }) {
   const phone = normalizePhone(to || ADMIN_PHONE);
   if (!phone || !text) return { ok: false, skipped: true, reason: "missing_phone_or_text" };

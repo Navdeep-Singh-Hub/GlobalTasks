@@ -1,11 +1,11 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
 import { Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -42,8 +42,6 @@ function newRow(): SessionRow {
 export function PendingRecurringDailySessions() {
   const { user } = useAuth();
   const isSupervisor = user?.role === "supervisor";
-  const [therapists, setTherapists] = useState<{ _id: string; name: string; executorKind?: string; role: string }[]>([]);
-  const [therapistId, setTherapistId] = useState("");
   const [sessionDate, setSessionDate] = useState(todayIsoDate);
   const [rows, setRows] = useState<SessionRow[]>(() => [newRow()]);
   const [submitting, setSubmitting] = useState(false);
@@ -54,33 +52,18 @@ export function PendingRecurringDailySessions() {
   const [viewDate, setViewDate] = useState(todayIsoDate);
 
   useEffect(() => {
-    if (!isSupervisor) return;
-    api<{ users: { _id: string; name: string; executorKind?: string; role: string }[] }>("/users")
-      .then((d) => {
-        const list = d.users.filter((u) => u.role === "executor" && u.executorKind === "therapist");
-        setTherapists(list);
-      })
-      .catch(() => setTherapists([]));
-  }, [isSupervisor]);
-
-  const selectedTherapistName = useMemo(
-    () => therapists.find((t) => t._id === therapistId)?.name || "",
-    [therapists, therapistId]
-  );
-
-  useEffect(() => {
     if (!user) return;
     const qs = new URLSearchParams();
     qs.set("limit", "100");
     qs.set("from", viewDate);
     qs.set("to", viewDate);
-    if (isSupervisor && therapistId) qs.set("therapistId", therapistId);
+    if (isSupervisor) qs.set("scope", "self");
     setLoadingUploaded(true);
     api<{ sessions: UploadedSession[] }>(`/reports/therapist-sessions?${qs.toString()}`)
       .then((d) => setUploadedSessions(Array.isArray(d.sessions) ? d.sessions : []))
       .catch(() => setUploadedSessions([]))
       .finally(() => setLoadingUploaded(false));
-  }, [user, isSupervisor, therapistId, viewDate, refreshToken]);
+  }, [user, isSupervisor, viewDate, refreshToken]);
 
   const addRow = useCallback(() => setRows((r) => [...r, newRow()]), []);
   const removeRow = useCallback((id: string) => {
@@ -92,10 +75,6 @@ export function PendingRecurringDailySessions() {
 
   const submit = async () => {
     const filled = rows.filter((r) => r.patientName.trim());
-    if (isSupervisor && !therapistId) {
-      setMessage({ type: "err", text: "Select therapist first." });
-      return;
-    }
     if (!filled.length) {
       setMessage({ type: "err", text: "Add at least one session with a patient name." });
       return;
@@ -114,7 +93,6 @@ export function PendingRecurringDailySessions() {
             durationMinutes: Number(r.durationMinutes) || 0,
             videoUploaded: r.videoUploaded,
             videoUrl: "",
-            therapistId: isSupervisor ? therapistId : undefined,
           }),
         });
       }
@@ -141,19 +119,6 @@ export function PendingRecurringDailySessions() {
           </p>
         </div>
         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          {isSupervisor && (
-            <label className="space-y-1 sm:min-w-[220px]">
-              <span className="text-xs font-semibold text-zinc-500">Therapist</span>
-              <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>
-                <option value="">Select therapist</option>
-                {therapists.map((t) => (
-                  <option key={t._id} value={t._id}>
-                    {t.name}
-                  </option>
-                ))}
-              </Select>
-            </label>
-          )}
           <label className="space-y-1 sm:w-auto">
             <span className="text-xs font-semibold text-zinc-500">Date</span>
             <Input type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} className="w-full sm:w-[160px]" />
@@ -245,7 +210,7 @@ export function PendingRecurringDailySessions() {
       <div className="mt-4 flex flex-col gap-3 border-t border-brand-100 pt-4 dark:border-brand-900/40 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[11px] text-zinc-500">
           {isSupervisor
-            ? `Saving for: ${selectedTherapistName || "select a therapist"}`
+            ? "Saving your own supervisor sessions."
             : "Saved sessions appear on Therapist Performance for supervisors."}
         </p>
         <Button type="button" onClick={() => void submit()} disabled={submitting} className="w-full gap-2 sm:w-auto">
@@ -257,9 +222,6 @@ export function PendingRecurringDailySessions() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Recent uploaded sessions</h3>
           <div className="flex flex-wrap items-center gap-2">
-            {isSupervisor && (
-              <span className="text-[11px] text-zinc-500">{selectedTherapistName ? `Filter: ${selectedTherapistName}` : "Filter: All therapists"}</span>
-            )}
             <label className="flex items-center gap-2 text-[11px] text-zinc-500">
               <span>Date</span>
               <Input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="h-8 min-w-[148px] px-2.5 text-xs" />
@@ -277,7 +239,6 @@ export function PendingRecurringDailySessions() {
                   <th className="px-2 py-1.5">Patient</th>
                   <th className="px-2 py-1.5">Start</th>
                   <th className="px-2 py-1.5">Duration</th>
-                  {isSupervisor && <th className="px-2 py-1.5">Therapist</th>}
                   <th className="px-2 py-1.5">Video</th>
                 </tr>
               </thead>
@@ -288,7 +249,6 @@ export function PendingRecurringDailySessions() {
                     <td className="px-2 py-1.5">{s.patientName}</td>
                     <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
                     <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
-                    {isSupervisor && <td className="px-2 py-1.5">{s.therapistId?.name || "—"}</td>}
                     <td className="px-2 py-1.5">{s.videoUploaded ? "Yes" : "No"}</td>
                   </tr>
                 ))}

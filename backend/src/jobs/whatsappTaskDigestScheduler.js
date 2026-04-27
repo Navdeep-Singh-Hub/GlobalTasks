@@ -59,8 +59,20 @@ function shouldRunNow(current, target) {
   return current >= target;
 }
 
+async function safeSendDigestMessage({ user, text, runType }) {
+  try {
+    const result = await sendWhatsAppText({ to: user.phone, text });
+    if (result?.skipped) return { sent: 0, skipped: 1, failed: 0 };
+    return { sent: 1, skipped: 0, failed: 0 };
+  } catch (e) {
+    console.error(`[whatsapp] ${runType} send failed user=${user._id} phone=${user.phone}:`, e.message || e);
+    return { sent: 0, skipped: 0, failed: 1 };
+  }
+}
+
 async function runMorningDigest(now = new Date()) {
   const users = await User.find({ active: true, phone: { $ne: "" } }).select("_id name phone").lean();
+  const stats = { recipients: users.length, considered: 0, sent: 0, skipped: 0, failed: 0 };
   for (const u of users) {
     const tasks = await Task.find({
       assignees: u._id,
@@ -72,15 +84,21 @@ async function runMorningDigest(now = new Date()) {
       .limit(8)
       .lean();
     if (!tasks.length) continue;
+    stats.considered += 1;
     const lines = tasks.map((t, idx) => `${idx + 1}. ${t.title} (${t.status.replace("_", " ")})`);
     const text = `Good morning ${u.name}. Assigned tasks for today:\n${lines.join("\n")}`;
     // eslint-disable-next-line no-await-in-loop
-    await sendWhatsAppText({ to: u.phone, text });
+    const res = await safeSendDigestMessage({ user: u, text, runType: "morning" });
+    stats.sent += res.sent;
+    stats.skipped += res.skipped;
+    stats.failed += res.failed;
   }
+  return stats;
 }
 
 async function runEveningDigest(now = new Date()) {
   const users = await User.find({ active: true, phone: { $ne: "" } }).select("_id name phone").lean();
+  const stats = { recipients: users.length, considered: 0, sent: 0, skipped: 0, failed: 0 };
   const { startUtc: from, endUtc: to } = istDayRangeAsUtc(now);
   for (const u of users) {
     const [completedToday, pendingNow] = await Promise.all([
@@ -97,10 +115,15 @@ async function runEveningDigest(now = new Date()) {
       }),
     ]);
     if (completedToday === 0 && pendingNow === 0) continue;
+    stats.considered += 1;
     const text = `Daily summary for ${u.name}:\nCompleted today: ${completedToday}\nPending now: ${pendingNow}`;
     // eslint-disable-next-line no-await-in-loop
-    await sendWhatsAppText({ to: u.phone, text });
+    const res = await safeSendDigestMessage({ user: u, text, runType: "evening" });
+    stats.sent += res.sent;
+    stats.skipped += res.skipped;
+    stats.failed += res.failed;
   }
+  return stats;
 }
 
 async function tick() {
@@ -111,15 +134,15 @@ async function tick() {
   if (shouldRunNow(hm, MORNING_AT)) {
     const gotLock = await acquireRunLock("morning", key);
     if (gotLock) {
-    await runMorningDigest(now);
-    console.log(`[whatsapp] morning digest sent for ${key}`);
+      const stats = await runMorningDigest(now);
+      console.log(`[whatsapp] morning digest done for ${key}`, stats);
     }
   }
   if (shouldRunNow(hm, EVENING_AT)) {
     const gotLock = await acquireRunLock("evening", key);
     if (gotLock) {
-    await runEveningDigest(now);
-    console.log(`[whatsapp] evening digest sent for ${key}`);
+      const stats = await runEveningDigest(now);
+      console.log(`[whatsapp] evening digest done for ${key}`, stats);
     }
   }
 }
