@@ -55,6 +55,51 @@ function setCachedPerf(key, value) {
   perfCache.set(key, { ts: Date.now(), value });
 }
 
+async function getSupervisorTherapistIds(supervisorId, centerId) {
+  const descendants = await getDescendantUsers(supervisorId, centerId || null);
+  const descendantIds = descendants
+    .filter((u) => u.role === "executor" && u.executorKind === "therapist")
+    .map((u) => String(u._id));
+
+  const directReportIds = await User.distinct("_id", {
+    reportsTo: supervisorId,
+    role: "executor",
+    executorKind: "therapist",
+    active: true,
+    ...(centerId ? { centerId } : {}),
+  });
+
+  const taskAssignedIds = await Task.distinct("assignees", {
+    createdBy: supervisorId,
+    deletedAt: null,
+    ...(centerId ? { centerId } : {}),
+  });
+
+  const sessionLinkedIds = await TherapistSession.distinct("therapistId", {
+    $or: [{ createdBy: supervisorId }, { markedBy: supervisorId }],
+    ...(centerId ? { centerId } : {}),
+  });
+
+  const candidateIds = Array.from(
+    new Set([
+      ...descendantIds,
+      ...directReportIds.map((id) => String(id)),
+      ...taskAssignedIds.map((id) => String(id)),
+      ...sessionLinkedIds.map((id) => String(id)),
+    ])
+  );
+  if (!candidateIds.length) return [];
+
+  const therapistIds = await User.find({
+    _id: { $in: candidateIds },
+    role: "executor",
+    executorKind: "therapist",
+    active: true,
+    ...(centerId ? { centerId } : {}),
+  }).distinct("_id");
+  return therapistIds;
+}
+
 router.get("/summary", async (req, res) => {
   const me = await actor(req);
   const { from, to } = req.query;
@@ -371,11 +416,8 @@ router.get("/therapist-sessions", async (req, res) => {
   if (isSupervisor && String(req.query.scope || "").toLowerCase() === "self") q.therapistId = req.userId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
   if (req.userRole === "supervisor" && !q.therapistId) {
-    const descendants = await getDescendantUsers(req.userId, me?.centerId || null);
-    const therapistIds = descendants
-      .filter((u) => u.role === "executor" && u.executorKind === "therapist")
-      .map((u) => u._id);
-    if (!therapistIds.length) q.therapistId = null;
+    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
+    if (!therapistIds.length) q.therapistId = { $in: [] };
     else if (q.therapistId) {
       q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
     } else {
@@ -440,10 +482,7 @@ router.get("/therapist-performance", async (req, res) => {
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
   if (req.userRole === "supervisor") {
-    const descendants = await getDescendantUsers(req.userId, me?.centerId || null);
-    const therapistIds = descendants
-      .filter((u) => u.role === "executor" && u.executorKind === "therapist")
-      .map((u) => u._id);
+    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = null;
     else if (q.therapistId) {
       q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
@@ -479,14 +518,37 @@ router.get("/therapist-performance", async (req, res) => {
     },
   ]);
 
-  const therapistIds = summary.map((x) => x._id);
-  const users = await User.find({ _id: { $in: therapistIds } }).select("_id name email centerId role executorKind").populate("centerId", "name code").lean();
-  const byId = new Map(users.map((u) => [String(u._id), u]));
+  const therapistQuery = { role: "executor", executorKind: "therapist", active: true };
+  if (!isCeo(req.userRole)) therapistQuery.centerId = me?.centerId || null;
+  if (req.userRole === "supervisor") {
+    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
+    therapistQuery._id = therapistIds.length ? { $in: therapistIds } : { $in: [] };
+  } else if (req.query.therapistId) {
+    therapistQuery._id = req.query.therapistId;
+  }
 
-  const rows = summary
-    .map((s) => ({ therapist: byId.get(String(s._id)) || null, ...s }))
-    .filter((row) => !!row.therapist)
-    .sort((a, b) => b.sessions - a.sessions || b.avgSupervisorScore - a.avgSupervisorScore);
+  const users = await User.find(therapistQuery)
+    .select("_id name email centerId role executorKind")
+    .populate("centerId", "name code")
+    .lean();
+  const summaryById = new Map(summary.map((s) => [String(s._id), s]));
+
+  const rows = users
+    .map((u) => {
+      const stat = summaryById.get(String(u._id));
+      return {
+        _id: String(u._id),
+        therapist: u,
+        sessions: stat?.sessions || 0,
+        patientsCovered: stat?.patientsCovered || 0,
+        attendanceDays: stat?.attendanceDays || 0,
+        planUpdates15d: stat?.planUpdates15d || 0,
+        newActivities15d: stat?.newActivities15d || 0,
+        monthlyTests: stat?.monthlyTests || 0,
+        avgSupervisorScore: stat?.avgSupervisorScore || 0,
+      };
+    })
+    .sort((a, b) => b.sessions - a.sessions || a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
   const total = rows.length;
   const pagedRows = rows.slice(skip, skip + limit);
   const payload = { rows: pagedRows, total, page, limit };

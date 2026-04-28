@@ -13,12 +13,9 @@ export function isWhatsAppConfigured() {
   return Boolean(API_URL && ACCESS_TOKEN);
 }
 
-export async function sendWhatsAppText({ to, text }) {
-  const phone = normalizePhone(to || ADMIN_PHONE);
-  if (!phone || !text) return { ok: false, skipped: true, reason: "missing_phone_or_text" };
-
+async function sendPayload(phone, payload, stubLogText) {
   if (!API_URL || !ACCESS_TOKEN) {
-    console.log(`[whatsapp:stub] to=${phone} text=${text}`);
+    console.log(`[whatsapp:stub] to=${phone} ${stubLogText}`);
     return { ok: true, stub: true };
   }
 
@@ -28,12 +25,7 @@ export async function sendWhatsAppText({ to, text }) {
       "Content-Type": "application/json",
       Authorization: `Bearer ${ACCESS_TOKEN}`,
     },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to: phone,
-      type: "text",
-      text: { body: text },
-    }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
@@ -41,5 +33,46 @@ export async function sendWhatsAppText({ to, text }) {
     throw new Error(`WhatsApp send failed (${res.status}): ${errText || "unknown error"}`);
   }
   return { ok: true };
+}
+
+export async function sendWhatsAppText({ to, text }) {
+  const phone = normalizePhone(to || ADMIN_PHONE);
+  if (!phone || !text) return { ok: false, skipped: true, reason: "missing_phone_or_text" };
+
+  return sendPayload(
+    phone,
+    {
+      messaging_product: "whatsapp",
+      to: phone,
+      type: "text",
+      text: { body: text },
+    },
+    `text=${text}`
+  );
+}
+
+export async function sendWhatsAppTemplate({ to, name, languageCode = "en", parameters = [] }) {
+  const phone = normalizePhone(to || ADMIN_PHONE);
+  if (!phone || !name) return { ok: false, skipped: true, reason: "missing_phone_or_template" };
+
+  return sendPayload(
+    phone,
+    {
+      messaging_product: "whatsapp",
+      to: phone,
+      type: "template",
+      template: {
+        name,
+        language: { code: languageCode },
+        components: [
+          {
+            type: "body",
+            parameters: parameters.map((p) => ({ type: "text", text: String(p ?? "") })),
+          },
+        ],
+      },
+    },
+    `template=${name} params=${JSON.stringify(parameters)}`
+  );
 }
 

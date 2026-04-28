@@ -120,6 +120,20 @@ export default function TherapistPerformancePage() {
 
   const sessionGroups = useMemo(() => {
     const m = new Map<string, { therapist: TherapistUser; items: SessionItem[] }>();
+    for (const r of rows) {
+      const th = r.therapist;
+      if (!th?._id) continue;
+      m.set(String(th._id), {
+        therapist: {
+          _id: String(th._id),
+          name: th.name,
+          email: th.email,
+          role: "executor",
+          executorKind: "therapist",
+        },
+        items: [],
+      });
+    }
     for (const s of sessions) {
       const th = s.therapistId;
       const id = th?._id || "__none__";
@@ -138,7 +152,7 @@ export default function TherapistPerformancePage() {
     return Array.from(m.entries())
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
-  }, [sessions]);
+  }, [rows, sessions]);
 
   useEffect(() => {
     setExpandedSessionTherapists({});
@@ -248,6 +262,7 @@ export default function TherapistPerformancePage() {
                   <td className="px-2 py-2">
                     <div className="font-semibold">{r.therapist.name}</div>
                     <div className="text-xs text-zinc-500">{r.therapist.email}</div>
+                    {r.sessions === 0 && <div className="text-xs font-semibold text-rose-600">No uploads in selected date range</div>}
                   </td>
                   <td className="px-2 py-2">{r.sessions}</td>
                   <td className="px-2 py-2">{r.patientsCovered}</td>
@@ -330,6 +345,7 @@ export default function TherapistPerformancePage() {
                             <div className="mt-0.5 text-xs text-zinc-400 sm:hidden">
                               {open ? "Tap to hide details" : "Tap for session list"}
                             </div>
+                            {!g.items.length && <div className="mt-1 text-xs font-semibold text-rose-600">No uploads for selected date range</div>}
                           </div>
                         </div>
                       </td>
@@ -380,6 +396,13 @@ export default function TherapistPerformancePage() {
                                       <td className="px-2 py-1.5">{s.supervisorScore || 0}/5</td>
                                     </tr>
                                   ))}
+                                  {!g.items.length && (
+                                    <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                                      <td colSpan={6} className="px-2 py-3 text-xs text-zinc-500">
+                                        No uploaded sessions for selected date range.
+                                      </td>
+                                    </tr>
+                                  )}
                                 </tbody>
                               </table>
                             </div>

@@ -1,12 +1,15 @@
 import { User } from "../models/User.js";
 import { Task } from "../models/Task.js";
-import { sendWhatsAppText } from "../services/whatsappService.js";
+import { sendWhatsAppTemplate, sendWhatsAppText } from "../services/whatsappService.js";
 import { JobRunLock } from "../models/JobRunLock.js";
 
 const TZ = process.env.WHATSAPP_DIGEST_TIMEZONE || "Asia/Kolkata";
 const JOB = "whatsapp_task_digest";
 const MORNING_AT = process.env.WHATSAPP_MORNING_AT || "09:45";
 const EVENING_AT = process.env.WHATSAPP_EVENING_AT || "17:59";
+const MORNING_TEMPLATE = String(process.env.WHATSAPP_TEMPLATE_MORNING || "").trim();
+const EVENING_TEMPLATE = String(process.env.WHATSAPP_TEMPLATE_EVENING || "").trim();
+const TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en").trim();
 
 function zonedParts(d = new Date()) {
   const fmt = new Intl.DateTimeFormat("en-CA", {
@@ -70,6 +73,19 @@ async function safeSendDigestMessage({ user, text, runType }) {
   }
 }
 
+async function safeSendTemplateDigestMessage({ user, runType, templateName, parameters, fallbackText }) {
+  try {
+    const result = templateName
+      ? await sendWhatsAppTemplate({ to: user.phone, name: templateName, languageCode: TEMPLATE_LANG, parameters })
+      : await sendWhatsAppText({ to: user.phone, text: fallbackText });
+    if (result?.skipped) return { sent: 0, skipped: 1, failed: 0 };
+    return { sent: 1, skipped: 0, failed: 0 };
+  } catch (e) {
+    console.error(`[whatsapp] ${runType} template send failed user=${user._id} phone=${user.phone}:`, e.message || e);
+    return safeSendDigestMessage({ user, text: fallbackText, runType });
+  }
+}
+
 async function runMorningDigest(now = new Date()) {
   const users = await User.find({ active: true, phone: { $ne: "" } }).select("_id name phone").lean();
   const stats = { recipients: users.length, considered: 0, sent: 0, skipped: 0, failed: 0 };
@@ -88,7 +104,13 @@ async function runMorningDigest(now = new Date()) {
     const lines = tasks.map((t, idx) => `${idx + 1}. ${t.title} (${t.status.replace("_", " ")})`);
     const text = `Good morning ${u.name}. Assigned tasks for today:\n${lines.join("\n")}`;
     // eslint-disable-next-line no-await-in-loop
-    const res = await safeSendDigestMessage({ user: u, text, runType: "morning" });
+    const res = await safeSendTemplateDigestMessage({
+      user: u,
+      runType: "morning",
+      templateName: MORNING_TEMPLATE,
+      parameters: [u.name, lines.join("\n")],
+      fallbackText: text,
+    });
     stats.sent += res.sent;
     stats.skipped += res.skipped;
     stats.failed += res.failed;
@@ -118,7 +140,13 @@ async function runEveningDigest(now = new Date()) {
     stats.considered += 1;
     const text = `Daily summary for ${u.name}:\nCompleted today: ${completedToday}\nPending now: ${pendingNow}`;
     // eslint-disable-next-line no-await-in-loop
-    const res = await safeSendDigestMessage({ user: u, text, runType: "evening" });
+    const res = await safeSendTemplateDigestMessage({
+      user: u,
+      runType: "evening",
+      templateName: EVENING_TEMPLATE,
+      parameters: [u.name, completedToday, pendingNow],
+      fallbackText: text,
+    });
     stats.sent += res.sent;
     stats.skipped += res.skipped;
     stats.failed += res.failed;
@@ -152,6 +180,8 @@ export function startWhatsAppTaskDigestScheduler() {
   setInterval(() => {
     tick().catch((e) => console.error("[whatsapp] digest run failed:", e));
   }, 60_000);
-  console.log(`[whatsapp] digest scheduler started (${MORNING_AT}, ${EVENING_AT}, tz=${TZ})`);
+  console.log(
+    `[whatsapp] digest scheduler started (${MORNING_AT}, ${EVENING_AT}, tz=${TZ}, morningTemplate=${MORNING_TEMPLATE || "none"}, eveningTemplate=${EVENING_TEMPLATE || "none"})`
+  );
 }
 
