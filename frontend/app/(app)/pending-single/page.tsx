@@ -6,7 +6,7 @@ export default function PendingSinglePage() {
     <TasksView
       title="Pending Single"
       subtitle="One-time tasks that still need to be picked up."
-      preset={{ recurring: false, status: "pending" }}
+      preset={{ recurring: false, status: "pending", statusGroup: "open" }}
       showCadenceFilter={false}
     />
   );

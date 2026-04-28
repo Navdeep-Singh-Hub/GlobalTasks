@@ -80,13 +80,15 @@ async function advanceIfRecurring(task, actorId, actorName) {
 }
 
 function buildFilter(query, userId, role) {
-  const { search, status, priority, assignee, taskType, recurring, myTasks, approval, departmentId, centerId, functionTag } = query;
+  const { search, status, statusGroup, priority, assignee, taskType, recurring, myTasks, approval, departmentId, centerId, functionTag } = query;
   const trashOnly = query.trash === "only" || query.bin === "only";
   /** Default lists active tasks; trash/recycle lists soft-deleted only. */
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
 
   if (search) filter.$or = [{ title: new RegExp(search, "i") }, { description: new RegExp(search, "i") }];
-  if (status && status !== "all") {
+  if (statusGroup === "open") {
+    filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
+  } else if (status && status !== "all") {
     filter.status = status;
   } else if (!trashOnly) {
     filter.status = { $ne: "cancelled" };
@@ -111,10 +113,23 @@ function buildFilter(query, userId, role) {
     }
   }
 
+  if (approval === "true" && role !== "ceo") {
+    // Non-CEO users should only review approvals for tasks they assigned.
+    filter.createdBy = userId;
+  }
+
   if (myTasks === "true") filter.assignees = userId;
   else if (role === "executor") filter.assignees = userId;
 
   return filter;
+}
+
+function canApproveTask({ userId, userRole, task }) {
+  if (!task) return false;
+  if (String(task.createdBy || "") === String(userId || "")) return true;
+  // Safety fallback for top-level oversight.
+  if (userRole === "ceo") return true;
+  return false;
 }
 
 router.get("/meta", (_req, res) => {
@@ -356,18 +371,12 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
-      const ceos = await User.find({ role: "ceo", active: { $ne: false } }).select("_id").lean();
-      if (ceos.length) {
-        await notifyMany(
-          ceos.map((a) => a._id),
-          {
-            type: "task_approval_request",
-            title: "Completion pending approval",
-            message: `An assignee submitted "${task.title}" for completion.`,
-            link: "/for-approval",
-          }
-        );
-      }
+      await notifyMany([task.createdBy], {
+        type: "task_approval_request",
+        title: "Completion pending approval",
+        message: `An assignee submitted "${task.title}" for completion.`,
+        link: "/for-approval",
+      });
     }
 
     if (prevStatus !== task.status && task.assignees?.length) {
@@ -430,17 +439,20 @@ router.post("/bulk", async (req, res) => {
       await t.save();
     }
     if (!isCeo(req.userRole)) {
-      const ceos = await User.find({ role: "ceo", active: { $ne: false } }).select("_id").lean();
-      if (ceos.length) {
-        await notifyMany(
-          ceos.map((a) => a._id),
-          {
-            type: "task_approval_request",
-            title: "Completions pending approval",
-            message: `${tasks.length} task(s) were submitted for completion.`,
-            link: "/for-approval",
-          }
-        );
+      const creatorCounts = new Map();
+      for (const t of tasks) {
+        if (!t.createdBy) continue;
+        const key = String(t.createdBy);
+        creatorCounts.set(key, (creatorCounts.get(key) || 0) + 1);
+      }
+      for (const [creatorId, count] of creatorCounts.entries()) {
+        // eslint-disable-next-line no-await-in-loop
+        await notifyMany([creatorId], {
+          type: "task_approval_request",
+          title: "Completions pending approval",
+          message: `${count} task(s) were submitted for completion.`,
+          link: "/for-approval",
+        });
       }
     }
     return res.json({ ok: true });
@@ -452,9 +464,16 @@ router.post("/bulk", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/:id/approve", requireRoles("ceo"), async (req, res) => {
+router.post("/:id/approve", async (req, res) => {
+  const me = await actor(req);
   const task = await Task.findById(req.params.id);
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+  if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can approve tasks from your center only" });
+  }
+  if (!canApproveTask({ userId: req.userId, userRole: req.userRole, task })) {
+    return res.status(403).json({ message: "Only the assigner can approve this task" });
+  }
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
@@ -475,8 +494,9 @@ router.post("/:id/approve", requireRoles("ceo"), async (req, res) => {
   res.json({ task });
 });
 
-router.post("/:id/reject", requireRoles("ceo"), async (req, res) => {
+router.post("/:id/reject", async (req, res) => {
   try {
+    const me = await actor(req);
     const { mode = "reassign", remarks } = req.body || {};
     if (!["no_action", "reassign"].includes(mode)) {
       return res.status(400).json({ message: "Invalid mode. Use no_action or reassign." });
@@ -486,6 +506,12 @@ router.post("/:id/reject", requireRoles("ceo"), async (req, res) => {
 
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can reject tasks from your center only" });
+    }
+    if (!canApproveTask({ userId: req.userId, userRole: req.userRole, task })) {
+      return res.status(403).json({ message: "Only the assigner can reject this task" });
+    }
 
     task.rejectionRemarks = text;
     task.rejectionMode = mode;

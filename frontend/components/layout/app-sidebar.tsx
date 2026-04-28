@@ -45,7 +45,7 @@ const NAV: NavItem[] = [
   { href: "/master-single", label: "Master Single", icon: Package, roles: NAV_MANAGEMENT },
   { href: "/master-recurring", label: "Master Recurring", icon: History, roles: NAV_MANAGEMENT },
   { href: "/assign-task", label: "Assign Task", icon: UserPlus, roles: NAV_MANAGEMENT },
-  { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: NAV_CEO_ONLY },
+  { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: NAV_MANAGEMENT },
   { href: "/task-shift", label: "Task Shift", icon: Shuffle, roles: NAV_MANAGEMENT },
   { href: "/chat-support", label: "Chat Support", icon: MessageCircle, roles: NAV_ALL },
   { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },

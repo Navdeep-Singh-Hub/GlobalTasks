@@ -17,7 +17,7 @@ export default function PendingRecurringPage() {
         <TasksView
           title="Pending Recurring"
           subtitle="Recurring tasks waiting to be completed for the current cadence."
-          preset={{ recurring: true, status: "pending" }}
+          preset={{ recurring: true, status: "pending", statusGroup: "open" }}
         />
       </div>
     </div>

@@ -54,7 +54,7 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
       role: { $in: ["supervisor", "executor"] },
       active: true,
     }).distinct("_id");
-    return ids.map(String);
+    return [String(actorId), ...ids.map(String)];
   }
   if (actorRole === "supervisor") {
     const descendants = await getDescendantUsers(actorId, centerId);

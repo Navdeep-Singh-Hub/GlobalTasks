@@ -6,7 +6,7 @@ import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/ba
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { isCeo } from "@/lib/roles";
+import { isCeo, isManagement } from "@/lib/roles";
 import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Table2, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
@@ -35,6 +35,7 @@ type Task = {
 type Preset = {
   recurring?: boolean;
   status?: string;
+  statusGroup?: "open";
   approval?: boolean;
 };
 
@@ -64,7 +65,7 @@ export function TasksView({
 }) {
   const { user } = useAuth();
   const showMasterAdmin = masterAdminActions && isCeo(user?.role);
-  const showApprovalQuickActions = Boolean(preset.approval && isCeo(user?.role));
+  const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
@@ -156,6 +157,7 @@ export function TasksView({
     if (taskType !== "all") qs.set("taskType", taskType);
     if (preset.recurring === true) qs.set("recurring", "true");
     if (preset.recurring === false) qs.set("recurring", "false");
+    if (preset.statusGroup) qs.set("statusGroup", preset.statusGroup);
     if (preset.approval) qs.set("approval", "true");
     qs.set("limit", "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
@@ -165,7 +167,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.approval]);
+  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval]);
 
   useEffect(() => {
     load();

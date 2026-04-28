@@ -5,7 +5,7 @@ export default function ForApprovalPage() {
   return (
     <TasksView
       title="For Approval"
-      subtitle="Tasks that require CEO approval before being marked completed."
+      subtitle="Tasks that require assigner approval before being marked completed."
       preset={{ approval: true }}
     />
   );
