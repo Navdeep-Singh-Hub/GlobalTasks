@@ -15,6 +15,8 @@ import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
+import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
+import { assertAllowedDepartmentId } from "../utils/departments.js";
 
 const router = Router();
 router.use(authRequired);
@@ -57,9 +59,7 @@ router.get("/", async (req, res) => {
 });
 
 router.get("/departments", async (_req, res) => {
-  const me = await actor(_req);
-  const list = await User.distinct("department", isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null });
-  res.json({ departments: list.filter(Boolean) });
+  res.json({ departments: ALLOWED_DEPARTMENT_SLUGS });
 });
 
 router.post("/", requireManagement, async (req, res, next) => {
@@ -113,6 +113,14 @@ router.post("/", requireManagement, async (req, res, next) => {
     }
     const existing = await User.findOne({ email: email.toLowerCase() });
     if (existing) return res.status(409).json({ message: "Email already in use" });
+
+    if (department && !isAllowedDepartmentSlug(department)) {
+      return res.status(400).json({ message: "Invalid department" });
+    }
+    if (departmentPrimary) {
+      const deptOk = await assertAllowedDepartmentId(departmentPrimary);
+      if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
+    }
 
     const ek = role === "executor" && executorKind ? executorKind : "";
     const normalizedWeekOff = normalizeWeekOffDays(weekOffDays);
@@ -172,8 +180,19 @@ router.patch("/:id", requireManagement, async (req, res, next) => {
     }
     if (title !== undefined) user.title = title;
     if (avatarUrl !== undefined) user.avatarUrl = avatarUrl;
-    if (department !== undefined) user.department = department;
-    if (departmentPrimary !== undefined) user.departmentPrimary = departmentPrimary || null;
+    if (department !== undefined) {
+      if (department && !isAllowedDepartmentSlug(department)) {
+        return res.status(400).json({ message: "Invalid department" });
+      }
+      user.department = department;
+    }
+    if (departmentPrimary !== undefined) {
+      if (departmentPrimary) {
+        const deptOk = await assertAllowedDepartmentId(departmentPrimary);
+        if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
+      }
+      user.departmentPrimary = departmentPrimary || null;
+    }
     if (centerId !== undefined) {
       if (!centerId) return res.status(400).json({ message: "Center is required" });
       if (!isCeo(req.userRole) && String(me?.centerId || "") !== String(centerId)) {

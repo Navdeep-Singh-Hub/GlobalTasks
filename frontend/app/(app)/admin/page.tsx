@@ -27,7 +27,7 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Member = {
   _id: string;
@@ -49,6 +49,51 @@ type Member = {
 };
 
 const WEEK_DAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"] as const;
+
+const DEPARTMENT_LABEL_OVERRIDES: Record<string, string> = {
+  ot: "OT",
+  bt: "BT",
+  cbt: "CBT",
+  dt: "DT",
+};
+
+function formatDepartmentLabel(slug: string) {
+  const key = slug.trim().toLowerCase();
+  if (DEPARTMENT_LABEL_OVERRIDES[key]) return DEPARTMENT_LABEL_OVERRIDES[key];
+  return key
+    .split(/[\s_]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function DepartmentSelect({
+  value,
+  onChange,
+  options,
+}: {
+  value: string;
+  onChange: (slug: string) => void;
+  options: string[];
+}) {
+  const merged = useMemo(() => {
+    const v = value.trim();
+    if (v && !options.includes(v)) return [...options, v].sort((a, b) => a.localeCompare(b));
+    return options;
+  }, [options, value]);
+
+  return (
+    <Select value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">No department</option>
+      {merged.map((slug) => (
+        <option key={slug} value={slug}>
+          {formatDepartmentLabel(slug)}
+          {!options.includes(slug) ? " (previous value)" : ""}
+        </option>
+      ))}
+    </Select>
+  );
+}
 
 const ALL_PERMISSIONS = [
   "view_tasks",
@@ -305,6 +350,7 @@ export default function AdminPanelPage() {
       {createOpen && (
         <CreateUserModal
           centers={centers}
+          departmentOptions={departments}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); load(); }}
         />
@@ -313,6 +359,7 @@ export default function AdminPanelPage() {
         <EditUserModal
           key={editing._id}
           centers={centers}
+          departmentOptions={departments}
           user={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
@@ -326,10 +373,12 @@ function CreateUserModal({
   onClose,
   onCreated,
   centers,
+  departmentOptions,
 }: {
   onClose: () => void;
   onCreated: () => void;
   centers: { _id: string; name: string; code: string }[];
+  departmentOptions: string[];
 }) {
   const { user: me } = useAuth();
   const assignable = rolesAssignableBy((me?.role || "executor") as Role);
@@ -422,7 +471,14 @@ function CreateUserModal({
             </option>
           ))}
         </Select>
-        <Input placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+        <div className="space-y-1">
+          <div className="text-[12.5px] font-semibold text-zinc-700 dark:text-zinc-200">Department</div>
+          <DepartmentSelect
+            value={form.department}
+            onChange={(department) => setForm({ ...form, department })}
+            options={departmentOptions}
+          />
+        </div>
         <Input placeholder="Job title (optional)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         <Input placeholder="Avatar image URL (optional)" value={form.avatarUrl} onChange={(e) => setForm({ ...form, avatarUrl: e.target.value })} />
         <Select
@@ -507,11 +563,13 @@ function EditUserModal({
   onClose,
   onSaved,
   centers,
+  departmentOptions,
 }: {
   user: Member;
   onClose: () => void;
   onSaved: () => void;
   centers: { _id: string; name: string; code: string }[];
+  departmentOptions: string[];
 }) {
   const { user: me } = useAuth();
   const canSetPassword = me?.role === "ceo" || me?.role === "centre_head";
@@ -630,7 +688,14 @@ function EditUserModal({
             </option>
           ))}
         </Select>
-        <Input placeholder="Department" value={form.department} onChange={(e) => setForm({ ...form, department: e.target.value })} />
+        <div className="space-y-1">
+          <div className="text-[12.5px] font-semibold text-zinc-700 dark:text-zinc-200">Department</div>
+          <DepartmentSelect
+            value={form.department}
+            onChange={(department) => setForm({ ...form, department })}
+            options={departmentOptions}
+          />
+        </div>
         <Input placeholder="Job title (optional)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
         <Input placeholder="Avatar image URL (optional)" value={form.avatarUrl} onChange={(e) => setForm({ ...form, avatarUrl: e.target.value })} />
         <Select

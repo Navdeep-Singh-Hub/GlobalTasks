@@ -1,5 +1,6 @@
 import { Center } from "../models/Center.js";
 import { Department } from "../models/Department.js";
+import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
 
 const DEFAULT_CENTERS = [
   { name: "Ludhiana", code: "LDH" },
@@ -13,14 +14,7 @@ const DEFAULT_CENTERS = [
   { name: "Mohali", code: "MHL" },
 ];
 
-const DEFAULT_DEPARTMENTS = [
-  { name: "Marketing", code: "MKT" },
-  { name: "Reception", code: "REC" },
-  { name: "Operations", code: "OPS" },
-  { name: "Clinical", code: "CLN" },
-  { name: "Admin", code: "ADM" },
-  { name: "Management", code: "MGT" },
-];
+const DEFAULT_DEPARTMENTS = ALLOWED_DEPARTMENTS.map(({ name, code }) => ({ name, code }));
 
 export async function ensureMasterData() {
   for (const c of DEFAULT_CENTERS) {

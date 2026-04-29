@@ -9,6 +9,7 @@ import { Notification } from "./models/Notification.js";
 import { Activity } from "./models/Activity.js";
 import { Center } from "./models/Center.js";
 import { Department } from "./models/Department.js";
+import { ALLOWED_DEPARTMENTS } from "./constants/departments.js";
 
 function plusDays(d) {
   return new Date(Date.now() + d * 24 * 60 * 60 * 1000);
@@ -41,14 +42,7 @@ async function run() {
     { name: "Mohali", code: "MHL" },
   ]);
   const [cLudhiana] = centers;
-  const departments = await Department.insertMany([
-    { name: "Marketing", code: "MKT" },
-    { name: "Reception", code: "REC" },
-    { name: "Operations", code: "OPS" },
-    { name: "Clinical", code: "CLN" },
-    { name: "Admin", code: "ADM" },
-    { name: "Management", code: "MGT" },
-  ]);
+  const departments = await Department.insertMany(ALLOWED_DEPARTMENTS.map(({ name, code }) => ({ name, code })));
   const deptByCode = Object.fromEntries(departments.map((d) => [d.code, d]));
 
   const passwordHash = await bcrypt.hash("demo123", 10);
@@ -60,7 +54,7 @@ async function run() {
       role: "ceo",
       executorKind: "",
       department: "",
-      departmentPrimary: deptByCode.MGT._id,
+      departmentPrimary: deptByCode.ADM._id,
       centerId: cLudhiana._id,
       permissions: ["view_tasks", "assign_tasks", "manage_users", "approve_tasks", "view_all_team_tasks"],
       title: "CEO",
@@ -88,8 +82,8 @@ async function run() {
       phone: "+91 70000 00001",
       role: "coordinator",
       executorKind: "",
-      department: "clinical",
-      departmentPrimary: deptByCode.CLN._id,
+      department: "ot",
+      departmentPrimary: deptByCode.OT._id,
       centerId: cLudhiana._id,
       permissions: ["view_tasks", "view_all_team_tasks", "assign_tasks"],
       title: "Coordinator",
@@ -102,8 +96,8 @@ async function run() {
       phone: "+91 70000 00002",
       role: "supervisor",
       executorKind: "",
-      department: "clinical",
-      departmentPrimary: deptByCode.CLN._id,
+      department: "ot",
+      departmentPrimary: deptByCode.OT._id,
       centerId: cLudhiana._id,
       permissions: ["view_tasks", "view_all_team_tasks", "assign_tasks"],
       title: "Supervisor",

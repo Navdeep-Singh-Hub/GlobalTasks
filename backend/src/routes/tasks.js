@@ -9,6 +9,7 @@ import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from ".
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
+import { assertAllowedDepartmentId } from "../utils/departments.js";
 
 const router = Router();
 router.use(authRequired);
@@ -199,6 +200,8 @@ router.post("/", async (req, res, next) => {
     const payload = { ...req.body, createdBy: req.userId };
     if (!payload.title || !payload.dueDate) return res.status(400).json({ message: "Title and due date required" });
     if (!payload.departmentId) return res.status(400).json({ message: "Department is required" });
+    const deptOk = await assertAllowedDepartmentId(payload.departmentId);
+    if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
     if (!payload.functionTag || !String(payload.functionTag).trim()) {
       return res.status(400).json({ message: "Function tag is required" });
     }
@@ -273,6 +276,11 @@ router.patch("/:id", async (req, res, next) => {
 
     const denied = assertTaskPatchPermission(req, req.body);
     if (denied) return res.status(403).json({ message: denied });
+
+    if ("departmentId" in req.body) {
+      const deptOk = await assertAllowedDepartmentId(req.body.departmentId);
+      if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
+    }
 
     const prevStatus = task.status;
     const allowedFields = [

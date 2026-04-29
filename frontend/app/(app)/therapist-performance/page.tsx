@@ -39,6 +39,19 @@ type PerformanceRow = {
   monthlyTests: number;
   avgSupervisorScore: number;
 };
+type SessionGroup = {
+  id: string;
+  therapist: TherapistUser;
+  expectedCount: number;
+  items: SessionItem[];
+};
+type TherapistSessionState = {
+  loading: boolean;
+  loaded: boolean;
+  error: string;
+  total: number;
+  items: SessionItem[];
+};
 
 export default function TherapistPerformancePage() {
   const { user } = useAuth();
@@ -55,6 +68,7 @@ export default function TherapistPerformancePage() {
   const [scoreDraft, setScoreDraft] = useState<Record<string, { score: string; remarks: string }>>({});
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [expandedSessionTherapists, setExpandedSessionTherapists] = useState<Record<string, boolean>>({});
+  const [sessionByTherapist, setSessionByTherapist] = useState<Record<string, TherapistSessionState>>({});
 
   const canManage = isManagement(user?.role);
   const canMark = user?.role === "supervisor";
@@ -78,15 +92,16 @@ export default function TherapistPerformancePage() {
     qsPerf.set("limit", "25");
     qsSessions.set("page", String(sessionsPage));
     qsSessions.set("limit", "30");
-    const [sess, perf] = await Promise.all([
-      api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions${qsSessions.toString() ? `?${qsSessions}` : ""}`),
-      api<{ rows: PerformanceRow[]; total?: number }>(`/reports/therapist-performance${qsPerf.toString() ? `?${qsPerf}` : ""}`),
-    ]);
-    setSessions(sess.sessions);
+    const perfPromise = api<{ rows: PerformanceRow[]; total?: number }>(`/reports/therapist-performance${qsPerf.toString() ? `?${qsPerf}` : ""}`);
+    const sessPromise = canMark
+      ? api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions${qsSessions.toString() ? `?${qsSessions}` : ""}`)
+      : Promise.resolve({ sessions: [] as SessionItem[], total: 0 });
+    const [sess, perf] = await Promise.all([sessPromise, perfPromise]);
+    setSessions(sess.sessions || []);
     setRows(perf.rows);
     setSessionsTotal(Number(sess.total) || 0);
     setRowsTotal(Number(perf.total) || 0);
-  }, [from, therapistId, to, page, sessionsPage]);
+  }, [from, therapistId, to, page, sessionsPage, canMark]);
 
   useEffect(() => {
     if (!user) return;
@@ -99,16 +114,19 @@ export default function TherapistPerformancePage() {
   }, [user]);
 
   useEffect(() => {
-    if (!user) return;
     setPage(1);
     setSessionsPage(1);
+  }, [therapistId, from, to]);
+
+  useEffect(() => {
+    if (!user) return;
     load().catch(() => {
       setSessions([]);
       setRows([]);
       setSessionsTotal(0);
       setRowsTotal(0);
     });
-  }, [user, load, therapistId, from, to]);
+  }, [user, load]);
 
   const totals = useMemo(
     () => ({
@@ -118,45 +136,72 @@ export default function TherapistPerformancePage() {
     [rows]
   );
 
-  const sessionGroups = useMemo(() => {
-    const m = new Map<string, { therapist: TherapistUser; items: SessionItem[] }>();
-    for (const r of rows) {
-      const th = r.therapist;
-      if (!th?._id) continue;
-      m.set(String(th._id), {
+  const sessionGroups = useMemo<SessionGroup[]>(
+    () =>
+      rows.map((r) => ({
+        id: String(r.therapist._id),
         therapist: {
-          _id: String(th._id),
-          name: th.name,
-          email: th.email,
+          _id: String(r.therapist._id),
+          name: r.therapist.name,
+          email: r.therapist.email,
           role: "executor",
           executorKind: "therapist",
         },
-        items: [],
-      });
-    }
-    for (const s of sessions) {
-      const th = s.therapistId;
-      const id = th?._id || "__none__";
-      if (!m.has(id)) {
-        m.set(id, { therapist: th || { _id: id, name: "—", email: "", role: "executor", executorKind: "therapist" }, items: [] });
-      }
-      m.get(id)!.items.push(s);
-    }
-    Array.from(m.values()).forEach((g) => {
-      g.items.sort((a, b) => {
+        expectedCount: Number(r.sessions) || 0,
+        items: sessionByTherapist[String(r.therapist._id)]?.items || [],
+      })),
+    [rows, sessionByTherapist]
+  );
+
+  useEffect(() => {
+    setExpandedSessionTherapists({});
+    setSessionByTherapist({});
+  }, [page, therapistId, from, to]);
+
+  async function loadTherapistSessions(therapist: TherapistUser) {
+    const therapistKey = String(therapist._id);
+    const existing = sessionByTherapist[therapistKey];
+    if (existing?.loading || existing?.loaded) return;
+    setSessionByTherapist((prev) => ({
+      ...prev,
+      [therapistKey]: { loading: true, loaded: false, error: "", total: 0, items: [] },
+    }));
+    try {
+      const qs = new URLSearchParams();
+      qs.set("therapistId", therapistKey);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      qs.set("page", "1");
+      qs.set("limit", "500");
+      const data = await api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions?${qs.toString()}`);
+      const items = [...(data.sessions || [])].sort((a, b) => {
         const d = String(b.sessionDate).localeCompare(String(a.sessionDate));
         if (d !== 0) return d;
         return String(a.startedAt || "").localeCompare(String(b.startedAt || ""));
       });
-    });
-    return Array.from(m.entries())
-      .map(([id, v]) => ({ id, ...v }))
-      .sort((a, b) => a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
-  }, [rows, sessions]);
-
-  useEffect(() => {
-    setExpandedSessionTherapists({});
-  }, [sessionsPage, therapistId, from, to]);
+      setSessionByTherapist((prev) => ({
+        ...prev,
+        [therapistKey]: {
+          loading: false,
+          loaded: true,
+          error: "",
+          total: Number(data.total) || items.length,
+          items,
+        },
+      }));
+    } catch (e) {
+      setSessionByTherapist((prev) => ({
+        ...prev,
+        [therapistKey]: {
+          loading: false,
+          loaded: true,
+          error: e instanceof ApiError ? e.message : "Failed to load sessions",
+          total: 0,
+          items: [],
+        },
+      }));
+    }
+  }
 
   async function saveMarks(sessionId: string) {
     const existing = sessions.find((s) => s._id === sessionId);
@@ -303,8 +348,7 @@ export default function TherapistPerformancePage() {
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          {sessionGroups.length} therapist{sessionGroups.length === 1 ? "" : "s"} on this page — {sessions.length} of {sessionsTotal} total session
-          {sessionsTotal === 1 ? "" : "s"}. Open a row to see patient and time for each session.
+          Same therapist list as measurements on this page. Click any therapist row to load and view that therapist's date-wise sessions.
         </p>
         <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[min(100%,360px)] text-sm">
@@ -317,6 +361,7 @@ export default function TherapistPerformancePage() {
             <tbody>
               {sessionGroups.map((g) => {
                 const open = Boolean(expandedSessionTherapists[g.id]);
+                const detail = sessionByTherapist[g.id];
                 return (
                   <Fragment key={g.id}>
                     <tr
@@ -324,11 +369,17 @@ export default function TherapistPerformancePage() {
                       aria-expanded={open}
                       aria-label={`${g.therapist.name} — ${g.items.length} session(s), ${open ? "expanded" : "collapsed"}`}
                       className="cursor-pointer border-t border-zinc-100 select-none outline-none hover:bg-zinc-50/90 focus-visible:ring-2 focus-visible:ring-brand-500/30 dark:border-zinc-800 dark:hover:bg-zinc-900/50"
-                      onClick={() => setExpandedSessionTherapists((p) => ({ ...p, [g.id]: !p[g.id] }))}
+                      onClick={() => {
+                        const willOpen = !open;
+                        setExpandedSessionTherapists((p) => ({ ...p, [g.id]: willOpen }));
+                        if (willOpen) void loadTherapistSessions(g.therapist);
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setExpandedSessionTherapists((p) => ({ ...p, [g.id]: !p[g.id] }));
+                          const willOpen = !open;
+                          setExpandedSessionTherapists((p) => ({ ...p, [g.id]: willOpen }));
+                          if (willOpen) void loadTherapistSessions(g.therapist);
                         }
                       }}
                     >
@@ -345,11 +396,17 @@ export default function TherapistPerformancePage() {
                             <div className="mt-0.5 text-xs text-zinc-400 sm:hidden">
                               {open ? "Tap to hide details" : "Tap for session list"}
                             </div>
-                            {!g.items.length && <div className="mt-1 text-xs font-semibold text-rose-600">No uploads for selected date range</div>}
+                            {g.expectedCount === 0 ? (
+                              <div className="mt-1 text-xs font-semibold text-rose-600">No uploads for selected date range</div>
+                            ) : detail?.loading ? (
+                              <div className="mt-1 text-xs font-semibold text-zinc-500">Loading sessions…</div>
+                            ) : null}
                           </div>
                         </div>
                       </td>
-                      <td className="px-2 py-2 text-right tabular-nums align-top text-zinc-800 dark:text-zinc-200">{g.items.length}</td>
+                      <td className="px-2 py-2 text-right tabular-nums align-top text-zinc-800 dark:text-zinc-200">
+                        {g.expectedCount}
+                      </td>
                     </tr>
                     {open && (
                       <tr className="border-t border-zinc-100 dark:border-zinc-800">
@@ -368,7 +425,7 @@ export default function TherapistPerformancePage() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {g.items.map((s) => (
+                                  {(detail?.items || []).map((s) => (
                                     <tr
                                       key={s._id}
                                       className="border-t border-zinc-100 bg-white/80 dark:border-zinc-800 dark:bg-zinc-950/40"
@@ -396,7 +453,21 @@ export default function TherapistPerformancePage() {
                                       <td className="px-2 py-1.5">{s.supervisorScore || 0}/5</td>
                                     </tr>
                                   ))}
-                                  {!g.items.length && (
+                                  {detail?.error ? (
+                                    <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                                      <td colSpan={6} className="px-2 py-3 text-xs text-rose-600">
+                                        {detail.error}
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  {detail?.loading ? (
+                                    <tr className="border-t border-zinc-100 dark:border-zinc-800">
+                                      <td colSpan={6} className="px-2 py-3 text-xs text-zinc-500">
+                                        Loading session details…
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                  {detail?.loaded && !detail.items.length && (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
                                       <td colSpan={6} className="px-2 py-3 text-xs text-zinc-500">
                                         No uploaded sessions for selected date range.
@@ -413,36 +484,15 @@ export default function TherapistPerformancePage() {
                   </Fragment>
                 );
               })}
-              {!sessions.length && (
+              {!sessionGroups.length && (
                 <tr>
                   <td colSpan={2} className="px-2 py-8 text-center text-zinc-500">
-                    No sessions found for selected filters.
+                    No therapist records for selected filters.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
-        </div>
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full sm:w-auto"
-            disabled={sessionsPage <= 1}
-            onClick={() => setSessionsPage((p) => Math.max(1, p - 1))}
-          >
-            Previous
-          </Button>
-          <span className="text-center text-xs text-zinc-500 sm:px-2">Page {sessionsPage}</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full sm:w-auto"
-            disabled={sessionsPage * 30 >= sessionsTotal}
-            onClick={() => setSessionsPage((p) => p + 1)}
-          >
-            Next
-          </Button>
         </div>
       </div>
 

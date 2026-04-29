@@ -183,6 +183,16 @@ export function TasksView({
   }, []);
 
   const idList = useMemo(() => tasks.map((t) => t._id), [tasks]);
+  const orderedTasks = useMemo(() => {
+    const myId = user?._id;
+    if (!myId || user?.role !== "supervisor") return tasks;
+    return [...tasks].sort((a, b) => {
+      const aMineFromOthers = Boolean(a.assignees?.some((assignee) => assignee._id === myId) && a.createdBy?._id !== myId);
+      const bMineFromOthers = Boolean(b.assignees?.some((assignee) => assignee._id === myId) && b.createdBy?._id !== myId);
+      if (aMineFromOthers === bMineFromOthers) return 0;
+      return aMineFromOthers ? -1 : 1;
+    });
+  }, [tasks, user?._id]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
   const toggle = (id: string, on: boolean) =>
@@ -321,7 +331,7 @@ export function TasksView({
                 </tr>
               </thead>
               <tbody>
-                {tasks.map((t, idx) => {
+                {orderedTasks.map((t, idx) => {
                   const isChecked = selected.includes(t._id);
                   const attachments = t.attachments?.length || 0;
                   const hasVoice = !!t.voiceNoteUrl;
@@ -462,7 +472,7 @@ export function TasksView({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {tasks.map((t, idx) => (
+          {orderedTasks.map((t, idx) => (
             <div
               key={t._id}
               className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-soft dark:border-zinc-800 dark:bg-zinc-950"

@@ -30,7 +30,11 @@ const io = setupSocket(server);
 setSocket(io);
 
 const PORT = process.env.PORT || 5000;
-const defaultOrigins = ["http://localhost:3000", "http://127.0.0.1:3000"];
+const defaultOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://global-tasks.vercel.app",
+];
 const envOrigins = [
   ...(process.env.CLIENT_ORIGINS || "")
     .split(",")
