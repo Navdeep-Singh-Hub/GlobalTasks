@@ -192,7 +192,7 @@ export function TasksView({
       if (aMineFromOthers === bMineFromOthers) return 0;
       return aMineFromOthers ? -1 : 1;
     });
-  }, [tasks, user?._id]);
+  }, [tasks, user?._id, user?.role]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
   const toggle = (id: string, on: boolean) =>

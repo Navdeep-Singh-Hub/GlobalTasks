@@ -57,7 +57,6 @@ export default function TherapistPerformancePage() {
   const { user } = useAuth();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [rows, setRows] = useState<PerformanceRow[]>([]);
-  const [sessionsTotal, setSessionsTotal] = useState(0);
   const [rowsTotal, setRowsTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [sessionsPage, setSessionsPage] = useState(1);
@@ -99,7 +98,6 @@ export default function TherapistPerformancePage() {
     const [sess, perf] = await Promise.all([sessPromise, perfPromise]);
     setSessions(sess.sessions || []);
     setRows(perf.rows);
-    setSessionsTotal(Number(sess.total) || 0);
     setRowsTotal(Number(perf.total) || 0);
   }, [from, therapistId, to, page, sessionsPage, canMark]);
 
@@ -123,7 +121,6 @@ export default function TherapistPerformancePage() {
     load().catch(() => {
       setSessions([]);
       setRows([]);
-      setSessionsTotal(0);
       setRowsTotal(0);
     });
   }, [user, load]);
@@ -348,7 +345,7 @@ export default function TherapistPerformancePage() {
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          Same therapist list as measurements on this page. Click any therapist row to load and view that therapist's date-wise sessions.
+          Same therapist list as measurements on this page. Click any therapist row to load and view that therapist&apos;s date-wise sessions.
         </p>
         <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
           <table className="w-full min-w-[min(100%,360px)] text-sm">
