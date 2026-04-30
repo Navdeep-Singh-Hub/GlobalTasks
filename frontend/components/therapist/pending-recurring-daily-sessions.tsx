@@ -60,8 +60,8 @@ type TherapyPlanRow = {
 
 const SUPERVISOR_SHEET_TASKS: SupervisorSheetTask[] = [
   { key: "observe-therapy-sessions", task: "Observe therapy sessions" },
-  { key: "supervisor-round-notes", task: "Supervisor round notes complete" },
-  { key: "therapy-plan-check", task: "Therapy plan check" },
+  { key: "supervisor-round-notes", task: "Therapy plan check" },
+  { key: "therapy-plan-check", task: "Supervisor round notes complete" },
   { key: "ensure-therapy-notes-complete", task: "Ensure therapy notes are complete" },
   { key: "team-utilized-free-session", task: "How team utilized free session of therapist" },
   { key: "alternative-session", task: "Alternative session" },
@@ -130,7 +130,7 @@ function supportsTherapyPlanRows(taskKey: string) {
 }
 
 function supportsDateRange(taskKey: string) {
-  return taskKey === SUPERVISOR_ROUND_NOTES_TASK_KEY;
+  return false;
 }
 
 function dateInIST(value: Date | string) {
