@@ -5,7 +5,7 @@ import { Input, Select } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
 import { ClipboardCheck, Plus, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -42,23 +42,96 @@ type EditDraft = {
 type SupervisorSheetTask = {
   key: string;
   task: string;
-  day: "DAILY" | "THU" | "MON";
+};
+
+const OBSERVE_THERAPY_TASK_KEY = "observe-therapy-sessions";
+const ALTERNATIVE_SESSION_TASK_KEY = "alternative-session";
+const THERAPY_PLAN_CHECK_TASK_KEY = "therapy-plan-check";
+const SUPERVISOR_ROUND_NOTES_TASK_KEY = "supervisor-round-notes";
+
+type TherapyPlanRow = {
+  id: string;
+  name: string;
+  time: string;
+  roomNo: string;
+  child: string;
+  activity: string;
 };
 
 const SUPERVISOR_SHEET_TASKS: SupervisorSheetTask[] = [
-  { key: "observe-therapy-sessions", task: "Observe therapy sessions", day: "DAILY" },
-  { key: "therapy-plan-check", task: "Therapy plan check", day: "DAILY" },
-  { key: "supervisor-round-notes", task: "Supervisor round notes complete", day: "DAILY" },
-  { key: "ensure-therapy-notes-complete", task: "Ensure therapy notes are complete", day: "DAILY" },
-  {
-    key: "weekly-review-with-coordinators",
-    task: "Conduct weekly meetings with coordinators to review therapy progress, operational issues and departmental workflow",
-    day: "THU",
-  },
-  { key: "weekly-staff-training", task: "Conduct weekly staff training and skill development sessions", day: "MON" },
-  { key: "team-utilized-free-session", task: "How team utilized free session of therapist", day: "DAILY" },
-  { key: "alternative-session", task: "Alternative session", day: "DAILY" },
+  { key: "observe-therapy-sessions", task: "Observe therapy sessions" },
+  { key: "supervisor-round-notes", task: "Supervisor round notes complete" },
+  { key: "therapy-plan-check", task: "Therapy plan check" },
+  { key: "ensure-therapy-notes-complete", task: "Ensure therapy notes are complete" },
+  { key: "team-utilized-free-session", task: "How team utilized free session of therapist" },
+  { key: "alternative-session", task: "Alternative session" },
 ];
+
+function newTherapyPlanRow(): TherapyPlanRow {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    name: "",
+    time: "",
+    roomNo: "",
+    child: "",
+    activity: "",
+  };
+}
+
+function parseStructuredTaskPayload(raw: string) {
+  const fallback = {
+    remarks: raw || "",
+    therapistName: "",
+    patientName: "",
+    dateFrom: "",
+    dateTo: "",
+    therapyPlanRows: [] as TherapyPlanRow[],
+  };
+  if (!raw) return fallback;
+  try {
+    const parsed = JSON.parse(raw) as {
+      remarks?: string;
+      therapistName?: string;
+      patientName?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      therapyPlanRows?: { name?: string; time?: string; roomNo?: string; child?: string; activity?: string }[];
+    };
+    if (!parsed || typeof parsed !== "object") return fallback;
+    const parsedRows = Array.isArray(parsed.therapyPlanRows)
+      ? parsed.therapyPlanRows.map((r) => ({
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          name: String(r?.name || ""),
+          time: String(r?.time || ""),
+          roomNo: String(r?.roomNo || ""),
+          child: String(r?.child || ""),
+          activity: String(r?.activity || ""),
+        }))
+      : [];
+    return {
+      remarks: String(parsed.remarks || ""),
+      therapistName: String(parsed.therapistName || ""),
+      patientName: String(parsed.patientName || ""),
+      dateFrom: String(parsed.dateFrom || ""),
+      dateTo: String(parsed.dateTo || ""),
+      therapyPlanRows: parsedRows,
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function supportsSessionNames(taskKey: string) {
+  return taskKey === OBSERVE_THERAPY_TASK_KEY || taskKey === ALTERNATIVE_SESSION_TASK_KEY;
+}
+
+function supportsTherapyPlanRows(taskKey: string) {
+  return taskKey === THERAPY_PLAN_CHECK_TASK_KEY;
+}
+
+function supportsDateRange(taskKey: string) {
+  return taskKey === SUPERVISOR_ROUND_NOTES_TASK_KEY;
+}
 
 function dateInIST(value: Date | string) {
   const d = value instanceof Date ? value : new Date(value);
@@ -98,6 +171,12 @@ export function PendingRecurringDailySessions() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [sheetStatusByTask, setSheetStatusByTask] = useState<Record<string, "yes" | "no">>({});
   const [sheetRemarksByTask, setSheetRemarksByTask] = useState<Record<string, string>>({});
+  const [sheetTherapistNameByTask, setSheetTherapistNameByTask] = useState<Record<string, string>>({});
+  const [sheetPatientNameByTask, setSheetPatientNameByTask] = useState<Record<string, string>>({});
+  const [sheetDateFromByTask, setSheetDateFromByTask] = useState<Record<string, string>>({});
+  const [sheetDateToByTask, setSheetDateToByTask] = useState<Record<string, string>>({});
+  const [sheetTherapyPlanRowsByTask, setSheetTherapyPlanRowsByTask] = useState<Record<string, TherapyPlanRow[]>>({});
+  const [expandedTaskKeys, setExpandedTaskKeys] = useState<Record<string, boolean>>({});
   const [savingSheet, setSavingSheet] = useState(false);
   const [showSupervisorSheet, setShowSupervisorSheet] = useState(false);
 
@@ -167,27 +246,70 @@ export function PendingRecurringDailySessions() {
         const entries = Array.isArray(d.entries) ? d.entries : [];
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
+        const nextTherapistNames: Record<string, string> = {};
+        const nextPatientNames: Record<string, string> = {};
+        const nextDateFrom: Record<string, string> = {};
+        const nextDateTo: Record<string, string> = {};
+        const nextTherapyPlanRows: Record<string, TherapyPlanRow[]> = {};
         for (const task of SUPERVISOR_SHEET_TASKS) {
           nextStatus[task.key] = "no";
           nextRemarks[task.key] = "";
+          nextTherapistNames[task.key] = "";
+          nextPatientNames[task.key] = "";
+          nextDateFrom[task.key] = "";
+          nextDateTo[task.key] = "";
+          nextTherapyPlanRows[task.key] = supportsTherapyPlanRows(task.key) ? [newTherapyPlanRow()] : [];
         }
         for (const e of entries) {
           if (!e?.taskKey) continue;
           nextStatus[e.taskKey] = String(e.status || "").toLowerCase() === "yes" ? "yes" : "no";
-          nextRemarks[e.taskKey] = String(e.remarks || "");
+          const rawRemarks = String(e.remarks || "");
+          if (supportsSessionNames(e.taskKey) || supportsTherapyPlanRows(e.taskKey) || supportsDateRange(e.taskKey)) {
+            const parsed = parseStructuredTaskPayload(rawRemarks);
+            nextRemarks[e.taskKey] = parsed.remarks;
+            nextTherapistNames[e.taskKey] = parsed.therapistName;
+            nextPatientNames[e.taskKey] = parsed.patientName;
+            nextDateFrom[e.taskKey] = parsed.dateFrom;
+            nextDateTo[e.taskKey] = parsed.dateTo;
+            if (supportsTherapyPlanRows(e.taskKey)) {
+              nextTherapyPlanRows[e.taskKey] = parsed.therapyPlanRows.length ? parsed.therapyPlanRows : [newTherapyPlanRow()];
+            }
+          } else {
+            nextRemarks[e.taskKey] = rawRemarks;
+          }
         }
         setSheetStatusByTask(nextStatus);
         setSheetRemarksByTask(nextRemarks);
+        setSheetTherapistNameByTask(nextTherapistNames);
+        setSheetPatientNameByTask(nextPatientNames);
+        setSheetDateFromByTask(nextDateFrom);
+        setSheetDateToByTask(nextDateTo);
+        setSheetTherapyPlanRowsByTask(nextTherapyPlanRows);
       })
       .catch(() => {
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
+        const nextTherapistNames: Record<string, string> = {};
+        const nextPatientNames: Record<string, string> = {};
+        const nextDateFrom: Record<string, string> = {};
+        const nextDateTo: Record<string, string> = {};
+        const nextTherapyPlanRows: Record<string, TherapyPlanRow[]> = {};
         for (const task of SUPERVISOR_SHEET_TASKS) {
           nextStatus[task.key] = "no";
           nextRemarks[task.key] = "";
+          nextTherapistNames[task.key] = "";
+          nextPatientNames[task.key] = "";
+          nextDateFrom[task.key] = "";
+          nextDateTo[task.key] = "";
+          nextTherapyPlanRows[task.key] = supportsTherapyPlanRows(task.key) ? [newTherapyPlanRow()] : [];
         }
         setSheetStatusByTask(nextStatus);
         setSheetRemarksByTask(nextRemarks);
+        setSheetTherapistNameByTask(nextTherapistNames);
+        setSheetPatientNameByTask(nextPatientNames);
+        setSheetDateFromByTask(nextDateFrom);
+        setSheetDateToByTask(nextDateTo);
+        setSheetTherapyPlanRowsByTask(nextTherapyPlanRows);
       });
   }, [isSupervisor, sessionDate, user?._id]);
 
@@ -199,7 +321,23 @@ export function PendingRecurringDailySessions() {
       const entries = SUPERVISOR_SHEET_TASKS.map((task) => ({
         taskKey: task.key,
         status: sheetStatusByTask[task.key] || "no",
-        remarks: sheetRemarksByTask[task.key] || "",
+        remarks:
+          supportsSessionNames(task.key) || supportsTherapyPlanRows(task.key) || supportsDateRange(task.key)
+            ? JSON.stringify({
+                remarks: sheetRemarksByTask[task.key] || "",
+                therapistName: sheetTherapistNameByTask[task.key] || "",
+                patientName: sheetPatientNameByTask[task.key] || "",
+                dateFrom: sheetDateFromByTask[task.key] || "",
+                dateTo: sheetDateToByTask[task.key] || "",
+                therapyPlanRows: (sheetTherapyPlanRowsByTask[task.key] || []).map((r) => ({
+                  name: r.name,
+                  time: r.time,
+                  roomNo: r.roomNo,
+                  child: r.child,
+                  activity: r.activity,
+                })),
+              })
+            : sheetRemarksByTask[task.key] || "",
       }));
       await api("/reports/supervisor-sheet", {
         method: "PUT",
@@ -301,42 +439,209 @@ export function PendingRecurringDailySessions() {
                 </div>
               </div>
               <div className="mt-3 overflow-x-auto">
-                <table className="w-full min-w-[760px] text-sm">
+                <table className="w-full min-w-[980px] text-sm">
                   <thead className="text-left text-[11px] uppercase text-zinc-500">
                     <tr>
                       <th className="px-2 py-1.5">Task</th>
-                      <th className="px-2 py-1.5">Day</th>
+                      <th className="px-2 py-1.5">Details</th>
                       <th className="px-2 py-1.5">Status</th>
                       <th className="px-2 py-1.5">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {SUPERVISOR_SHEET_TASKS.map((row) => (
-                      <tr key={row.key} className="border-t border-zinc-100 dark:border-zinc-800">
-                        <td className="px-2 py-1.5">{row.task}</td>
-                        <td className="px-2 py-1.5">{row.day}</td>
-                        <td className="px-2 py-1.5">
-                          <Select
-                            value={sheetStatusByTask[row.key] || "no"}
-                            onChange={(e) =>
-                              setSheetStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))
-                            }
-                            className="h-8 min-w-[100px] px-2.5 text-xs"
-                          >
-                            <option value="yes">Yes</option>
-                            <option value="no">No</option>
-                          </Select>
-                        </td>
-                        <td className="px-2 py-1.5">
-                          <Input
-                            placeholder="Remarks (optional)"
-                            value={sheetRemarksByTask[row.key] || ""}
-                            onChange={(e) => setSheetRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
-                            className="h-8 min-w-[220px] px-2.5 text-xs"
-                          />
-                        </td>
-                      </tr>
-                    ))}
+                    {SUPERVISOR_SHEET_TASKS.map((row) => {
+                      const isTherapyPlan = supportsTherapyPlanRows(row.key);
+                      const isExpanded = Boolean(expandedTaskKeys[row.key]);
+                      const therapyPlanRows = sheetTherapyPlanRowsByTask[row.key] || [newTherapyPlanRow()];
+                      return (
+                        <Fragment key={row.key}>
+                          <tr key={row.key} className="border-t border-zinc-100 dark:border-zinc-800">
+                            <td className="px-2 py-1.5">
+                              {isTherapyPlan ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedTaskKeys((prev) => ({ ...prev, [row.key]: !prev[row.key] }))}
+                                  className="inline-flex items-center gap-2 font-medium text-brand-700 hover:text-brand-800 dark:text-brand-300 dark:hover:text-brand-200"
+                                >
+                                  {row.task}
+                                  <span className="text-[10px] uppercase">{isExpanded ? "Hide" : "Open"}</span>
+                                </button>
+                              ) : (
+                                row.task
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              {supportsSessionNames(row.key) || supportsDateRange(row.key) ? (
+                                <div className="grid gap-2 sm:grid-cols-2">
+                                  {supportsSessionNames(row.key) && (
+                                    <>
+                                      <Input
+                                        placeholder="Therapist name"
+                                        value={sheetTherapistNameByTask[row.key] || ""}
+                                        onChange={(e) => setSheetTherapistNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                        className="h-8 min-w-[180px] px-2.5 text-xs"
+                                      />
+                                      <Input
+                                        placeholder="Patient name"
+                                        value={sheetPatientNameByTask[row.key] || ""}
+                                        onChange={(e) => setSheetPatientNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                        className="h-8 min-w-[180px] px-2.5 text-xs"
+                                      />
+                                    </>
+                                  )}
+                                  {supportsDateRange(row.key) && (
+                                    <>
+                                      <Input
+                                        type="date"
+                                        placeholder="Date from"
+                                        value={sheetDateFromByTask[row.key] || ""}
+                                        onChange={(e) => setSheetDateFromByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                        className="h-8 min-w-[160px] px-2.5 text-xs"
+                                      />
+                                      <Input
+                                        type="date"
+                                        placeholder="Date to"
+                                        value={sheetDateToByTask[row.key] || ""}
+                                        onChange={(e) => setSheetDateToByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                        className="h-8 min-w-[160px] px-2.5 text-xs"
+                                      />
+                                    </>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-zinc-400">—</span>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <Select
+                                value={sheetStatusByTask[row.key] || "no"}
+                                onChange={(e) =>
+                                  setSheetStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))
+                                }
+                                className="h-8 min-w-[100px] px-2.5 text-xs"
+                              >
+                                <option value="yes">Yes</option>
+                                <option value="no">No</option>
+                              </Select>
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <Input
+                                placeholder="Remarks (optional)"
+                                value={sheetRemarksByTask[row.key] || ""}
+                                onChange={(e) => setSheetRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                className="h-8 min-w-[220px] px-2.5 text-xs"
+                              />
+                            </td>
+                          </tr>
+                          {isTherapyPlan && isExpanded && (
+                            <tr className="border-t border-zinc-100 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/30">
+                              <td colSpan={4} className="px-2 py-2">
+                                <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-950">
+                                  <div className="mb-2 flex items-center justify-between">
+                                    <div className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Therapy Plan Details</div>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setSheetTherapyPlanRowsByTask((prev) => ({
+                                          ...prev,
+                                          [row.key]: [...(prev[row.key] || [newTherapyPlanRow()]), newTherapyPlanRow()],
+                                        }))
+                                      }
+                                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                                      aria-label="Add therapy plan row"
+                                      title="Add row"
+                                    >
+                                      <Plus className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                  <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_120px_minmax(0,1fr)_minmax(0,1fr)]">
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Name</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Time</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Room no.</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Child</div>
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Activity</div>
+                                    {therapyPlanRows.map((plan) => (
+                                      <Fragment key={plan.id}>
+                                        <Input
+                                          key={`${plan.id}-name`}
+                                          placeholder="Name"
+                                          value={plan.name}
+                                          onChange={(e) =>
+                                            setSheetTherapyPlanRowsByTask((prev) => ({
+                                              ...prev,
+                                              [row.key]: (prev[row.key] || []).map((p) =>
+                                                p.id === plan.id ? { ...p, name: e.target.value } : p
+                                              ),
+                                            }))
+                                          }
+                                          className="h-8 px-2.5 text-xs"
+                                        />
+                                        <Input
+                                          key={`${plan.id}-time`}
+                                          type="time"
+                                          value={plan.time}
+                                          onChange={(e) =>
+                                            setSheetTherapyPlanRowsByTask((prev) => ({
+                                              ...prev,
+                                              [row.key]: (prev[row.key] || []).map((p) =>
+                                                p.id === plan.id ? { ...p, time: e.target.value } : p
+                                              ),
+                                            }))
+                                          }
+                                          className="h-8 px-2.5 text-xs"
+                                        />
+                                        <Input
+                                          key={`${plan.id}-room`}
+                                          placeholder="Room no."
+                                          value={plan.roomNo}
+                                          onChange={(e) =>
+                                            setSheetTherapyPlanRowsByTask((prev) => ({
+                                              ...prev,
+                                              [row.key]: (prev[row.key] || []).map((p) =>
+                                                p.id === plan.id ? { ...p, roomNo: e.target.value } : p
+                                              ),
+                                            }))
+                                          }
+                                          className="h-8 px-2.5 text-xs"
+                                        />
+                                        <Input
+                                          key={`${plan.id}-child`}
+                                          placeholder="Child"
+                                          value={plan.child}
+                                          onChange={(e) =>
+                                            setSheetTherapyPlanRowsByTask((prev) => ({
+                                              ...prev,
+                                              [row.key]: (prev[row.key] || []).map((p) =>
+                                                p.id === plan.id ? { ...p, child: e.target.value } : p
+                                              ),
+                                            }))
+                                          }
+                                          className="h-8 px-2.5 text-xs"
+                                        />
+                                        <Input
+                                          key={`${plan.id}-activity`}
+                                          placeholder="Activity"
+                                          value={plan.activity}
+                                          onChange={(e) =>
+                                            setSheetTherapyPlanRowsByTask((prev) => ({
+                                              ...prev,
+                                              [row.key]: (prev[row.key] || []).map((p) =>
+                                                p.id === plan.id ? { ...p, activity: e.target.value } : p
+                                              ),
+                                            }))
+                                          }
+                                          className="h-8 px-2.5 text-xs"
+                                        />
+                                      </Fragment>
+                                    ))}
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
