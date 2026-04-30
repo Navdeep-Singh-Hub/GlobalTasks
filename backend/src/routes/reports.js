@@ -4,6 +4,7 @@ import { Task } from "../models/Task.js";
 import { DailyReport } from "../models/DailyReport.js";
 import { User } from "../models/User.js";
 import { TherapistSession } from "../models/TherapistSession.js";
+import { SupervisorSheet } from "../models/SupervisorSheet.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
@@ -53,6 +54,27 @@ function getCachedPerf(key) {
 
 function setCachedPerf(key, value) {
   perfCache.set(key, { ts: Date.now(), value });
+}
+
+function dateInTz(value, timeZone = "Asia/Kolkata") {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function nowDateInTz(timeZone = "Asia/Kolkata") {
+  return dateInTz(new Date(), timeZone);
+}
+
+function canAccessSupervisorSheet(req, meUser, targetSupervisorId) {
+  if (isCeo(req.userRole)) return true;
+  if (req.userRole === "supervisor") return String(targetSupervisorId || "") === String(req.userId || "");
+  return false;
 }
 
 async function getSupervisorTherapistIds(supervisorId, centerId) {
@@ -464,6 +486,62 @@ router.patch("/therapist-sessions/:id/marks", async (req, res) => {
   res.json({ session: populated });
 });
 
+router.patch("/therapist-sessions/:id", async (req, res) => {
+  const me = await actor(req);
+  const meUser = await User.findById(req.userId).select("_id role executorKind centerId").lean();
+  const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
+  const isSupervisor = meUser?.role === "supervisor";
+  if (!isTherapist && !isSupervisor) {
+    return res.status(403).json({ message: "Only therapists or supervisors can edit sessions" });
+  }
+
+  const session = await TherapistSession.findById(req.params.id);
+  if (!session) return res.status(404).json({ message: "Session not found" });
+  if (!isCeo(req.userRole) && String(session.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can edit sessions from your center only" });
+  }
+  if (String(session.createdBy || "") !== String(req.userId || "")) {
+    return res.status(403).json({ message: "Only the uploader can edit this session" });
+  }
+  const uploadDate = dateInTz(session.createdAt, "Asia/Kolkata");
+  const today = nowDateInTz("Asia/Kolkata");
+  if (!uploadDate || uploadDate !== today) {
+    return res.status(403).json({ message: "Session can be edited only on the upload day" });
+  }
+
+  const nextSessionDate = req.body.sessionDate !== undefined ? String(req.body.sessionDate || "").trim() : session.sessionDate;
+  const patientName = req.body.patientName !== undefined ? String(req.body.patientName || "").trim() : session.patientName;
+  if (!patientName) return res.status(400).json({ message: "Patient name is required" });
+
+  const startedAt = req.body.startedAt !== undefined ? String(req.body.startedAt || "") : session.startedAt;
+  const endedAt = req.body.endedAt !== undefined ? String(req.body.endedAt || "") : session.endedAt;
+  const requestedDuration = req.body.durationMinutes !== undefined ? Number(req.body.durationMinutes) : Number(session.durationMinutes || 0);
+  const durationMinutes = requestedDuration > 0 ? requestedDuration : Number(startedAt && endedAt ? 30 : 0);
+
+  session.sessionDate = nextSessionDate || session.sessionDate;
+  session.patientName = patientName;
+  session.patientCode = req.body.patientCode !== undefined ? String(req.body.patientCode || "") : session.patientCode;
+  session.startedAt = startedAt;
+  session.endedAt = endedAt;
+  session.durationMinutes = durationMinutes;
+  if (req.body.videoUploaded !== undefined) session.videoUploaded = Boolean(req.body.videoUploaded);
+  if (req.body.videoUrl !== undefined) session.videoUrl = String(req.body.videoUrl || "");
+  if (req.body.attendanceMarked !== undefined) session.attendanceMarked = Boolean(req.body.attendanceMarked);
+  if (req.body.planUpdated15d !== undefined) session.planUpdated15d = Boolean(req.body.planUpdated15d);
+  if (req.body.newActivity15d !== undefined) session.newActivity15d = Boolean(req.body.newActivity15d);
+  if (req.body.newActivityText !== undefined) session.newActivityText = String(req.body.newActivityText || "");
+  if (req.body.monthlyTestDone !== undefined) session.monthlyTestDone = Boolean(req.body.monthlyTestDone);
+  if (req.body.monthlyTestNotes !== undefined) session.monthlyTestNotes = String(req.body.monthlyTestNotes || "");
+
+  await session.save();
+  const populated = await TherapistSession.findById(session._id)
+    .populate("therapistId", "name email role executorKind")
+    .populate("centerId", "name code")
+    .populate("markedBy", "name role")
+    .lean();
+  res.json({ session: populated });
+});
+
 router.get("/therapist-performance", async (req, res) => {
   const me = await actor(req);
   if (!isManagement(req.userRole)) {
@@ -518,11 +596,15 @@ router.get("/therapist-performance", async (req, res) => {
     },
   ]);
 
-  const therapistQuery = { role: "executor", executorKind: "therapist", active: true };
+  const therapistQuery = {
+    active: true,
+    $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+  };
   if (!isCeo(req.userRole)) therapistQuery.centerId = me?.centerId || null;
   if (req.userRole === "supervisor") {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
-    therapistQuery._id = therapistIds.length ? { $in: therapistIds } : { $in: [] };
+    const allowed = [String(req.userId), ...therapistIds.map((id) => String(id))];
+    therapistQuery._id = allowed.length ? { $in: allowed } : { $in: [] };
   } else if (req.query.therapistId) {
     therapistQuery._id = req.query.therapistId;
   }
@@ -554,6 +636,147 @@ router.get("/therapist-performance", async (req, res) => {
   const payload = { rows: pagedRows, total, page, limit };
   setCachedPerf(cacheKey, payload);
   res.json(payload);
+});
+
+router.get("/supervisor-sheet", async (req, res) => {
+  const me = await actor(req);
+  const targetSupervisorId = String(req.query.supervisorId || req.userId || "");
+  if (!canAccessSupervisorSheet(req, me, targetSupervisorId)) {
+    return res.status(403).json({ message: "You can access supervisor sheet for allowed users only" });
+  }
+  const supervisorUser = await User.findById(targetSupervisorId).select("_id role centerId").lean();
+  if (!supervisorUser || supervisorUser.role !== "supervisor") {
+    return res.status(404).json({ message: "Supervisor not found" });
+  }
+  const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const where = { supervisorId: targetSupervisorId, sheetDate, centerId: supervisorUser.centerId || null };
+  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access sheets for your center only" });
+  }
+  const sheet = await SupervisorSheet.findOne(where).lean();
+  res.json({ sheetDate, entries: sheet?.entries || [] });
+});
+
+router.put("/supervisor-sheet", async (req, res) => {
+  const me = await actor(req);
+  const targetSupervisorId = String(req.body.supervisorId || req.userId || "");
+  if (!canAccessSupervisorSheet(req, me, targetSupervisorId)) {
+    return res.status(403).json({ message: "You can update supervisor sheet for allowed users only" });
+  }
+  const supervisorUser = await User.findById(targetSupervisorId).select("_id role centerId").lean();
+  if (!supervisorUser || supervisorUser.role !== "supervisor") {
+    return res.status(404).json({ message: "Supervisor not found" });
+  }
+  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can update sheets for your center only" });
+  }
+  const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const entriesInput = Array.isArray(req.body.entries) ? req.body.entries : [];
+  const entries = entriesInput.map((entry) => ({
+    taskKey: String(entry?.taskKey || "").trim(),
+    status: String(entry?.status || "").toLowerCase() === "yes" ? "yes" : "no",
+    remarks: String(entry?.remarks || "").trim(),
+  }));
+  const filteredEntries = entries.filter((e) => e.taskKey);
+  const payload = {
+    supervisorId: targetSupervisorId,
+    centerId: supervisorUser.centerId || null,
+    sheetDate,
+    entries: filteredEntries,
+  };
+  const where = { supervisorId: targetSupervisorId, sheetDate, centerId: supervisorUser.centerId || null };
+  const sheet = await SupervisorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  res.json({ sheetDate: sheet.sheetDate, entries: sheet.entries || [] });
+});
+
+router.get("/supervisor-performance", async (req, res) => {
+  const me = await actor(req);
+  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
+
+  const userQuery = { role: "supervisor", active: true };
+  if (!isCeo(req.userRole)) userQuery.centerId = me?.centerId || null;
+  if (req.query.supervisorId) userQuery._id = req.query.supervisorId;
+
+  const supervisors = await User.find(userQuery)
+    .select("_id name email centerId")
+    .populate("centerId", "name code")
+    .lean();
+  supervisors.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const total = supervisors.length;
+  const pageSupervisors = supervisors.slice(skip, skip + limit);
+  const supervisorIds = pageSupervisors.map((s) => s._id);
+
+  const sheetQuery = { supervisorId: { $in: supervisorIds } };
+  if (req.query.from || req.query.to) {
+    sheetQuery.sheetDate = {};
+    if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
+    if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
+  }
+  if (!isCeo(req.userRole)) sheetQuery.centerId = me?.centerId || null;
+
+  const sheets = supervisorIds.length ? await SupervisorSheet.find(sheetQuery).lean() : [];
+  const bySupervisor = new Map();
+  for (const s of sheets) {
+    const key = String(s.supervisorId);
+    if (!bySupervisor.has(key)) bySupervisor.set(key, []);
+    bySupervisor.get(key).push(s);
+  }
+
+  const rows = pageSupervisors.map((s) => {
+    const list = bySupervisor.get(String(s._id)) || [];
+    let yesCount = 0;
+    let noCount = 0;
+    let remarksCount = 0;
+    let lastUpdatedAt = null;
+    for (const day of list) {
+      if (!lastUpdatedAt || new Date(day.updatedAt).getTime() > new Date(lastUpdatedAt).getTime()) {
+        lastUpdatedAt = day.updatedAt;
+      }
+      for (const e of day.entries || []) {
+        if (e.status === "yes") yesCount += 1;
+        else noCount += 1;
+        if (String(e.remarks || "").trim()) remarksCount += 1;
+      }
+    }
+    return {
+      _id: String(s._id),
+      supervisor: s,
+      daysSubmitted: list.length,
+      yesCount,
+      noCount,
+      remarksCount,
+      lastUpdatedAt,
+    };
+  });
+
+  res.json({ rows, total, page, limit });
+});
+
+router.get("/supervisor-performance/details", async (req, res) => {
+  const me = await actor(req);
+  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  const supervisorId = String(req.query.supervisorId || "");
+  if (!supervisorId) return res.status(400).json({ message: "supervisorId is required" });
+  const { page, limit, skip } = parsePageLimit(req.query, 20, 100);
+
+  const supervisor = await User.findById(supervisorId).select("_id role centerId").lean();
+  if (!supervisor || supervisor.role !== "supervisor") return res.status(404).json({ message: "Supervisor not found" });
+  if (!isCeo(req.userRole) && String(supervisor.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access supervisors in your center only" });
+  }
+
+  const q = { supervisorId: supervisor._id, centerId: supervisor.centerId || null };
+  if (req.query.from || req.query.to) {
+    q.sheetDate = {};
+    if (req.query.from) q.sheetDate.$gte = String(req.query.from);
+    if (req.query.to) q.sheetDate.$lte = String(req.query.to);
+  }
+  const [sheets, total] = await Promise.all([
+    SupervisorSheet.find(q).sort({ sheetDate: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    SupervisorSheet.countDocuments(q),
+  ]);
+  res.json({ sheets, total, page, limit });
 });
 
 export default router;

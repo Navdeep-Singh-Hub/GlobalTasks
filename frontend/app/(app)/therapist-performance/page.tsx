@@ -105,7 +105,7 @@ export default function TherapistPerformancePage() {
     if (!user) return;
     api<{ users: TherapistUser[] }>("/users")
       .then((d) => {
-        const list = d.users.filter((u) => u.role === "executor" && u.executorKind === "therapist");
+        const list = d.users.filter((u) => u.role === "supervisor" || (u.role === "executor" && u.executorKind === "therapist"));
         setTherapists(list);
       })
       .catch(() => setTherapists([]));
@@ -236,15 +236,15 @@ export default function TherapistPerformancePage() {
           <Activity className="h-3 w-3" /> Therapist tracker
         </div>
         <h1 className="mt-3 text-2xl font-bold tracking-tight">Therapist Performance</h1>
-        <p className="mt-1 text-sm text-zinc-500">Center-wise therapist measurements and date-wise session tracking for upper-level roles.</p>
+        <p className="mt-1 text-sm text-zinc-500">Center-wise supervisor and therapist measurements with date-wise session tracking.</p>
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1">
-            <span className="text-xs font-semibold text-zinc-500">Therapist</span>
+            <span className="text-xs font-semibold text-zinc-500">Staff</span>
             <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>
-              <option value="">All therapists</option>
+              <option value="">All supervisors + therapists</option>
               {therapists.map((t) => (
                 <option key={t._id} value={t._id}>
                   {t.name} ({formatRoleLine(t.role, t.executorKind)})
@@ -280,7 +280,7 @@ export default function TherapistPerformancePage() {
       )}
 
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-        <h2 className="text-lg font-bold">Therapist Measurements</h2>
+        <h2 className="text-lg font-bold">Supervisor + Therapist Measurements</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Showing {rows.length} of {rowsTotal} therapist records.
         </p>
@@ -318,7 +318,7 @@ export default function TherapistPerformancePage() {
               {!rows.length && (
                 <tr>
                   <td colSpan={8} className="px-2 py-8 text-center text-zinc-500">
-                    No therapist records for this filter.
+                    No staff records for this filter.
                   </td>
                 </tr>
               )}

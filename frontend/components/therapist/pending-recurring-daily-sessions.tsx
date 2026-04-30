@@ -1,10 +1,10 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
-import { Plus, Trash2 } from "lucide-react";
+import { ClipboardCheck, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 function todayIsoDate() {
@@ -26,8 +26,50 @@ type UploadedSession = {
   startedAt?: string;
   durationMinutes?: number;
   videoUploaded?: boolean;
+  createdAt?: string;
+  createdBy?: string;
   therapistId?: { _id: string; name: string } | null;
 };
+
+type EditDraft = {
+  sessionDate: string;
+  patientName: string;
+  startedAt: string;
+  durationMinutes: string;
+  videoUploaded: boolean;
+};
+
+type SupervisorSheetTask = {
+  key: string;
+  task: string;
+  day: "DAILY" | "THU" | "MON";
+};
+
+const SUPERVISOR_SHEET_TASKS: SupervisorSheetTask[] = [
+  { key: "observe-therapy-sessions", task: "Observe therapy sessions", day: "DAILY" },
+  { key: "therapy-plan-check", task: "Therapy plan check", day: "DAILY" },
+  { key: "supervisor-round-notes", task: "Supervisor round notes complete", day: "DAILY" },
+  { key: "ensure-therapy-notes-complete", task: "Ensure therapy notes are complete", day: "DAILY" },
+  {
+    key: "weekly-review-with-coordinators",
+    task: "Conduct weekly meetings with coordinators to review therapy progress, operational issues and departmental workflow",
+    day: "THU",
+  },
+  { key: "weekly-staff-training", task: "Conduct weekly staff training and skill development sessions", day: "MON" },
+  { key: "team-utilized-free-session", task: "How team utilized free session of therapist", day: "DAILY" },
+  { key: "alternative-session", task: "Alternative session", day: "DAILY" },
+];
+
+function dateInIST(value: Date | string) {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
 
 function newRow(): SessionRow {
   return {
@@ -49,21 +91,29 @@ export function PendingRecurringDailySessions() {
   const [uploadedSessions, setUploadedSessions] = useState<UploadedSession[]>([]);
   const [loadingUploaded, setLoadingUploaded] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
-  const [viewDate, setViewDate] = useState(todayIsoDate);
+  const [viewFrom, setViewFrom] = useState(todayIsoDate);
+  const [viewTo, setViewTo] = useState(todayIsoDate);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [sheetStatusByTask, setSheetStatusByTask] = useState<Record<string, "yes" | "no">>({});
+  const [sheetRemarksByTask, setSheetRemarksByTask] = useState<Record<string, string>>({});
+  const [savingSheet, setSavingSheet] = useState(false);
+  const [showSupervisorSheet, setShowSupervisorSheet] = useState(false);
 
   useEffect(() => {
     if (!user) return;
     const qs = new URLSearchParams();
     qs.set("limit", "100");
-    qs.set("from", viewDate);
-    qs.set("to", viewDate);
+    if (viewFrom) qs.set("from", viewFrom);
+    if (viewTo) qs.set("to", viewTo);
     if (isSupervisor) qs.set("scope", "self");
     setLoadingUploaded(true);
-    api<{ sessions: UploadedSession[] }>(`/reports/therapist-sessions?${qs.toString()}`)
+    api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${qs.toString()}`)
       .then((d) => setUploadedSessions(Array.isArray(d.sessions) ? d.sessions : []))
       .catch(() => setUploadedSessions([]))
       .finally(() => setLoadingUploaded(false));
-  }, [user, isSupervisor, viewDate, refreshToken]);
+  }, [user, isSupervisor, viewFrom, viewTo, refreshToken]);
 
   const addRow = useCallback(() => setRows((r) => [...r, newRow()]), []);
   const removeRow = useCallback((id: string) => {
@@ -107,8 +157,199 @@ export function PendingRecurringDailySessions() {
     }
   };
 
+  useEffect(() => {
+    if (!isSupervisor || !user?._id) return;
+    const qs = new URLSearchParams();
+    qs.set("sheetDate", sessionDate);
+    qs.set("supervisorId", user._id);
+    api<{ entries: { taskKey: string; status?: string; remarks?: string }[] }>(`/reports/supervisor-sheet?${qs.toString()}`)
+      .then((d) => {
+        const entries = Array.isArray(d.entries) ? d.entries : [];
+        const nextStatus: Record<string, "yes" | "no"> = {};
+        const nextRemarks: Record<string, string> = {};
+        for (const task of SUPERVISOR_SHEET_TASKS) {
+          nextStatus[task.key] = "no";
+          nextRemarks[task.key] = "";
+        }
+        for (const e of entries) {
+          if (!e?.taskKey) continue;
+          nextStatus[e.taskKey] = String(e.status || "").toLowerCase() === "yes" ? "yes" : "no";
+          nextRemarks[e.taskKey] = String(e.remarks || "");
+        }
+        setSheetStatusByTask(nextStatus);
+        setSheetRemarksByTask(nextRemarks);
+      })
+      .catch(() => {
+        const nextStatus: Record<string, "yes" | "no"> = {};
+        const nextRemarks: Record<string, string> = {};
+        for (const task of SUPERVISOR_SHEET_TASKS) {
+          nextStatus[task.key] = "no";
+          nextRemarks[task.key] = "";
+        }
+        setSheetStatusByTask(nextStatus);
+        setSheetRemarksByTask(nextRemarks);
+      });
+  }, [isSupervisor, sessionDate, user?._id]);
+
+  const saveSupervisorSheet = async () => {
+    if (!isSupervisor || !user?._id) return;
+    setSavingSheet(true);
+    setMessage(null);
+    try {
+      const entries = SUPERVISOR_SHEET_TASKS.map((task) => ({
+        taskKey: task.key,
+        status: sheetStatusByTask[task.key] || "no",
+        remarks: sheetRemarksByTask[task.key] || "",
+      }));
+      await api("/reports/supervisor-sheet", {
+        method: "PUT",
+        body: JSON.stringify({
+          supervisorId: user._id,
+          sheetDate: sessionDate,
+          entries,
+        }),
+      });
+      setMessage({ type: "ok", text: "Supervisor sheet saved." });
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not save supervisor sheet." });
+    } finally {
+      setSavingSheet(false);
+    }
+  };
+
+  const canEditUploaded = useCallback(
+    (s: UploadedSession) => {
+      if (!user?._id) return false;
+      if (String(s.createdBy || "") !== String(user._id)) return false;
+      if (!s.createdAt) return false;
+      return dateInIST(s.createdAt) === dateInIST(new Date());
+    },
+    [user?._id]
+  );
+
+  const beginEdit = (s: UploadedSession) => {
+    setEditingId(s._id);
+    setEditDraft({
+      sessionDate: s.sessionDate || viewFrom || todayIsoDate(),
+      patientName: s.patientName || "",
+      startedAt: s.startedAt || "",
+      durationMinutes: String(s.durationMinutes ?? 0),
+      videoUploaded: Boolean(s.videoUploaded),
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editingId || !editDraft) return;
+    if (!editDraft.patientName.trim()) {
+      setMessage({ type: "err", text: "Patient name is required." });
+      return;
+    }
+    setSavingEdit(true);
+    setMessage(null);
+    try {
+      await api(`/reports/therapist-sessions/${editingId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          sessionDate: editDraft.sessionDate,
+          patientName: editDraft.patientName.trim(),
+          startedAt: editDraft.startedAt,
+          durationMinutes: Number(editDraft.durationMinutes) || 0,
+          videoUploaded: editDraft.videoUploaded,
+        }),
+      });
+      setMessage({ type: "ok", text: "Session updated." });
+      setEditingId(null);
+      setEditDraft(null);
+      setRefreshToken((v) => v + 1);
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not update session." });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   return (
     <section className="rounded-xl border-2 border-brand-200/80 bg-gradient-to-br from-brand-50/90 to-white p-4 shadow-card dark:border-brand-900/50 dark:from-brand-950/40 dark:to-zinc-950 sm:rounded-2xl sm:p-5">
+      {isSupervisor && (
+        <div className="mb-5">
+          <div className="rounded-xl border border-brand-200/80 bg-white/80 p-3 shadow-card dark:border-brand-900/50 dark:bg-zinc-950/70 sm:p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-brand-600 dark:text-brand-400">Supervisor Module</div>
+                <h3 className="mt-1 text-sm font-bold text-zinc-900 dark:text-zinc-100">Daily Supervisor Sheet</h3>
+                <p className="mt-1 text-[11px] text-zinc-500">Open this sheet to fill yes/no status and remarks for mandatory supervisor daily checks.</p>
+              </div>
+              <Button
+                size="sm"
+                variant={showSupervisorSheet ? "soft" : "gradient"}
+                className="w-full gap-2 sm:w-auto"
+                onClick={() => setShowSupervisorSheet((v) => !v)}
+              >
+                <ClipboardCheck className="h-4 w-4" />
+                {showSupervisorSheet ? "Hide Supervisor Sheet" : "Open Supervisor Sheet"}
+              </Button>
+            </div>
+          </div>
+          {showSupervisorSheet && (
+            <div className="mt-3 rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Supervisor Daily Task Sheet</h3>
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    Only the supervisor sheet tasks from your provided format are listed here.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead className="text-left text-[11px] uppercase text-zinc-500">
+                    <tr>
+                      <th className="px-2 py-1.5">Task</th>
+                      <th className="px-2 py-1.5">Day</th>
+                      <th className="px-2 py-1.5">Status</th>
+                      <th className="px-2 py-1.5">Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {SUPERVISOR_SHEET_TASKS.map((row) => (
+                      <tr key={row.key} className="border-t border-zinc-100 dark:border-zinc-800">
+                        <td className="px-2 py-1.5">{row.task}</td>
+                        <td className="px-2 py-1.5">{row.day}</td>
+                        <td className="px-2 py-1.5">
+                          <Select
+                            value={sheetStatusByTask[row.key] || "no"}
+                            onChange={(e) =>
+                              setSheetStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))
+                            }
+                            className="h-8 min-w-[100px] px-2.5 text-xs"
+                          >
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                          </Select>
+                        </td>
+                        <td className="px-2 py-1.5">
+                          <Input
+                            placeholder="Remarks (optional)"
+                            value={sheetRemarksByTask[row.key] || ""}
+                            onChange={(e) => setSheetRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                            className="h-8 min-w-[220px] px-2.5 text-xs"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="mt-3 flex justify-end">
+                <Button size="sm" variant="gradient" onClick={() => void saveSupervisorSheet()} disabled={savingSheet}>
+                  {savingSheet ? "Saving..." : "Save supervisor sheet"}
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-brand-100 pb-4 dark:border-brand-900/40">
         <div>
           <div className="text-[10px] font-bold uppercase tracking-widest text-brand-600 dark:text-brand-400">Daily · Therapists</div>
@@ -220,12 +461,34 @@ export function PendingRecurringDailySessions() {
 
       <div className="mt-5 rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Recent uploaded sessions</h3>
+          <div>
+            <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Recent uploaded sessions</h3>
+            <p className="mt-1 text-[11px] text-zinc-500">
+              {loadingUploaded
+                ? "Loading session count..."
+                : `${uploadedSessions.length} session${uploadedSessions.length === 1 ? "" : "s"} in selected range`}
+            </p>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-[11px] text-zinc-500">
-              <span>Date</span>
-              <Input type="date" value={viewDate} onChange={(e) => setViewDate(e.target.value)} className="h-8 min-w-[148px] px-2.5 text-xs" />
+              <span>From</span>
+              <Input type="date" value={viewFrom} onChange={(e) => setViewFrom(e.target.value)} className="h-8 min-w-[148px] px-2.5 text-xs" />
             </label>
+            <label className="flex items-center gap-2 text-[11px] text-zinc-500">
+              <span>To</span>
+              <Input type="date" value={viewTo} onChange={(e) => setViewTo(e.target.value)} className="h-8 min-w-[148px] px-2.5 text-xs" />
+            </label>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                const today = todayIsoDate();
+                setViewFrom(today);
+                setViewTo(today);
+              }}
+            >
+              Today
+            </Button>
           </div>
         </div>
         {loadingUploaded ? (
@@ -240,23 +503,116 @@ export function PendingRecurringDailySessions() {
                   <th className="px-2 py-1.5">Start</th>
                   <th className="px-2 py-1.5">Duration</th>
                   <th className="px-2 py-1.5">Video</th>
+                  <th className="px-2 py-1.5">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {uploadedSessions.map((s) => (
-                  <tr key={s._id} className="border-t border-zinc-100 dark:border-zinc-800">
-                    <td className="px-2 py-1.5">{s.sessionDate}</td>
-                    <td className="px-2 py-1.5">{s.patientName}</td>
-                    <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
-                    <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
-                    <td className="px-2 py-1.5">{s.videoUploaded ? "Yes" : "No"}</td>
-                  </tr>
-                ))}
+                {uploadedSessions.map((s) => {
+                  const editable = canEditUploaded(s);
+                  const isEditing = editingId === s._id && !!editDraft;
+                  return (
+                    <tr key={s._id} className="border-t border-zinc-100 dark:border-zinc-800">
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <Input
+                            type="date"
+                            value={editDraft.sessionDate}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, sessionDate: e.target.value } : p))}
+                            className="h-8 min-w-[148px] px-2.5 text-xs"
+                          />
+                        ) : (
+                          s.sessionDate
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <Input
+                            value={editDraft.patientName}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, patientName: e.target.value } : p))}
+                            className="h-8 min-w-[170px] px-2.5 text-xs"
+                          />
+                        ) : (
+                          s.patientName
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <Input
+                            type="time"
+                            value={editDraft.startedAt}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, startedAt: e.target.value } : p))}
+                            className="h-8 min-w-[120px] px-2.5 text-xs"
+                          />
+                        ) : (
+                          s.startedAt || "—"
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <Input
+                            type="number"
+                            min={0}
+                            value={editDraft.durationMinutes}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, durationMinutes: e.target.value } : p))}
+                            className="h-8 min-w-[100px] px-2.5 text-xs"
+                          />
+                        ) : (
+                          `${s.durationMinutes || 0} min`
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <label className="inline-flex items-center gap-2 text-xs">
+                            <input
+                              type="checkbox"
+                              checked={editDraft.videoUploaded}
+                              onChange={(e) => setEditDraft((p) => (p ? { ...p, videoUploaded: e.target.checked } : p))}
+                              className="h-4 w-4 rounded border-zinc-300 text-brand-600"
+                            />
+                            Yes
+                          </label>
+                        ) : s.videoUploaded ? (
+                          "Yes"
+                        ) : (
+                          "No"
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" variant="gradient" onClick={() => void saveEdit()} disabled={savingEdit}>
+                              {savingEdit ? "Saving..." : "Save"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setEditingId(null);
+                                setEditDraft(null);
+                              }}
+                              disabled={savingEdit}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        ) : editable ? (
+                          <Button size="sm" variant="outline" onClick={() => beginEdit(s)}>
+                            Edit
+                          </Button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-400">Locked</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-zinc-500">No uploaded sessions found for {viewDate}.</p>
+          <p className="mt-3 text-xs text-zinc-500">
+            No uploaded sessions found for {viewFrom || "start"} to {viewTo || "end"}.
+          </p>
         )}
       </div>
     </section>
