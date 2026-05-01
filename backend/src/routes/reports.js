@@ -5,6 +5,7 @@ import { DailyReport } from "../models/DailyReport.js";
 import { User } from "../models/User.js";
 import { TherapistSession } from "../models/TherapistSession.js";
 import { SupervisorSheet } from "../models/SupervisorSheet.js";
+import { CoordinatorSheet } from "../models/CoordinatorSheet.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
@@ -74,6 +75,25 @@ function nowDateInTz(timeZone = "Asia/Kolkata") {
 function canAccessSupervisorSheet(req, meUser, targetSupervisorId) {
   if (isCeo(req.userRole)) return true;
   if (req.userRole === "supervisor") return String(targetSupervisorId || "") === String(req.userId || "");
+  return false;
+}
+
+/** Legacy docs had no instanceKey; normalize so compound unique index works. */
+async function migrateLegacySupervisorSheets(supervisorId, sheetDate, centerId) {
+  await SupervisorSheet.updateMany(
+    {
+      supervisorId,
+      sheetDate,
+      centerId: centerId ?? null,
+      $or: [{ instanceKey: { $exists: false } }, { instanceKey: null }, { instanceKey: "" }],
+    },
+    { $set: { instanceKey: "default" } }
+  );
+}
+
+function canAccessCoordinatorSheet(req, _meUser, targetCoordinatorId) {
+  if (isCeo(req.userRole)) return true;
+  if (req.userRole === "coordinator") return String(targetCoordinatorId || "") === String(req.userId || "");
   return false;
 }
 
@@ -638,6 +658,38 @@ router.get("/therapist-performance", async (req, res) => {
   res.json(payload);
 });
 
+router.get("/supervisor-sheet/instances", async (req, res) => {
+  const me = await actor(req);
+  const targetSupervisorId = String(req.query.supervisorId || req.userId || "");
+  if (!canAccessSupervisorSheet(req, me, targetSupervisorId)) {
+    return res.status(403).json({ message: "You can access supervisor sheet for allowed users only" });
+  }
+  const supervisorUser = await User.findById(targetSupervisorId).select("_id role centerId").lean();
+  if (!supervisorUser || supervisorUser.role !== "supervisor") {
+    return res.status(404).json({ message: "Supervisor not found" });
+  }
+  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access sheets for your center only" });
+  }
+  const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const centerId = supervisorUser.centerId || null;
+  await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
+  const sheets = await SupervisorSheet.find({ supervisorId: targetSupervisorId, sheetDate, centerId })
+    .select("instanceKey label updatedAt")
+    .lean();
+  const instances = sheets.map((s) => ({
+    instanceKey: String(s.instanceKey || "default"),
+    label: String(s.label || ""),
+    updatedAt: s.updatedAt,
+  }));
+  instances.sort((a, b) => {
+    if (a.instanceKey === "default") return -1;
+    if (b.instanceKey === "default") return 1;
+    return a.instanceKey.localeCompare(b.instanceKey);
+  });
+  res.json({ sheetDate, instances });
+});
+
 router.get("/supervisor-sheet", async (req, res) => {
   const me = await actor(req);
   const targetSupervisorId = String(req.query.supervisorId || req.userId || "");
@@ -649,12 +701,15 @@ router.get("/supervisor-sheet", async (req, res) => {
     return res.status(404).json({ message: "Supervisor not found" });
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
-  const where = { supervisorId: targetSupervisorId, sheetDate, centerId: supervisorUser.centerId || null };
+  const centerId = supervisorUser.centerId || null;
   if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
+  await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
+  const instanceKey = String(req.query.instanceKey || "default");
+  const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
   const sheet = await SupervisorSheet.findOne(where).lean();
-  res.json({ sheetDate, entries: sheet?.entries || [] });
+  res.json({ sheetDate, instanceKey, entries: sheet?.entries || [], label: sheet?.label || "" });
 });
 
 router.put("/supervisor-sheet", async (req, res) => {
@@ -671,6 +726,10 @@ router.put("/supervisor-sheet", async (req, res) => {
     return res.status(403).json({ message: "You can update sheets for your center only" });
   }
   const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const centerId = supervisorUser.centerId || null;
+  await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
+  const instanceKey = String(req.body.instanceKey || "default");
+  const label = typeof req.body.label === "string" ? req.body.label.trim() : "";
   const entriesInput = Array.isArray(req.body.entries) ? req.body.entries : [];
   const entries = entriesInput.map((entry) => ({
     taskKey: String(entry?.taskKey || "").trim(),
@@ -680,12 +739,98 @@ router.put("/supervisor-sheet", async (req, res) => {
   const filteredEntries = entries.filter((e) => e.taskKey);
   const payload = {
     supervisorId: targetSupervisorId,
-    centerId: supervisorUser.centerId || null,
+    centerId,
+    sheetDate,
+    instanceKey,
+    label,
+    entries: filteredEntries,
+  };
+  const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
+  const sheet = await SupervisorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  res.json({ sheetDate: sheet.sheetDate, instanceKey: sheet.instanceKey || instanceKey, entries: sheet.entries || [], label: sheet.label || "" });
+});
+
+router.delete("/supervisor-sheet", async (req, res) => {
+  try {
+    const me = await actor(req);
+    const targetSupervisorId = String(req.query.supervisorId || req.body.supervisorId || req.userId || "");
+    const sheetDate = String(req.query.sheetDate || req.body.sheetDate || "");
+    const instanceKey = String(req.query.instanceKey || req.body.instanceKey || "");
+    if (!canAccessSupervisorSheet(req, me, targetSupervisorId)) {
+      return res.status(403).json({ message: "You can update supervisor sheet for allowed users only" });
+    }
+    if (!sheetDate) return res.status(400).json({ message: "sheetDate is required" });
+    if (!instanceKey || instanceKey === "default") {
+      return res.status(400).json({ message: "Only additional sheets can be removed." });
+    }
+    const supervisorUser = await User.findById(targetSupervisorId).select("_id role centerId").lean();
+    if (!supervisorUser || supervisorUser.role !== "supervisor") {
+      return res.status(404).json({ message: "Supervisor not found" });
+    }
+    if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can update sheets for your center only" });
+    }
+    const centerId = supervisorUser.centerId || null;
+    const total = await SupervisorSheet.countDocuments({ supervisorId: targetSupervisorId, sheetDate, centerId });
+    if (total <= 1) {
+      return res.status(400).json({ message: "Cannot remove the only sheet for this date." });
+    }
+    const deleted = await SupervisorSheet.deleteOne({ supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey });
+    if (!deleted.deletedCount) return res.status(404).json({ message: "Sheet not found" });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ message: e instanceof Error ? e.message : "Could not delete sheet" });
+  }
+});
+
+router.get("/coordinator-sheet", async (req, res) => {
+  const me = await actor(req);
+  const targetCoordinatorId = String(req.query.coordinatorId || req.userId || "");
+  if (!canAccessCoordinatorSheet(req, me, targetCoordinatorId)) {
+    return res.status(403).json({ message: "You can access coordinator sheet for allowed users only" });
+  }
+  const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
+  if (!coordinatorUser || coordinatorUser.role !== "coordinator") {
+    return res.status(404).json({ message: "Coordinator not found" });
+  }
+  const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
+  if (!isCeo(req.userRole) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access sheets for your center only" });
+  }
+  const sheet = await CoordinatorSheet.findOne(where).lean();
+  res.json({ sheetDate, entries: sheet?.entries || [] });
+});
+
+router.put("/coordinator-sheet", async (req, res) => {
+  const me = await actor(req);
+  const targetCoordinatorId = String(req.body.coordinatorId || req.userId || "");
+  if (!canAccessCoordinatorSheet(req, me, targetCoordinatorId)) {
+    return res.status(403).json({ message: "You can update coordinator sheet for allowed users only" });
+  }
+  const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
+  if (!coordinatorUser || coordinatorUser.role !== "coordinator") {
+    return res.status(404).json({ message: "Coordinator not found" });
+  }
+  if (!isCeo(req.userRole) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can update sheets for your center only" });
+  }
+  const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
+  const entriesInput = Array.isArray(req.body.entries) ? req.body.entries : [];
+  const entries = entriesInput.map((entry) => ({
+    taskKey: String(entry?.taskKey || "").trim(),
+    status: String(entry?.status || "").toLowerCase() === "yes" ? "yes" : "no",
+    remarks: String(entry?.remarks || "").trim(),
+  }));
+  const filteredEntries = entries.filter((e) => e.taskKey);
+  const payload = {
+    coordinatorId: targetCoordinatorId,
+    centerId: coordinatorUser.centerId || null,
     sheetDate,
     entries: filteredEntries,
   };
-  const where = { supervisorId: targetSupervisorId, sheetDate, centerId: supervisorUser.centerId || null };
-  const sheet = await SupervisorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
+  const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
+  const sheet = await CoordinatorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
   res.json({ sheetDate: sheet.sheetDate, entries: sheet.entries || [] });
 });
 
@@ -725,6 +870,7 @@ router.get("/supervisor-performance", async (req, res) => {
 
   const rows = pageSupervisors.map((s) => {
     const list = bySupervisor.get(String(s._id)) || [];
+    const uniqueDates = new Set(list.map((doc) => String(doc.sheetDate || "")));
     let yesCount = 0;
     let noCount = 0;
     let remarksCount = 0;
@@ -742,7 +888,7 @@ router.get("/supervisor-performance", async (req, res) => {
     return {
       _id: String(s._id),
       supervisor: s,
-      daysSubmitted: list.length,
+      daysSubmitted: uniqueDates.size,
       yesCount,
       noCount,
       remarksCount,
@@ -773,7 +919,7 @@ router.get("/supervisor-performance/details", async (req, res) => {
     if (req.query.to) q.sheetDate.$lte = String(req.query.to);
   }
   const [sheets, total] = await Promise.all([
-    SupervisorSheet.find(q).sort({ sheetDate: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    SupervisorSheet.find(q).sort({ sheetDate: -1, instanceKey: 1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
     SupervisorSheet.countDocuments(q),
   ]);
   res.json({ sheets, total, page, limit });

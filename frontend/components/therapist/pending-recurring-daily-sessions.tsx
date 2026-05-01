@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
-import { ClipboardCheck, Plus, Trash2 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { ClipboardCheck, Eye, Pencil, Plus, Trash2 } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -179,6 +179,16 @@ export function PendingRecurringDailySessions() {
   const [expandedTaskKeys, setExpandedTaskKeys] = useState<Record<string, boolean>>({});
   const [savingSheet, setSavingSheet] = useState(false);
   const [showSupervisorSheet, setShowSupervisorSheet] = useState(false);
+  const [supervisorSheetInstances, setSupervisorSheetInstances] = useState<{ instanceKey: string; label: string }[]>([]);
+  const [pendingSupervisorSheetKeys, setPendingSupervisorSheetKeys] = useState<string[]>([]);
+  const [activeSupervisorSheetKey, setActiveSupervisorSheetKey] = useState("default");
+  const [supervisorSheetLabelDraft, setSupervisorSheetLabelDraft] = useState("");
+  const [supervisorSheetViewOnly, setSupervisorSheetViewOnly] = useState(false);
+  const [supervisorSheetReloadNonce, setSupervisorSheetReloadNonce] = useState(0);
+
+  useEffect(() => {
+    setSupervisorSheetViewOnly(false);
+  }, [sessionDate]);
 
   useEffect(() => {
     if (!user) return;
@@ -236,14 +246,70 @@ export function PendingRecurringDailySessions() {
     }
   };
 
+  const refreshSupervisorSheetInstances = useCallback(async () => {
+    if (!user?._id) return;
+    const qs = new URLSearchParams();
+    qs.set("sheetDate", sessionDate);
+    qs.set("supervisorId", user._id);
+    try {
+      const d = await api<{ instances: { instanceKey: string; label: string }[] }>(`/reports/supervisor-sheet/instances?${qs.toString()}`);
+      const inst = Array.isArray(d.instances) ? d.instances : [];
+      setSupervisorSheetInstances(
+        inst.map((x) => ({ instanceKey: String(x.instanceKey || "default"), label: String(x.label || "") }))
+      );
+    } catch {
+      setSupervisorSheetInstances([]);
+    }
+  }, [sessionDate, user?._id]);
+
+  const mergedSupervisorSheetTabs = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { instanceKey: string; label: string }[] = [];
+    for (const i of supervisorSheetInstances) {
+      if (!seen.has(i.instanceKey)) {
+        seen.add(i.instanceKey);
+        out.push({ instanceKey: i.instanceKey, label: i.label });
+      }
+    }
+    for (const key of pendingSupervisorSheetKeys) {
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push({ instanceKey: key, label: "" });
+      }
+    }
+    out.sort((a, b) => {
+      if (a.instanceKey === "default") return -1;
+      if (b.instanceKey === "default") return 1;
+      return a.instanceKey.localeCompare(b.instanceKey);
+    });
+    return out;
+  }, [supervisorSheetInstances, pendingSupervisorSheetKeys]);
+
+  useEffect(() => {
+    if (!isSupervisor || !user?._id) return;
+    setPendingSupervisorSheetKeys([]);
+    void refreshSupervisorSheetInstances();
+  }, [isSupervisor, sessionDate, user?._id, refreshSupervisorSheetInstances]);
+
+  useEffect(() => {
+    const keys = new Set(mergedSupervisorSheetTabs.map((t) => t.instanceKey));
+    if (!keys.has(activeSupervisorSheetKey)) {
+      setActiveSupervisorSheetKey(keys.has("default") ? "default" : mergedSupervisorSheetTabs[0]?.instanceKey ?? "default");
+    }
+  }, [mergedSupervisorSheetTabs, activeSupervisorSheetKey]);
+
   useEffect(() => {
     if (!isSupervisor || !user?._id) return;
     const qs = new URLSearchParams();
     qs.set("sheetDate", sessionDate);
     qs.set("supervisorId", user._id);
-    api<{ entries: { taskKey: string; status?: string; remarks?: string }[] }>(`/reports/supervisor-sheet?${qs.toString()}`)
+    qs.set("instanceKey", activeSupervisorSheetKey);
+    api<{ entries: { taskKey: string; status?: string; remarks?: string }[]; label?: string }>(
+      `/reports/supervisor-sheet?${qs.toString()}`
+    )
       .then((d) => {
         const entries = Array.isArray(d.entries) ? d.entries : [];
+        setSupervisorSheetLabelDraft(typeof d.label === "string" ? d.label : "");
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
         const nextTherapistNames: Record<string, string> = {};
@@ -287,6 +353,7 @@ export function PendingRecurringDailySessions() {
         setSheetTherapyPlanRowsByTask(nextTherapyPlanRows);
       })
       .catch(() => {
+        setSupervisorSheetLabelDraft("");
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
         const nextTherapistNames: Record<string, string> = {};
@@ -311,7 +378,7 @@ export function PendingRecurringDailySessions() {
         setSheetDateToByTask(nextDateTo);
         setSheetTherapyPlanRowsByTask(nextTherapyPlanRows);
       });
-  }, [isSupervisor, sessionDate, user?._id]);
+  }, [isSupervisor, sessionDate, user?._id, activeSupervisorSheetKey, supervisorSheetReloadNonce]);
 
   const saveSupervisorSheet = async () => {
     if (!isSupervisor || !user?._id) return;
@@ -344,9 +411,14 @@ export function PendingRecurringDailySessions() {
         body: JSON.stringify({
           supervisorId: user._id,
           sheetDate: sessionDate,
+          instanceKey: activeSupervisorSheetKey,
+          label: supervisorSheetLabelDraft.trim(),
           entries,
         }),
       });
+      setPendingSupervisorSheetKeys((prev) => prev.filter((k) => k !== activeSupervisorSheetKey));
+      await refreshSupervisorSheetInstances();
+      setSupervisorSheetViewOnly(true);
       setMessage({ type: "ok", text: "Supervisor sheet saved." });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not save supervisor sheet." });
@@ -354,6 +426,40 @@ export function PendingRecurringDailySessions() {
       setSavingSheet(false);
     }
   };
+
+  const addSupervisorSheetTab = () => {
+    const key =
+      typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : `sheet-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    setPendingSupervisorSheetKeys((prev) => [...prev, key]);
+    setActiveSupervisorSheetKey(key);
+    setSupervisorSheetLabelDraft("");
+  };
+
+  const removeActiveSupervisorSheetTab = async () => {
+    if (!user?._id || activeSupervisorSheetKey === "default") return;
+    if (pendingSupervisorSheetKeys.includes(activeSupervisorSheetKey)) {
+      setPendingSupervisorSheetKeys((prev) => prev.filter((k) => k !== activeSupervisorSheetKey));
+      setActiveSupervisorSheetKey("default");
+      return;
+    }
+    setMessage(null);
+    try {
+      const qs = new URLSearchParams();
+      qs.set("supervisorId", user._id);
+      qs.set("sheetDate", sessionDate);
+      qs.set("instanceKey", activeSupervisorSheetKey);
+      await api(`/reports/supervisor-sheet?${qs.toString()}`, { method: "DELETE" });
+      setActiveSupervisorSheetKey("default");
+      await refreshSupervisorSheetInstances();
+      setMessage({ type: "ok", text: "Sheet removed." });
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not remove sheet." });
+    }
+  };
+
+  const svRo = supervisorSheetViewOnly;
 
   const canEditUploaded = useCallback(
     (s: UploadedSession) => {
@@ -431,12 +537,107 @@ export function PendingRecurringDailySessions() {
           {showSupervisorSheet && (
             <div className="mt-3 rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-bold text-zinc-900 dark:text-zinc-100">Supervisor Daily Task Sheet</h3>
                   <p className="mt-1 text-[11px] text-zinc-500">
-                    Only the supervisor sheet tasks from your provided format are listed here.
+                    Only the supervisor sheet tasks from your provided format are listed here. Use multiple sheets for the same day when
+                    you need separate records (e.g. different rounds or locations). After saving, use{" "}
+                    <span className="font-semibold">View saved</span> to review without editing.
                   </p>
                 </div>
+                <div className="flex flex-shrink-0 flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={svRo ? "gradient" : "outline"}
+                    className="h-9 gap-1.5 px-3 text-xs"
+                    onClick={() => {
+                      setSupervisorSheetReloadNonce((n) => n + 1);
+                      setSupervisorSheetViewOnly(true);
+                    }}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    View saved
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={!svRo ? "gradient" : "outline"}
+                    className="h-9 gap-1.5 px-3 text-xs"
+                    onClick={() => setSupervisorSheetViewOnly(false)}
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Edit
+                  </Button>
+                </div>
+              </div>
+              {svRo && (
+                <p className="mt-2 rounded-lg border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[11px] text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-400">
+                  Read-only mode. Switch tabs to view other sheets for this date. Click Edit to make changes.
+                </p>
+              )}
+              <div className="mt-3 flex flex-col gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  {(() => {
+                    const nonDefaultTabs = mergedSupervisorSheetTabs.filter((t) => t.instanceKey !== "default");
+                    return mergedSupervisorSheetTabs.map((tab) => {
+                      let tabTitle: string;
+                      if (tab.instanceKey === "default") tabTitle = "Main sheet";
+                      else if (tab.label.trim()) tabTitle = tab.label.trim();
+                      else {
+                        const i = nonDefaultTabs.findIndex((t) => t.instanceKey === tab.instanceKey);
+                        tabTitle = `Sheet ${i >= 0 ? i + 2 : 2}`;
+                      }
+                      const isActive = activeSupervisorSheetKey === tab.instanceKey;
+                      return (
+                        <button
+                          key={tab.instanceKey}
+                          type="button"
+                          onClick={() => setActiveSupervisorSheetKey(tab.instanceKey)}
+                          className={
+                            isActive
+                              ? "rounded-lg border border-brand-500 bg-brand-50 px-3 py-1.5 text-xs font-semibold text-brand-900 shadow-sm dark:border-brand-600 dark:bg-brand-950/50 dark:text-brand-100"
+                              : "rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 hover:border-brand-300 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-brand-800 dark:hover:bg-zinc-800"
+                          }
+                        >
+                          {tabTitle}
+                        </button>
+                      );
+                    });
+                  })()}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="soft"
+                    className="h-8 gap-1 px-2.5 text-xs"
+                    disabled={svRo}
+                    onClick={addSupervisorSheetTab}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add sheet
+                  </Button>
+                  {activeSupervisorSheetKey !== "default" && (
+                    <button
+                      type="button"
+                      disabled={svRo}
+                      onClick={() => void removeActiveSupervisorSheetTab()}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-semibold text-red-800 hover:bg-red-100 disabled:pointer-events-none disabled:opacity-40 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200 dark:hover:bg-red-950/70"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Remove sheet
+                    </button>
+                  )}
+                </div>
+                <label className="flex max-w-md flex-col gap-1">
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Sheet label (optional)</span>
+                  <Input
+                    value={supervisorSheetLabelDraft}
+                    readOnly={svRo}
+                    onChange={(e) => setSupervisorSheetLabelDraft(e.target.value)}
+                    placeholder="e.g. OPD morning, Parent session"
+                    className="h-9 text-xs"
+                  />
+                </label>
               </div>
               <div className="mt-3 overflow-x-auto">
                 <table className="w-full min-w-[980px] text-sm">
@@ -478,12 +679,14 @@ export function PendingRecurringDailySessions() {
                                       <Input
                                         placeholder="Therapist name"
                                         value={sheetTherapistNameByTask[row.key] || ""}
+                                        readOnly={svRo}
                                         onChange={(e) => setSheetTherapistNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                         className="h-8 min-w-[180px] px-2.5 text-xs"
                                       />
                                       <Input
                                         placeholder="Patient name"
                                         value={sheetPatientNameByTask[row.key] || ""}
+                                        readOnly={svRo}
                                         onChange={(e) => setSheetPatientNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                         className="h-8 min-w-[180px] px-2.5 text-xs"
                                       />
@@ -495,6 +698,7 @@ export function PendingRecurringDailySessions() {
                                         type="date"
                                         placeholder="Date from"
                                         value={sheetDateFromByTask[row.key] || ""}
+                                        readOnly={svRo}
                                         onChange={(e) => setSheetDateFromByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                         className="h-8 min-w-[160px] px-2.5 text-xs"
                                       />
@@ -502,6 +706,7 @@ export function PendingRecurringDailySessions() {
                                         type="date"
                                         placeholder="Date to"
                                         value={sheetDateToByTask[row.key] || ""}
+                                        readOnly={svRo}
                                         onChange={(e) => setSheetDateToByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                         className="h-8 min-w-[160px] px-2.5 text-xs"
                                       />
@@ -518,6 +723,7 @@ export function PendingRecurringDailySessions() {
                                 onChange={(e) =>
                                   setSheetStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))
                                 }
+                                disabled={svRo}
                                 className="h-8 min-w-[100px] px-2.5 text-xs"
                               >
                                 <option value="yes">Yes</option>
@@ -528,6 +734,7 @@ export function PendingRecurringDailySessions() {
                               <Input
                                 placeholder="Remarks (optional)"
                                 value={sheetRemarksByTask[row.key] || ""}
+                                readOnly={svRo}
                                 onChange={(e) => setSheetRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                 className="h-8 min-w-[220px] px-2.5 text-xs"
                               />
@@ -539,20 +746,22 @@ export function PendingRecurringDailySessions() {
                                 <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-950">
                                   <div className="mb-2 flex items-center justify-between">
                                     <div className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Therapy Plan Details</div>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setSheetTherapyPlanRowsByTask((prev) => ({
-                                          ...prev,
-                                          [row.key]: [...(prev[row.key] || [newTherapyPlanRow()]), newTherapyPlanRow()],
-                                        }))
-                                      }
-                                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
-                                      aria-label="Add therapy plan row"
-                                      title="Add row"
-                                    >
-                                      <Plus className="h-4 w-4" />
-                                    </button>
+                                    {!svRo && (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setSheetTherapyPlanRowsByTask((prev) => ({
+                                            ...prev,
+                                            [row.key]: [...(prev[row.key] || [newTherapyPlanRow()]), newTherapyPlanRow()],
+                                          }))
+                                        }
+                                        className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                                        aria-label="Add therapy plan row"
+                                        title="Add row"
+                                      >
+                                        <Plus className="h-4 w-4" />
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_120px_minmax(0,1fr)_minmax(0,1fr)]">
                                     <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Name</div>
@@ -566,6 +775,7 @@ export function PendingRecurringDailySessions() {
                                           key={`${plan.id}-name`}
                                           placeholder="Name"
                                           value={plan.name}
+                                          readOnly={svRo}
                                           onChange={(e) =>
                                             setSheetTherapyPlanRowsByTask((prev) => ({
                                               ...prev,
@@ -580,6 +790,7 @@ export function PendingRecurringDailySessions() {
                                           key={`${plan.id}-time`}
                                           type="time"
                                           value={plan.time}
+                                          readOnly={svRo}
                                           onChange={(e) =>
                                             setSheetTherapyPlanRowsByTask((prev) => ({
                                               ...prev,
@@ -594,6 +805,7 @@ export function PendingRecurringDailySessions() {
                                           key={`${plan.id}-room`}
                                           placeholder="Room no."
                                           value={plan.roomNo}
+                                          readOnly={svRo}
                                           onChange={(e) =>
                                             setSheetTherapyPlanRowsByTask((prev) => ({
                                               ...prev,
@@ -608,6 +820,7 @@ export function PendingRecurringDailySessions() {
                                           key={`${plan.id}-child`}
                                           placeholder="Child"
                                           value={plan.child}
+                                          readOnly={svRo}
                                           onChange={(e) =>
                                             setSheetTherapyPlanRowsByTask((prev) => ({
                                               ...prev,
@@ -622,6 +835,7 @@ export function PendingRecurringDailySessions() {
                                           key={`${plan.id}-activity`}
                                           placeholder="Activity"
                                           value={plan.activity}
+                                          readOnly={svRo}
                                           onChange={(e) =>
                                             setSheetTherapyPlanRowsByTask((prev) => ({
                                               ...prev,
@@ -646,9 +860,11 @@ export function PendingRecurringDailySessions() {
                 </table>
               </div>
               <div className="mt-3 flex justify-end">
-                <Button size="sm" variant="gradient" onClick={() => void saveSupervisorSheet()} disabled={savingSheet}>
-                  {savingSheet ? "Saving..." : "Save supervisor sheet"}
-                </Button>
+                {!svRo && (
+                  <Button size="sm" variant="gradient" onClick={() => void saveSupervisorSheet()} disabled={savingSheet}>
+                    {savingSheet ? "Saving..." : "Save supervisor sheet"}
+                  </Button>
+                )}
               </div>
             </div>
           )}

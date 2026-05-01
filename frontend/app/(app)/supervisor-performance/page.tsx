@@ -21,6 +21,8 @@ type SummaryRow = {
 type DetailSheet = {
   _id: string;
   sheetDate: string;
+  instanceKey?: string;
+  label?: string;
   entries: { taskKey: string; status: "yes" | "no"; remarks?: string }[];
 };
 
@@ -267,7 +269,14 @@ export default function SupervisorPerformancePage() {
                             <div className="space-y-3">
                               {detail.sheets.map((sheet) => (
                                 <div key={sheet._id} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
-                                  <div className="mb-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{sheet.sheetDate}</div>
+                                  <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                                    <span>{sheet.sheetDate}</span>
+                                    {sheet.instanceKey && sheet.instanceKey !== "default" && (
+                                      <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
+                                        {String(sheet.label || "").trim() || "Extra sheet"}
+                                      </span>
+                                    )}
+                                  </div>
                                   <div className="overflow-x-auto">
                                     <table className="w-full min-w-[560px] text-xs">
                                       <thead className="text-left uppercase text-zinc-500">
