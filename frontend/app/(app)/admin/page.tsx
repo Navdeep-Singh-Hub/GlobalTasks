@@ -572,7 +572,9 @@ function EditUserModal({
   departmentOptions: string[];
 }) {
   const { user: me } = useAuth();
-  const canSetPassword = me?.role === "ceo" || me?.role === "centre_head";
+  const editingSelf = Boolean(me?._id && user._id === me._id);
+  const limitedSelfProfile = editingSelf && me?.role !== "ceo";
+  const canSetPassword = me?.role === "ceo" || me?.role === "centre_head" || limitedSelfProfile;
   const assignable = rolesAssignableBy((me?.role || "executor") as Role);
   const roleOptions = Array.from(new Set([...assignable, user.role]));
 
@@ -632,6 +634,17 @@ function EditUserModal({
     }
     setSaving(true);
     try {
+      if (limitedSelfProfile) {
+        await api(`/users/${user._id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            phone: form.phone,
+            ...(newPassword.trim() ? { password: newPassword.trim() } : {}),
+          }),
+        });
+        onSaved();
+        return;
+      }
       if (!form.centerId) {
         setErr("Center is required.");
         setSaving(false);
@@ -673,6 +686,43 @@ function EditUserModal({
       setSaving(false);
     }
   };
+
+  if (limitedSelfProfile) {
+    return (
+      <Modal open title="Your phone & password" onClose={onClose} className="max-w-lg">
+        <p className="text-xs text-zinc-500">
+          Har role apna phone aur password yahan se badal sakta hai. Baaki account fields ke liye CEO se admin access chahiye.
+        </p>
+        <div className="mt-3 space-y-2 rounded-xl border border-zinc-100 bg-zinc-50/60 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900/40">
+          <div>
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">Name:</span> {user.name}
+          </div>
+          <div>
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">Email:</span> {user.email}
+          </div>
+          <div>
+            <span className="font-semibold text-zinc-700 dark:text-zinc-200">Role:</span> {formatRoleLine(user.role, user.executorKind)}
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3">
+          <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          <div className="grid gap-2 md:grid-cols-2">
+            <Input type="password" placeholder="New password (optional)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password" />
+            <Input type="password" placeholder="Confirm new password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} autoComplete="new-password" />
+          </div>
+        </div>
+        {err && <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-200">{err}</div>}
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="gradient" onClick={submit} disabled={saving}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </div>
+      </Modal>
+    );
+  }
 
   return (
     <Modal open title={`Edit ${user.name}`} onClose={onClose} className="max-w-2xl">

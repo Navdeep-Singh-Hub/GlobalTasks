@@ -12,7 +12,7 @@ import { Project } from "../models/Project.js";
 import { TaskTemplate } from "../models/TaskTemplate.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
-import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo } from "../constants/roles.js";
+import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
@@ -151,10 +151,28 @@ router.post("/", requireManagement, async (req, res, next) => {
   }
 });
 
-router.patch("/:id", requireManagement, async (req, res, next) => {
+router.patch("/:id", async (req, res, next) => {
   try {
     const user = await User.findById(req.params.id);
     if (!user) return res.status(404).json({ message: "User not found" });
+    const isSelf = String(req.userId) === String(user._id);
+    const keys = Object.keys(req.body || {}).filter((k) => req.body[k] !== undefined);
+    const onlyPhonePassword = keys.every((k) => k === "phone" || k === "password");
+    if (isSelf && onlyPhonePassword) {
+      const { phone, password } = req.body;
+      if (phone !== undefined) user.phone = phone;
+      if (password !== undefined && String(password).trim()) {
+        user.passwordHash = await bcrypt.hash(String(password).trim(), 10);
+      }
+      await user.save();
+      return res.json({ user: user.toJSON() });
+    }
+    if (isSelf && !isCeo(req.userRole)) {
+      return res.status(403).json({ message: "You can only update your phone and password" });
+    }
+    if (!isManagement(req.userRole)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
     const { name, email, role, title, avatarUrl, department, departmentPrimary, centerId, reportsTo, phone, permissions, active, executorKind, weekOffDays } =
       req.body;
     const me = await actor(req);
