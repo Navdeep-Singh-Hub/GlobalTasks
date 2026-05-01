@@ -1106,6 +1106,7 @@ export function PendingRecurringDailySessions() {
         {loadingUploaded ? (
           <p className="mt-3 text-xs text-zinc-500">Loading sessions...</p>
         ) : uploadedSessions.length ? (
+          <>
           <div className="mt-3 hidden overflow-x-auto md:block">
             <table className="w-full min-w-[620px] text-sm">
               <thead className="text-left text-[11px] uppercase text-zinc-500">
@@ -1278,6 +1279,7 @@ export function PendingRecurringDailySessions() {
               );
             })}
           </div>
+          </>
         ) : (
           <p className="mt-3 text-xs text-zinc-500">
             No uploaded sessions found for {viewFrom || "start"} to {viewTo || "end"}.
