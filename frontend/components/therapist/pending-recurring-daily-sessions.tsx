@@ -47,7 +47,6 @@ type SupervisorSheetTask = {
 const OBSERVE_THERAPY_TASK_KEY = "observe-therapy-sessions";
 const ALTERNATIVE_SESSION_TASK_KEY = "alternative-session";
 const THERAPY_PLAN_CHECK_TASK_KEY = "therapy-plan-check";
-const SUPERVISOR_ROUND_NOTES_TASK_KEY = "supervisor-round-notes";
 
 type TherapyPlanRow = {
   id: string;
@@ -129,7 +128,7 @@ function supportsTherapyPlanRows(taskKey: string) {
   return taskKey === THERAPY_PLAN_CHECK_TASK_KEY;
 }
 
-function supportsDateRange(taskKey: string) {
+function supportsDateRange() {
   return false;
 }
 
@@ -330,7 +329,7 @@ export function PendingRecurringDailySessions() {
           if (!e?.taskKey) continue;
           nextStatus[e.taskKey] = String(e.status || "").toLowerCase() === "yes" ? "yes" : "no";
           const rawRemarks = String(e.remarks || "");
-          if (supportsSessionNames(e.taskKey) || supportsTherapyPlanRows(e.taskKey) || supportsDateRange(e.taskKey)) {
+          if (supportsSessionNames(e.taskKey) || supportsTherapyPlanRows(e.taskKey) || supportsDateRange()) {
             const parsed = parseStructuredTaskPayload(rawRemarks);
             nextRemarks[e.taskKey] = parsed.remarks;
             nextTherapistNames[e.taskKey] = parsed.therapistName;
@@ -389,7 +388,7 @@ export function PendingRecurringDailySessions() {
         taskKey: task.key,
         status: sheetStatusByTask[task.key] || "no",
         remarks:
-          supportsSessionNames(task.key) || supportsTherapyPlanRows(task.key) || supportsDateRange(task.key)
+          supportsSessionNames(task.key) || supportsTherapyPlanRows(task.key) || supportsDateRange()
             ? JSON.stringify({
                 remarks: sheetRemarksByTask[task.key] || "",
                 therapistName: sheetTherapistNameByTask[task.key] || "",
@@ -672,7 +671,7 @@ export function PendingRecurringDailySessions() {
                               )}
                             </td>
                             <td className="px-2 py-1.5">
-                              {supportsSessionNames(row.key) || supportsDateRange(row.key) ? (
+                              {supportsSessionNames(row.key) || supportsDateRange() ? (
                                 <div className="grid gap-2 sm:grid-cols-2">
                                   {supportsSessionNames(row.key) && (
                                     <>
@@ -692,7 +691,7 @@ export function PendingRecurringDailySessions() {
                                       />
                                     </>
                                   )}
-                                  {supportsDateRange(row.key) && (
+                                  {supportsDateRange() && (
                                     <>
                                       <Input
                                         type="date"
