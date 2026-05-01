@@ -70,7 +70,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "" : "";
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden bg-surface-muted dark:bg-[#0b1220]">
+    <div className="flex min-h-[100dvh] overflow-x-clip bg-surface-muted dark:bg-[#0b1220]">
       <AppSidebar variant="desktop" />
       <AppSidebar variant="mobile" mobileOpen={navOpen} onCloseMobile={() => setNavOpen(false)} />
       <main className="flex min-w-0 flex-1 flex-col">

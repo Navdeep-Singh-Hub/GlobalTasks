@@ -284,7 +284,7 @@ export default function TherapistPerformancePage() {
         <p className="mt-1 text-xs text-zinc-500">
           Showing {rows.length} of {rowsTotal} therapist records.
         </p>
-        <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <div className="mt-3 hidden overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] md:block">
           <table className="w-full min-w-[860px] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -325,6 +325,22 @@ export default function TherapistPerformancePage() {
             </tbody>
           </table>
         </div>
+        <div className="mt-3 space-y-2 md:hidden">
+          {rows.map((r) => (
+            <div key={`m-${r._id}`} className="rounded-lg border border-zinc-200/80 p-3 text-sm dark:border-zinc-800">
+              <div className="font-semibold">{r.therapist.name}</div>
+              <div className="text-xs text-zinc-500">{r.therapist.email}</div>
+              {r.sessions === 0 && <div className="mt-1 text-xs font-semibold text-rose-600">No uploads in selected date range</div>}
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Sessions: {r.sessions}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Patients: {r.patientsCovered}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Attendance: {r.attendanceDays}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Avg Marks: {r.avgSupervisorScore || 0}/5</div>
+              </div>
+            </div>
+          ))}
+          {!rows.length && <div className="py-6 text-center text-sm text-zinc-500">No staff records for this filter.</div>}
+        </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
           <Button type="button" variant="outline" className="w-full sm:w-auto" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
             Previous
@@ -347,7 +363,7 @@ export default function TherapistPerformancePage() {
         <p className="mt-1 text-xs text-zinc-500">
           Same therapist list as measurements on this page. Click any therapist row to load and view that therapist&apos;s date-wise sessions.
         </p>
-        <div className="mt-3 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <div className="mt-3 hidden overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] md:block">
           <table className="w-full min-w-[min(100%,360px)] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -410,7 +426,7 @@ export default function TherapistPerformancePage() {
                         <td colSpan={2} className="px-0 pb-3 pt-0">
                           <div className="ml-1 border-l-2 border-brand-200/80 pl-3 dark:border-brand-800/50 sm:ml-6 sm:pl-4">
                             <div className="max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
-                              <table className="w-full min-w-[640px] text-sm">
+                              <table className="w-full text-sm">
                                 <thead className="text-left text-xs uppercase text-zinc-500">
                                   <tr>
                                     <th className="px-2 py-1.5">Date</th>
@@ -490,6 +506,56 @@ export default function TherapistPerformancePage() {
               )}
             </tbody>
           </table>
+        </div>
+        <div className="mt-3 space-y-2 md:hidden">
+          {sessionGroups.map((g) => {
+            const open = Boolean(expandedSessionTherapists[g.id]);
+            const detail = sessionByTherapist[g.id];
+            return (
+              <div key={`sg-${g.id}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-2 text-left"
+                  onClick={() => {
+                    const willOpen = !open;
+                    setExpandedSessionTherapists((p) => ({ ...p, [g.id]: willOpen }));
+                    if (willOpen) void loadTherapistSessions(g.therapist);
+                  }}
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold text-zinc-900 dark:text-zinc-100">{g.therapist.name}</div>
+                    <div className="truncate text-xs text-zinc-500">{g.therapist.email || "—"}</div>
+                  </div>
+                  <div className="shrink-0 text-xs text-zinc-500">{open ? "Hide" : "View"} ({g.expectedCount})</div>
+                </button>
+                {open && (
+                  <div className="mt-2 space-y-2">
+                    {detail?.error ? <div className="text-xs text-rose-600">{detail.error}</div> : null}
+                    {detail?.loading ? <div className="text-xs text-zinc-500">Loading session details…</div> : null}
+                    {detail?.loaded && !detail.items.length ? (
+                      <div className="text-xs text-zinc-500">No uploaded sessions for selected date range.</div>
+                    ) : null}
+                    {(detail?.items || []).map((s) => (
+                      <div key={s._id} className="rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
+                        <div className="font-medium">{s.sessionDate} · {s.patientName}</div>
+                        <div className="text-zinc-500">{s.startedAt || "—"} · {s.durationMinutes || 0} min · Marks {s.supervisorScore || 0}/5</div>
+                        <div className="mt-1">
+                          {s.videoUrl ? (
+                            <a href={assetUrl(s.videoUrl)} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
+                              View video
+                            </a>
+                          ) : (
+                            <span className="text-zinc-500">No video</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {!sessionGroups.length && <div className="py-6 text-center text-sm text-zinc-500">No therapist records for selected filters.</div>}
         </div>
       </div>
 

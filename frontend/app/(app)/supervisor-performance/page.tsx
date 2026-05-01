@@ -175,7 +175,7 @@ export default function SupervisorPerformancePage() {
         <p className="mt-1 text-xs text-zinc-500">
           Showing {rows.length} of {total} supervisor records.
         </p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 hidden overflow-x-auto md:block">
           <table className="w-full min-w-[900px] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -211,6 +211,24 @@ export default function SupervisorPerformancePage() {
             </tbody>
           </table>
         </div>
+        <div className="mt-3 space-y-2 md:hidden">
+          {rows.map((r) => (
+            <div key={`m-${r._id}`} className="rounded-lg border border-zinc-200/80 p-3 text-sm dark:border-zinc-800">
+              <div className="font-semibold">{r.supervisor.name}</div>
+              <div className="text-xs text-zinc-500">{r.supervisor.email}</div>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Days: {r.daysSubmitted}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Yes: {r.yesCount}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">No: {r.noCount}</div>
+                <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Remarks: {r.remarksCount}</div>
+              </div>
+              <div className="mt-2 text-xs text-zinc-500">
+                Last update: {r.lastUpdatedAt ? new Date(r.lastUpdatedAt).toLocaleString() : "—"}
+              </div>
+            </div>
+          ))}
+          {!rows.length && <div className="py-6 text-center text-sm text-zinc-500">No supervisor records for selected filters.</div>}
+        </div>
         <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
           <Button type="button" variant="outline" className="w-full sm:w-auto" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
             Previous
@@ -225,7 +243,7 @@ export default function SupervisorPerformancePage() {
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Supervisor Sheet Details (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">Click a supervisor to expand saved sheet entries by date.</p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 hidden overflow-x-auto md:block">
           <table className="w-full min-w-[700px] text-sm">
             <thead className="text-left text-xs uppercase text-zinc-500">
               <tr>
@@ -278,7 +296,7 @@ export default function SupervisorPerformancePage() {
                                     )}
                                   </div>
                                   <div className="overflow-x-auto">
-                                    <table className="w-full min-w-[560px] text-xs">
+                                    <table className="w-full text-xs">
                                       <thead className="text-left uppercase text-zinc-500">
                                         <tr>
                                           <th className="px-2 py-1">Task</th>
@@ -311,6 +329,59 @@ export default function SupervisorPerformancePage() {
               })}
             </tbody>
           </table>
+        </div>
+        <div className="mt-3 space-y-2 md:hidden">
+          {rows.map((r) => {
+            const open = Boolean(expanded[r._id]);
+            const detail = detailsBySupervisor[r._id];
+            return (
+              <div key={`d-${r._id}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-2 text-left"
+                  onClick={() => {
+                    const willOpen = !open;
+                    setExpanded((prev) => ({ ...prev, [r._id]: willOpen }));
+                    if (willOpen) void loadDetails(r._id);
+                  }}
+                >
+                  <div className="min-w-0">
+                    <div className="font-semibold">{r.supervisor.name}</div>
+                    <div className="truncate text-xs text-zinc-500">{r.supervisor.email}</div>
+                  </div>
+                  <div className="shrink-0 text-xs text-zinc-500">{open ? "Hide" : "View"} ({r.daysSubmitted} days)</div>
+                </button>
+                {open && (
+                  <div className="mt-2 space-y-2">
+                    {detail?.loading ? (
+                      <div className="text-xs text-zinc-500">Loading details…</div>
+                    ) : detail?.error ? (
+                      <div className="text-xs text-rose-600">{detail.error}</div>
+                    ) : detail?.loaded && detail.sheets.length ? (
+                      detail.sheets.map((sheet) => (
+                        <div key={sheet._id} className="rounded-md border border-zinc-200/80 p-2 dark:border-zinc-800">
+                          <div className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
+                            {sheet.sheetDate}
+                            {sheet.instanceKey && sheet.instanceKey !== "default" ? ` · ${String(sheet.label || "").trim() || "Extra sheet"}` : ""}
+                          </div>
+                          <div className="space-y-1">
+                            {sheet.entries.map((e, idx) => (
+                              <div key={`${sheet._id}-${e.taskKey}-${idx}`} className="rounded bg-zinc-50 px-2 py-1 text-xs dark:bg-zinc-900">
+                                <div className="font-medium">{taskLabel(e.taskKey)}</div>
+                                <div className="text-zinc-500">{String(e.status || "").toUpperCase()} · {e.remarks || "—"}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-xs text-zinc-500">No details found for selected range.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

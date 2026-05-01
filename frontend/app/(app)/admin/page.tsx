@@ -239,7 +239,7 @@ export default function AdminPanelPage() {
           </div>
           <Filter className="h-4 w-4 text-zinc-400" />
         </div>
-        <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <div className="hidden overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] md:block">
           <table className="w-full min-w-[960px] text-[12.5px]">
             <thead className="bg-zinc-50/70 text-[10.5px] uppercase tracking-[0.08em] text-zinc-500 dark:bg-zinc-900">
               <tr>
@@ -344,6 +344,62 @@ export default function AdminPanelPage() {
               )}
             </tbody>
           </table>
+        </div>
+        <div className="space-y-2 p-3 md:hidden">
+          {loading ? (
+            <div className="rounded-lg border border-zinc-200/80 p-4 text-center text-xs text-zinc-400 dark:border-zinc-800">Loading users…</div>
+          ) : members.length === 0 ? (
+            <div className="rounded-lg border border-zinc-200/80 p-4 text-center text-xs text-zinc-400 dark:border-zinc-800">No users found.</div>
+          ) : (
+            members.map((m) => (
+              <div key={`m-${m._id}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-semibold text-zinc-900 dark:text-zinc-100">{m.name}</div>
+                    <div className="truncate text-xs text-zinc-500">{m.email}</div>
+                    <div className="text-xs text-zinc-500">{m.phone || "—"}</div>
+                  </div>
+                  <Badge tone={roleTone(m.role)}>{formatRoleLine(m.role, m.executorKind)}</Badge>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Dept: {m.department || "—"}</div>
+                  <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Status: {m.active ? "Active" : "Inactive"}</div>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <button onClick={() => setEditing(m)} className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 dark:hover:bg-zinc-800" title="Edit">
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={async () => {
+                      const pwd = prompt("Reset password to:", "welcome123");
+                      if (pwd) await api(`/users/${m._id}/reset-password`, { method: "POST", body: JSON.stringify({ password: pwd }) });
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-amber-600 dark:hover:bg-zinc-800"
+                    title="Reset password"
+                  >
+                    <Lock className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    role="switch"
+                    aria-checked={m.active}
+                    onClick={() => toggleActive(m)}
+                    className={`relative h-5 w-9 rounded-full transition ${m.active ? "bg-brand-gradient" : "bg-zinc-300 dark:bg-zinc-700"}`}
+                  >
+                    <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${m.active ? "left-[18px]" : "left-0.5"}`} />
+                  </button>
+                  {me?.role === "ceo" && m._id !== me._id && (
+                    <button
+                      onClick={() => void deleteUserPermanent(m)}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 dark:hover:bg-zinc-800"
+                      title="Delete user permanently"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 

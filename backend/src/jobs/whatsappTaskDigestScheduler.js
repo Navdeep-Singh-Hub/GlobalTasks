@@ -87,7 +87,7 @@ async function safeSendTemplateDigestMessage({ user, runType, templateName, para
 }
 
 async function runMorningDigest(now = new Date()) {
-  const users = await User.find({ active: true, phone: { $ne: "" } }).select("_id name phone").lean();
+  const users = await User.find({ active: true, phone: { $ne: "" } }).select("_id name phone role").lean();
   const stats = { recipients: users.length, considered: 0, sent: 0, skipped: 0, failed: 0 };
   for (const u of users) {
     const tasks = await Task.find({
@@ -99,16 +99,40 @@ async function runMorningDigest(now = new Date()) {
       .sort({ dueDate: 1 })
       .limit(8)
       .lean();
-    if (!tasks.length) continue;
+
+    const taskLines = tasks.map((t, idx) => `${idx + 1}. ${t.title} (${String(t.status || "").replace("_", " ")})`);
+
+    /** Same idea as assigned daily tasks: remind every morning via WhatsApp. */
+    const dailySheetLabels = [];
+    if (u.role === "supervisor") dailySheetLabels.push("Fill Daily Supervisor Sheet");
+    if (u.role === "coordinator") dailySheetLabels.push("Fill Daily Coordinator Sheet");
+
+    const allLines = [...taskLines];
+    let n = taskLines.length;
+    for (const label of dailySheetLabels) {
+      n += 1;
+      allLines.push(`${n}. ${label} (daily)`);
+    }
+
+    if (!allLines.length) continue;
+
     stats.considered += 1;
-    const lines = tasks.map((t, idx) => `${idx + 1}. ${t.title} (${t.status.replace("_", " ")})`);
-    const text = `Good morning ${u.name}. Assigned tasks for today:\n${lines.join("\n")}`;
+
+    const body = allLines.join("\n");
+    const hasTasks = taskLines.length > 0;
+    const hasSheets = dailySheetLabels.length > 0;
+    let intro;
+    if (hasTasks && hasSheets) intro = `Good morning ${u.name}. Your tasks and daily sheets for today:`;
+    else if (hasTasks) intro = `Good morning ${u.name}. Assigned tasks for today:`;
+    else intro = `Good morning ${u.name}. Daily checklist for today:`;
+    const text = `${intro}\n${body}`;
+
     // eslint-disable-next-line no-await-in-loop
     const res = await safeSendTemplateDigestMessage({
       user: u,
       runType: "morning",
       templateName: MORNING_TEMPLATE,
-      parameters: [u.name, lines.join("\n")],
+      parameters: [u.name, body],
       fallbackText: text,
     });
     stats.sent += res.sent;

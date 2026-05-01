@@ -638,7 +638,7 @@ export function PendingRecurringDailySessions() {
                   />
                 </label>
               </div>
-              <div className="mt-3 overflow-x-auto">
+              <div className="mt-3 hidden overflow-x-auto md:block">
                 <table className="w-full min-w-[980px] text-sm">
                   <thead className="text-left text-[11px] uppercase text-zinc-500">
                     <tr>
@@ -858,6 +858,98 @@ export function PendingRecurringDailySessions() {
                   </tbody>
                 </table>
               </div>
+              <div className="mt-3 space-y-2 md:hidden">
+                {SUPERVISOR_SHEET_TASKS.map((row) => {
+                  const isTherapyPlan = supportsTherapyPlanRows(row.key);
+                  const therapyPlanRows = sheetTherapyPlanRowsByTask[row.key] || [newTherapyPlanRow()];
+                  return (
+                    <div key={`mobile-${row.key}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                      <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">{row.task}</div>
+                      <div className="mt-2">
+                        {supportsSessionNames(row.key) || supportsDateRange() ? (
+                          <div className="grid gap-2">
+                            {supportsSessionNames(row.key) && (
+                              <>
+                                <Input
+                                  placeholder="Therapist name"
+                                  value={sheetTherapistNameByTask[row.key] || ""}
+                                  readOnly={svRo}
+                                  onChange={(e) => setSheetTherapistNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="Patient name"
+                                  value={sheetPatientNameByTask[row.key] || ""}
+                                  readOnly={svRo}
+                                  onChange={(e) => setSheetPatientNameByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                                  className="h-8 text-xs"
+                                />
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-zinc-400">No details</span>
+                        )}
+                      </div>
+                      <div className="mt-2 grid grid-cols-1 gap-2">
+                        <Select
+                          value={sheetStatusByTask[row.key] || "no"}
+                          onChange={(e) =>
+                            setSheetStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))
+                          }
+                          disabled={svRo}
+                          className="h-8 text-xs"
+                        >
+                          <option value="yes">Yes</option>
+                          <option value="no">No</option>
+                        </Select>
+                        <Input
+                          placeholder="Remarks (optional)"
+                          value={sheetRemarksByTask[row.key] || ""}
+                          readOnly={svRo}
+                          onChange={(e) => setSheetRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                          className="h-8 text-xs"
+                        />
+                      </div>
+                      {isTherapyPlan && (
+                        <div className="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
+                          <div className="mb-1 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Therapy Plan Details</div>
+                          <div className="space-y-2">
+                            {therapyPlanRows.map((plan) => (
+                              <div key={`m-${plan.id}`} className="grid gap-1">
+                                <Input
+                                  placeholder="Name"
+                                  value={plan.name}
+                                  readOnly={svRo}
+                                  onChange={(e) =>
+                                    setSheetTherapyPlanRowsByTask((prev) => ({
+                                      ...prev,
+                                      [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, name: e.target.value } : p)),
+                                    }))
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="Child"
+                                  value={plan.child}
+                                  readOnly={svRo}
+                                  onChange={(e) =>
+                                    setSheetTherapyPlanRowsByTask((prev) => ({
+                                      ...prev,
+                                      [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, child: e.target.value } : p)),
+                                    }))
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
               <div className="mt-3 flex justify-end">
                 {!svRo && (
                   <Button size="sm" variant="gradient" onClick={() => void saveSupervisorSheet()} disabled={savingSheet}>
@@ -1014,7 +1106,7 @@ export function PendingRecurringDailySessions() {
         {loadingUploaded ? (
           <p className="mt-3 text-xs text-zinc-500">Loading sessions...</p>
         ) : uploadedSessions.length ? (
-          <div className="mt-3 overflow-x-auto">
+          <div className="mt-3 hidden overflow-x-auto md:block">
             <table className="w-full min-w-[620px] text-sm">
               <thead className="text-left text-[11px] uppercase text-zinc-500">
                 <tr>
@@ -1128,6 +1220,63 @@ export function PendingRecurringDailySessions() {
                 })}
               </tbody>
             </table>
+          </div>
+          <div className="mt-3 space-y-2 md:hidden">
+            {uploadedSessions.map((s) => {
+              const editable = canEditUploaded(s);
+              const isEditing = editingId === s._id && !!editDraft;
+              return (
+                <div key={`mobile-s-${s._id}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                  {isEditing ? (
+                    <div className="grid gap-2">
+                      <Input
+                        type="date"
+                        value={editDraft.sessionDate}
+                        onChange={(e) => setEditDraft((p) => (p ? { ...p, sessionDate: e.target.value } : p))}
+                        className="h-8 text-xs"
+                      />
+                      <Input
+                        value={editDraft.patientName}
+                        onChange={(e) => setEditDraft((p) => (p ? { ...p, patientName: e.target.value } : p))}
+                        className="h-8 text-xs"
+                      />
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="gradient" onClick={() => void saveEdit()} disabled={savingEdit}>
+                          {savingEdit ? "Saving..." : "Save"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setEditingId(null);
+                            setEditDraft(null);
+                          }}
+                          disabled={savingEdit}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="font-semibold text-zinc-800 dark:text-zinc-100">{s.patientName}</div>
+                      <div className="text-xs text-zinc-500">
+                        {s.sessionDate} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
+                      </div>
+                      <div className="mt-2">
+                        {editable ? (
+                          <Button size="sm" variant="outline" onClick={() => beginEdit(s)}>
+                            Edit
+                          </Button>
+                        ) : (
+                          <span className="text-[11px] text-zinc-400">Locked</span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
           </div>
         ) : (
           <p className="mt-3 text-xs text-zinc-500">

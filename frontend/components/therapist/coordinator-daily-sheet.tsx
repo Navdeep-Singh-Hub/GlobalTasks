@@ -52,11 +52,11 @@ function ChildNameListEditor({
   if (readOnly) {
     const names = rows.map((c) => c.name.trim()).filter(Boolean);
     return (
-      <div className="min-w-[220px] text-xs leading-snug text-zinc-800 dark:text-zinc-100">{names.length ? names.join(", ") : "—"}</div>
+      <div className="min-w-0 text-xs leading-snug text-zinc-800 dark:text-zinc-100">{names.length ? names.join(", ") : "—"}</div>
     );
   }
   return (
-    <div className="min-w-[220px] space-y-2">
+    <div className="min-w-0 space-y-2">
       {rows.map((child) => (
         <div key={child.id} className="flex items-center gap-1">
           <Input
@@ -108,6 +108,180 @@ function serializeParentMeetingRemarks(children: ChildNameRow[], note: string): 
   const names = children.map((c) => c.name.trim()).filter(Boolean);
   const trimmedNote = note.trim();
   return JSON.stringify({ children: names, remarks: trimmedNote });
+}
+
+type SessionObservationRow = {
+  id: string;
+  childName: string;
+  therapistName: string;
+  rating: number | "";
+};
+
+function newSessionObservationRow(): SessionObservationRow {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    childName: "",
+    therapistName: "",
+    rating: "",
+  };
+}
+
+function parseSessionObservationRemarks(raw: string): { note: string; rows: SessionObservationRow[] } {
+  const fallback = { note: "", rows: [newSessionObservationRow()] };
+  if (!String(raw || "").trim()) return fallback;
+  try {
+    const p = JSON.parse(raw) as {
+      remarks?: unknown;
+      observationRows?: { childName?: unknown; therapistName?: unknown; rating?: unknown }[];
+      children?: unknown;
+    };
+    if (!p || typeof p !== "object") return fallback;
+    const note = String(p.remarks ?? "").trim();
+    if (Array.isArray(p.observationRows) && p.observationRows.length) {
+      const rows = p.observationRows.map((r, i) => {
+        const rt = r?.rating;
+        let rating: number | "" = "";
+        if (typeof rt === "number" && rt >= 1 && rt <= 10 && Number.isInteger(rt)) rating = rt;
+        else if (typeof rt === "string") {
+          const n = Number.parseInt(rt, 10);
+          if (n >= 1 && n <= 10) rating = n;
+        }
+        return {
+          id: `so-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+          childName: String(r?.childName ?? ""),
+          therapistName: String(r?.therapistName ?? ""),
+          rating,
+        };
+      });
+      return { note, rows };
+    }
+    const legacy = parseParentMeetingRemarks(raw);
+    if (legacy.children.length) {
+      const rows = legacy.children.map((name, i) => ({
+        id: `so-legacy-${i}-${name.slice(0, 8)}`,
+        childName: name,
+        therapistName: "",
+        rating: "" as const,
+      }));
+      return { note: legacy.note, rows };
+    }
+    return { note, rows: [newSessionObservationRow()] };
+  } catch {
+    return { note: String(raw).trim(), rows: [newSessionObservationRow()] };
+  }
+}
+
+function serializeSessionObservationRemarks(rows: SessionObservationRow[], note: string): string {
+  return JSON.stringify({
+    remarks: note.trim(),
+    observationRows: rows.map((r) => ({
+      childName: r.childName.trim(),
+      therapistName: r.therapistName.trim(),
+      rating: r.rating === "" ? null : r.rating,
+    })),
+  });
+}
+
+function SessionObservationEditor({
+  rows,
+  setRows,
+  readOnly,
+}: {
+  rows: SessionObservationRow[];
+  setRows: Dispatch<SetStateAction<SessionObservationRow[]>>;
+  readOnly?: boolean;
+}) {
+  if (readOnly) {
+    const filled = rows.filter((r) => r.childName.trim() || r.therapistName.trim() || r.rating !== "");
+    if (!filled.length) return <span className="text-zinc-400">—</span>;
+    return (
+      <div className="min-w-0 space-y-1.5 text-xs leading-snug text-zinc-800 dark:text-zinc-100">
+        {filled.map((r) => (
+          <div key={r.id}>
+            <span className="font-medium text-zinc-600 dark:text-zinc-300">{r.childName.trim() || "—"}</span>
+            {" · "}
+            <span>{r.therapistName.trim() || "—"}</span>
+            {" · "}
+            <span className="text-zinc-600 dark:text-zinc-400">Rating {r.rating === "" ? "—" : r.rating}/10</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div className="min-w-0 space-y-2">
+      <div className="hidden gap-2 sm:grid sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_88px_28px]">
+        <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Child name</div>
+        <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Therapist name</div>
+        <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Rating</div>
+        <div />
+      </div>
+      {rows.map((r) => (
+        <div
+          key={r.id}
+          className="grid grid-cols-1 gap-2 rounded-lg border border-zinc-100 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_88px_28px] sm:border-0 sm:p-0 dark:border-zinc-800"
+        >
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-bold uppercase text-zinc-500 sm:hidden">Child name</span>
+            <Input
+              placeholder="Child name"
+              value={r.childName}
+              onChange={(e) => setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, childName: e.target.value } : x)))}
+              className="h-8 px-2.5 text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-bold uppercase text-zinc-500 sm:hidden">Therapist name</span>
+            <Input
+              placeholder="Therapist name"
+              value={r.therapistName}
+              onChange={(e) =>
+                setRows((prev) => prev.map((x) => (x.id === r.id ? { ...x, therapistName: e.target.value } : x)))
+              }
+              className="h-8 px-2.5 text-xs"
+            />
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-[10px] font-bold uppercase text-zinc-500 sm:hidden">Rating (1–10)</span>
+            <Select
+              value={r.rating === "" ? "" : String(r.rating)}
+              onChange={(e) => {
+                const v = e.target.value;
+                setRows((prev) =>
+                  prev.map((x) => (x.id === r.id ? { ...x, rating: v === "" ? "" : Number.parseInt(v, 10) } : x))
+                );
+              }}
+              className="h-8 px-2 text-xs"
+            >
+              <option value="">—</option>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <button
+            type="button"
+            onClick={() => setRows((prev) => (prev.length <= 1 ? prev : prev.filter((x) => x.id !== r.id)))}
+            className="flex h-8 w-full items-center justify-center rounded-lg border border-zinc-200 text-zinc-400 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30 dark:border-zinc-700 sm:w-7 sm:shrink-0"
+            aria-label="Remove row"
+            disabled={rows.length <= 1}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => setRows((prev) => [...prev, newSessionObservationRow()])}
+        className="inline-flex items-center gap-1 rounded-lg border border-brand-300 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add row
+      </button>
+    </div>
+  );
 }
 
 function newRoundsPlanRow(): RoundsPlanRow {
@@ -186,7 +360,7 @@ export function CoordinatorDailySheet() {
   const [opdMeetingChildren, setOpdMeetingChildren] = useState<ChildNameRow[]>(() => [newChildNameRow()]);
   const [newParentsWaitingChildren, setNewParentsWaitingChildren] = useState<ChildNameRow[]>(() => [newChildNameRow()]);
   const [parentingSessionChildren, setParentingSessionChildren] = useState<ChildNameRow[]>(() => [newChildNameRow()]);
-  const [sessionObservationChildren, setSessionObservationChildren] = useState<ChildNameRow[]>(() => [newChildNameRow()]);
+  const [sessionObservationRows, setSessionObservationRows] = useState<SessionObservationRow[]>(() => [newSessionObservationRow()]);
   const [roundsPlanRows, setRoundsPlanRows] = useState<RoundsPlanRow[]>(() => [newRoundsPlanRow()]);
   const [expandedRoundsCentre, setExpandedRoundsCentre] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -216,7 +390,7 @@ export function CoordinatorDailySheet() {
         let opdChildren: ChildNameRow[] | null = null;
         let npwChildren: ChildNameRow[] | null = null;
         let psChildren: ChildNameRow[] | null = null;
-        let soChildren: ChildNameRow[] | null = null;
+        let soRows: SessionObservationRow[] | null = null;
         let rmRounds: RoundsPlanRow[] | null = null;
         for (const e of entries) {
           if (!e?.taskKey) continue;
@@ -250,12 +424,9 @@ export function CoordinatorDailySheet() {
                 ? parsed.children.map((name, i) => ({ id: `ps-${sheetDate}-${i}-${name.slice(0, 8)}`, name }))
                 : [newChildNameRow()];
           } else if (e.taskKey === SESSION_OBSERVATION_KEY) {
-            const parsed = parseParentMeetingRemarks(String(e.remarks || ""));
+            const parsed = parseSessionObservationRemarks(String(e.remarks || ""));
             nextRemarks[e.taskKey] = parsed.note;
-            soChildren =
-              parsed.children.length > 0
-                ? parsed.children.map((name, i) => ({ id: `so-${sheetDate}-${i}-${name.slice(0, 8)}`, name }))
-                : [newChildNameRow()];
+            soRows = parsed.rows.length ? parsed.rows : [newSessionObservationRow()];
           } else if (e.taskKey === ROUNDS_OF_CENTRE_KEY) {
             const parsed = parseRoundsOfCentreRemarks(String(e.remarks || ""));
             nextRemarks[e.taskKey] = parsed.note;
@@ -270,7 +441,7 @@ export function CoordinatorDailySheet() {
         setOpdMeetingChildren(opdChildren ?? [newChildNameRow()]);
         setNewParentsWaitingChildren(npwChildren ?? [newChildNameRow()]);
         setParentingSessionChildren(psChildren ?? [newChildNameRow()]);
-        setSessionObservationChildren(soChildren ?? [newChildNameRow()]);
+        setSessionObservationRows(soRows ?? [newSessionObservationRow()]);
         setRoundsPlanRows(rmRounds ?? [newRoundsPlanRow()]);
       })
       .catch(() => {
@@ -286,7 +457,7 @@ export function CoordinatorDailySheet() {
         setOpdMeetingChildren([newChildNameRow()]);
         setNewParentsWaitingChildren([newChildNameRow()]);
         setParentingSessionChildren([newChildNameRow()]);
-        setSessionObservationChildren([newChildNameRow()]);
+        setSessionObservationRows([newSessionObservationRow()]);
         setRoundsPlanRows([newRoundsPlanRow()]);
       });
   }, [isCoordinator, sheetDate, user?._id, sheetReloadNonce]);
@@ -309,7 +480,7 @@ export function CoordinatorDailySheet() {
                 : row.key === PARENTING_SESSION_KEY
                   ? serializeParentMeetingRemarks(parentingSessionChildren, remarksByTask[row.key] || "")
                   : row.key === SESSION_OBSERVATION_KEY
-                    ? serializeParentMeetingRemarks(sessionObservationChildren, remarksByTask[row.key] || "")
+                    ? serializeSessionObservationRemarks(sessionObservationRows, remarksByTask[row.key] || "")
                     : row.key === ROUNDS_OF_CENTRE_KEY
                       ? serializeRoundsOfCentreRemarks(roundsPlanRows, remarksByTask[row.key] || "")
                       : remarksByTask[row.key] || "",
@@ -395,7 +566,7 @@ export function CoordinatorDailySheet() {
                 Read-only mode. Click Edit to change this sheet.
               </p>
             )}
-            <div className="mt-3 overflow-x-auto">
+            <div className="mt-3 hidden overflow-x-auto md:block">
               <table className="w-full min-w-[780px] text-sm">
                 <thead className="text-left text-[11px] uppercase text-zinc-500">
                   <tr>
@@ -435,7 +606,7 @@ export function CoordinatorDailySheet() {
                             ) : row.key === PARENTING_SESSION_KEY ? (
                               <ChildNameListEditor rows={parentingSessionChildren} setRows={setParentingSessionChildren} readOnly={ro} />
                             ) : row.key === SESSION_OBSERVATION_KEY ? (
-                              <ChildNameListEditor rows={sessionObservationChildren} setRows={setSessionObservationChildren} readOnly={ro} />
+                              <SessionObservationEditor rows={sessionObservationRows} setRows={setSessionObservationRows} readOnly={ro} />
                             ) : (
                               <span className="text-zinc-400">—</span>
                             )}
@@ -558,6 +729,73 @@ export function CoordinatorDailySheet() {
                   })}
                 </tbody>
               </table>
+            </div>
+            <div className="mt-3 space-y-2 md:hidden">
+              {COORDINATOR_SHEET_TASKS.map((row) => {
+                const isRoundsExpandable = row.key === ROUNDS_OF_CENTRE_KEY;
+                return (
+                  <div key={`m-${row.key}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
+                    <div className="mb-2 text-xs font-semibold text-zinc-800 dark:text-zinc-100">{row.task}</div>
+                    <div>
+                      {row.key === PARENT_MEETING_TASK_KEY ? (
+                        <ChildNameListEditor rows={parentMeetingChildren} setRows={setParentMeetingChildren} readOnly={ro} />
+                      ) : row.key === OPD_MEETING_PARENTS_KEY ? (
+                        <ChildNameListEditor rows={opdMeetingChildren} setRows={setOpdMeetingChildren} readOnly={ro} />
+                      ) : row.key === NEW_PARENTS_WAITING_PACKAGE_KEY ? (
+                        <ChildNameListEditor rows={newParentsWaitingChildren} setRows={setNewParentsWaitingChildren} readOnly={ro} />
+                      ) : row.key === PARENTING_SESSION_KEY ? (
+                        <ChildNameListEditor rows={parentingSessionChildren} setRows={setParentingSessionChildren} readOnly={ro} />
+                      ) : row.key === SESSION_OBSERVATION_KEY ? (
+                        <SessionObservationEditor rows={sessionObservationRows} setRows={setSessionObservationRows} readOnly={ro} />
+                      ) : (
+                        <span className="text-xs text-zinc-400">—</span>
+                      )}
+                    </div>
+                    <div className="mt-2 grid gap-2">
+                      <Select
+                        value={statusByTask[row.key] || "no"}
+                        onChange={(e) => setStatusByTask((prev) => ({ ...prev, [row.key]: e.target.value === "yes" ? "yes" : "no" }))}
+                        disabled={ro}
+                        className="h-8 text-xs"
+                      >
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </Select>
+                      <Input
+                        placeholder="Remarks (optional)"
+                        value={remarksByTask[row.key] || ""}
+                        readOnly={ro}
+                        onChange={(e) => setRemarksByTask((prev) => ({ ...prev, [row.key]: e.target.value }))}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    {isRoundsExpandable && expandedRoundsCentre && (
+                      <div className="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
+                        <div className="space-y-2">
+                          {roundsPlanRows.map((plan) => (
+                            <div key={`m-r-${plan.id}`} className="grid gap-1">
+                              <Input
+                                placeholder="Name"
+                                value={plan.name}
+                                readOnly={ro}
+                                onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, name: e.target.value } : p)))}
+                                className="h-8 text-xs"
+                              />
+                              <Input
+                                placeholder="Child"
+                                value={plan.child}
+                                readOnly={ro}
+                                onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, child: e.target.value } : p)))}
+                                className="h-8 text-xs"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <div className="mt-3 flex justify-end">
               {!ro && (

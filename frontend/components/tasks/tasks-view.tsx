@@ -71,6 +71,7 @@ export function TasksView({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"table" | "cards">("table");
+  const [isMobile, setIsMobile] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(preset.status || "all");
@@ -176,7 +177,15 @@ export function TasksView({
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      if (window.matchMedia("(max-width: 767px)").matches) setView("cards");
+      const mq = window.matchMedia("(max-width: 767px)");
+      const sync = () => {
+        const mobile = mq.matches;
+        setIsMobile(mobile);
+        if (mobile) setView("cards");
+      };
+      sync();
+      mq.addEventListener("change", sync);
+      return () => mq.removeEventListener("change", sync);
     } catch {
       /* ignore */
     }
@@ -244,13 +253,15 @@ export function TasksView({
             >
               <Grid3x3 className="h-3.5 w-3.5" /> Cards
             </button>
-            <button
-              type="button"
-              onClick={() => setView("table")}
-              className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold", view === "table" ? "bg-brand-gradient text-white shadow-brand" : "text-zinc-500")}
-            >
-              <Table2 className="h-3.5 w-3.5" /> Table
-            </button>
+            {!isMobile && (
+              <button
+                type="button"
+                onClick={() => setView("table")}
+                className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold", view === "table" ? "bg-brand-gradient text-white shadow-brand" : "text-zinc-500")}
+              >
+                <Table2 className="h-3.5 w-3.5" /> Table
+              </button>
+            )}
           </div>
         </div>
       </div>
