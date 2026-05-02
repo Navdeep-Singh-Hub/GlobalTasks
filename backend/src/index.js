@@ -22,7 +22,7 @@ import { setupSocket } from "./realtime/socket.js";
 import { setSocket } from "./services/notificationService.js";
 import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
 import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
-import { startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
+import { runWhatsAppDigestTick, startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
 
 const app = express();
 const server = createServer(app);
@@ -76,6 +76,21 @@ app.get("/api/health", (_req, res) =>
     recycleBinRetentionDays: Math.max(1, Number(process.env.RECYCLE_BIN_RETENTION_DAYS) || 10),
   })
 );
+
+/** Ping from uptime cron (Render etc.) so digest windows still run if the process slept past the exact minute. */
+app.get("/api/cron/whatsapp-digest", async (req, res) => {
+  const secret = process.env.WHATSAPP_DIGEST_CRON_SECRET;
+  if (!secret || String(req.query.secret || "") !== secret) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  try {
+    const result = await runWhatsAppDigestTick();
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error("[whatsapp] cron digest tick failed:", e);
+    return res.status(500).json({ message: e?.message || "Digest tick failed" });
+  }
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);

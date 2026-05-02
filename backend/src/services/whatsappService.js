@@ -3,7 +3,7 @@ const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
 const ADMIN_PHONE = process.env.WHATSAPP_ADMIN_PHONE || "";
 const API_URL = PHONE_NUMBER_ID ? `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages` : "";
 
-function normalizePhone(phone) {
+export function normalizePhone(phone) {
   const raw = String(phone || "").replace(/[^\d+]/g, "");
   if (!raw) return "";
   return raw.startsWith("+") ? raw.slice(1) : raw;
@@ -35,8 +35,9 @@ async function sendPayload(phone, payload, stubLogText) {
   return { ok: true };
 }
 
-export async function sendWhatsAppText({ to, text }) {
-  const phone = normalizePhone(to || ADMIN_PHONE);
+export async function sendWhatsAppText({ to, text, fallbackToAdmin = false }) {
+  let phone = normalizePhone(to);
+  if (!phone && fallbackToAdmin) phone = normalizePhone(ADMIN_PHONE);
   if (!phone || !text) return { ok: false, skipped: true, reason: "missing_phone_or_text" };
 
   return sendPayload(
@@ -51,8 +52,9 @@ export async function sendWhatsAppText({ to, text }) {
   );
 }
 
-export async function sendWhatsAppTemplate({ to, name, languageCode = "en", parameters = [] }) {
-  const phone = normalizePhone(to || ADMIN_PHONE);
+export async function sendWhatsAppTemplate({ to, name, languageCode = "en", parameters = [], fallbackToAdmin = false }) {
+  let phone = normalizePhone(to);
+  if (!phone && fallbackToAdmin) phone = normalizePhone(ADMIN_PHONE);
   if (!phone || !name) return { ok: false, skipped: true, reason: "missing_phone_or_template" };
 
   return sendPayload(

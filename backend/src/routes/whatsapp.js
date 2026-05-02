@@ -19,7 +19,7 @@ router.post("/send-test", requireRoles("ceo", "centre_head"), async (req, res, n
     const to = String(req.body.to || "").trim();
     const text = String(req.body.text || "").trim() || "GlobalTasks WhatsApp test message.";
     if (!to) return res.status(400).json({ message: "Recipient phone is required." });
-    const result = await sendWhatsAppText({ to, text });
+    const result = await sendWhatsAppText({ to, text, fallbackToAdmin: false });
     res.json({
       ok: true,
       mode: result?.stub ? "stub" : "live",
