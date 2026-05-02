@@ -21,9 +21,16 @@
   border-color: rgb(39 46 62 / 0.9);
 }
 
-html,
+/* Use min-height instead of height:100% so the document can grow past the
+   viewport; fixed 100% height + overflow-x hidden breaks iOS Safari scrolling. */
+html {
+  min-height: 100dvh;
+  background: var(--background);
+  overflow-x: hidden;
+}
+
 body {
-  height: 100%;
+  min-height: 100dvh;
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);

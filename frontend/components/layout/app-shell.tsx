@@ -73,7 +73,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-[100dvh] overflow-x-clip bg-surface-muted dark:bg-[#0b1220]">
       <AppSidebar variant="desktop" />
       <AppSidebar variant="mobile" mobileOpen={navOpen} onCloseMobile={() => setNavOpen(false)} />
-      <main className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="safe-x sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-zinc-200 bg-white/80 py-2 pl-2 pr-3 backdrop-blur sm:gap-3 sm:px-5 dark:border-zinc-800 dark:bg-zinc-950/75">
           <button
             type="button"
@@ -193,7 +193,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="safe-x safe-b flex-1 overflow-y-auto overscroll-y-contain touch-pan-y [-webkit-overflow-scrolling:touch] px-4 py-5 sm:px-5 sm:py-6 lg:px-8">
+        <div className="safe-x safe-b min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-auto px-4 py-5 sm:px-5 sm:py-6 lg:px-8 [-webkit-overflow-scrolling:touch]">
           <div className="mx-auto w-full max-w-[1400px] animate-fade-in">{children}</div>
         </div>
       </main>
