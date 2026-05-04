@@ -18,6 +18,8 @@ type SessionItem = {
   endedAt?: string;
   durationMinutes?: number;
   videoUrl?: string;
+  /** Therapist-entered session log notes */
+  remarks?: string;
   planUpdated15d?: boolean;
   newActivity15d?: boolean;
   newActivityText?: string;
@@ -434,6 +436,7 @@ export default function TherapistPerformancePage() {
                                     <th className="px-2 py-1.5">Start</th>
                                     <th className="px-2 py-1.5">Duration</th>
                                     <th className="px-2 py-1.5">Video</th>
+                                    <th className="px-2 py-1.5">Remarks</th>
                                     <th className="px-2 py-1.5">Marks</th>
                                   </tr>
                                 </thead>
@@ -463,26 +466,35 @@ export default function TherapistPerformancePage() {
                                           "No"
                                         )}
                                       </td>
+                                      <td className="max-w-[180px] px-2 py-1.5 align-top text-xs text-zinc-600 dark:text-zinc-300">
+                                        {s.remarks?.trim() ? (
+                                          <span className="line-clamp-3" title={s.remarks}>
+                                            {s.remarks.trim()}
+                                          </span>
+                                        ) : (
+                                          "—"
+                                        )}
+                                      </td>
                                       <td className="px-2 py-1.5">{s.supervisorScore || 0}/5</td>
                                     </tr>
                                   ))}
                                   {detail?.error ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={6} className="px-2 py-3 text-xs text-rose-600">
+                                      <td colSpan={7} className="px-2 py-3 text-xs text-rose-600">
                                         {detail.error}
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loading ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={6} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={7} className="px-2 py-3 text-xs text-zinc-500">
                                         Loading session details…
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loaded && !detail.items.length && (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={6} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={7} className="px-2 py-3 text-xs text-zinc-500">
                                         No uploaded sessions for selected date range.
                                       </td>
                                     </tr>
@@ -539,6 +551,12 @@ export default function TherapistPerformancePage() {
                       <div key={s._id} className="rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
                         <div className="font-medium">{s.sessionDate} · {s.patientName}</div>
                         <div className="text-zinc-500">{s.startedAt || "—"} · {s.durationMinutes || 0} min · Marks {s.supervisorScore || 0}/5</div>
+                        {s.remarks?.trim() ? (
+                          <div className="mt-1 text-zinc-600 dark:text-zinc-300">
+                            <span className="font-medium text-zinc-500">Remarks: </span>
+                            {s.remarks.trim()}
+                          </div>
+                        ) : null}
                         <div className="mt-1">
                           {s.videoUrl ? (
                             <a href={assetUrl(s.videoUrl)} target="_blank" rel="noreferrer" className="text-brand-600 hover:underline">
@@ -571,6 +589,12 @@ export default function TherapistPerformancePage() {
                     <div className="text-xs text-zinc-500">
                       {s.sessionDate} · {s.startedAt || "--"} to {s.endedAt || "--"} · {s.durationMinutes || 0} min
                     </div>
+                    {s.remarks?.trim() ? (
+                      <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                        <span className="font-medium text-zinc-500">Therapist remarks: </span>
+                        {s.remarks.trim()}
+                      </div>
+                    ) : null}
                     {s.videoUrl && (
                       <a href={assetUrl(s.videoUrl)} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-brand-600 hover:underline">
                         Open uploaded video

@@ -1,9 +1,10 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
+import { isCeo } from "@/lib/roles";
 import { ClipboardCheck, Eye, Pencil, Plus, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -17,6 +18,7 @@ type SessionRow = {
   durationMinutes: string;
   startedAt: string;
   videoUploaded: boolean;
+  remarks: string;
 };
 
 type UploadedSession = {
@@ -26,6 +28,7 @@ type UploadedSession = {
   startedAt?: string;
   durationMinutes?: number;
   videoUploaded?: boolean;
+  remarks?: string;
   createdAt?: string;
   createdBy?: string;
   therapistId?: { _id: string; name: string } | null;
@@ -37,6 +40,7 @@ type EditDraft = {
   startedAt: string;
   durationMinutes: string;
   videoUploaded: boolean;
+  remarks: string;
 };
 
 type SupervisorSheetTask = {
@@ -150,6 +154,7 @@ function newRow(): SessionRow {
     durationMinutes: "30",
     startedAt: "",
     videoUploaded: false,
+    remarks: "",
   };
 }
 
@@ -168,6 +173,7 @@ export function PendingRecurringDailySessions() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [sheetStatusByTask, setSheetStatusByTask] = useState<Record<string, "yes" | "no">>({});
   const [sheetRemarksByTask, setSheetRemarksByTask] = useState<Record<string, string>>({});
   const [sheetTherapistNameByTask, setSheetTherapistNameByTask] = useState<Record<string, string>>({});
@@ -231,6 +237,7 @@ export function PendingRecurringDailySessions() {
             durationMinutes: Number(r.durationMinutes) || 0,
             videoUploaded: r.videoUploaded,
             videoUrl: "",
+            remarks: r.remarks.trim(),
           }),
         });
       }
@@ -470,6 +477,42 @@ export function PendingRecurringDailySessions() {
     [user?._id]
   );
 
+  const TWENTY_FOUR_H_MS = 24 * 60 * 60 * 1000;
+
+  const canDeleteUploaded = useCallback(
+    (s: UploadedSession) => {
+      if (!user?._id) return false;
+      if (isCeo(user.role) || user.role === "centre_head") return true;
+      if (String(s.createdBy || "") !== String(user._id)) return false;
+      if (!s.createdAt) return false;
+      const t = new Date(s.createdAt).getTime();
+      if (Number.isNaN(t)) return false;
+      return Date.now() - t <= TWENTY_FOUR_H_MS;
+    },
+    [user?._id, user?.role]
+  );
+
+  const deleteUploaded = async (s: UploadedSession) => {
+    if (!canDeleteUploaded(s)) return;
+    const ok = window.confirm(`Delete session for "${s.patientName}" on ${s.sessionDate}? This cannot be undone.`);
+    if (!ok) return;
+    setDeletingId(s._id);
+    setMessage(null);
+    try {
+      await api(`/reports/therapist-sessions/${s._id}`, { method: "DELETE" });
+      if (editingId === s._id) {
+        setEditingId(null);
+        setEditDraft(null);
+      }
+      setMessage({ type: "ok", text: "Session deleted." });
+      setRefreshToken((v) => v + 1);
+    } catch (e) {
+      setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not delete session." });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const beginEdit = (s: UploadedSession) => {
     setEditingId(s._id);
     setEditDraft({
@@ -478,6 +521,7 @@ export function PendingRecurringDailySessions() {
       startedAt: s.startedAt || "",
       durationMinutes: String(s.durationMinutes ?? 0),
       videoUploaded: Boolean(s.videoUploaded),
+      remarks: s.remarks || "",
     });
   };
 
@@ -498,6 +542,7 @@ export function PendingRecurringDailySessions() {
           startedAt: editDraft.startedAt,
           durationMinutes: Number(editDraft.durationMinutes) || 0,
           videoUploaded: editDraft.videoUploaded,
+          remarks: editDraft.remarks.trim(),
         }),
       });
       setMessage({ type: "ok", text: "Session updated." });
@@ -1044,6 +1089,17 @@ export function PendingRecurringDailySessions() {
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
+            <label className="space-y-1 md:col-span-5">
+              <span className="text-xs font-semibold text-zinc-500">Remarks (optional)</span>
+              <Textarea
+                placeholder="Session notes, follow-ups, etc."
+                value={r.remarks}
+                onChange={(e) => patchRow(r.id, { remarks: e.target.value })}
+                rows={2}
+                maxLength={2000}
+                className="min-h-[72px] text-xs"
+              />
+            </label>
           </div>
         ))}
       </div>
@@ -1108,7 +1164,7 @@ export function PendingRecurringDailySessions() {
         ) : uploadedSessions.length ? (
           <>
           <div className="mt-3 hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[620px] text-sm">
+            <table className="w-full min-w-[760px] text-sm">
               <thead className="text-left text-[11px] uppercase text-zinc-500">
                 <tr>
                   <th className="px-2 py-1.5">Date</th>
@@ -1116,12 +1172,14 @@ export function PendingRecurringDailySessions() {
                   <th className="px-2 py-1.5">Start</th>
                   <th className="px-2 py-1.5">Duration</th>
                   <th className="px-2 py-1.5">Video</th>
+                  <th className="px-2 py-1.5">Remarks</th>
                   <th className="px-2 py-1.5">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {uploadedSessions.map((s) => {
                   const editable = canEditUploaded(s);
+                  const deletable = canDeleteUploaded(s);
                   const isEditing = editingId === s._id && !!editDraft;
                   return (
                     <tr key={s._id} className="border-t border-zinc-100 dark:border-zinc-800">
@@ -1190,6 +1248,23 @@ export function PendingRecurringDailySessions() {
                           "No"
                         )}
                       </td>
+                      <td className="max-w-[220px] px-2 py-1.5 align-top">
+                        {isEditing ? (
+                          <Textarea
+                            value={editDraft.remarks}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, remarks: e.target.value } : p))}
+                            rows={2}
+                            maxLength={2000}
+                            className="min-h-[60px] text-xs"
+                          />
+                        ) : s.remarks?.trim() ? (
+                          <span className="line-clamp-3 text-xs text-zinc-600 dark:text-zinc-300" title={s.remarks}>
+                            {s.remarks.trim()}
+                          </span>
+                        ) : (
+                          <span className="text-[11px] text-zinc-400">—</span>
+                        )}
+                      </td>
                       <td className="px-2 py-1.5">
                         {isEditing ? (
                           <div className="flex items-center gap-2">
@@ -1208,12 +1283,25 @@ export function PendingRecurringDailySessions() {
                               Cancel
                             </Button>
                           </div>
-                        ) : editable ? (
-                          <Button size="sm" variant="outline" onClick={() => beginEdit(s)}>
-                            Edit
-                          </Button>
                         ) : (
-                          <span className="text-[11px] text-zinc-400">Locked</span>
+                          <div className="flex flex-wrap items-center gap-2">
+                            {editable ? (
+                              <Button size="sm" variant="outline" onClick={() => beginEdit(s)}>
+                                Edit
+                              </Button>
+                            ) : null}
+                            {deletable ? (
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => void deleteUploaded(s)}
+                                disabled={deletingId === s._id}
+                              >
+                                {deletingId === s._id ? "Deleting…" : "Delete"}
+                              </Button>
+                            ) : null}
+                            {!editable && !deletable ? <span className="text-[11px] text-zinc-400">Locked</span> : null}
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -1225,6 +1313,7 @@ export function PendingRecurringDailySessions() {
           <div className="mt-3 space-y-2 md:hidden">
             {uploadedSessions.map((s) => {
               const editable = canEditUploaded(s);
+              const deletable = canDeleteUploaded(s);
               const isEditing = editingId === s._id && !!editDraft;
               return (
                 <div key={`mobile-s-${s._id}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
@@ -1241,6 +1330,16 @@ export function PendingRecurringDailySessions() {
                         onChange={(e) => setEditDraft((p) => (p ? { ...p, patientName: e.target.value } : p))}
                         className="h-8 text-xs"
                       />
+                      <label className="space-y-1">
+                        <span className="text-[11px] font-semibold text-zinc-500">Remarks (optional)</span>
+                        <Textarea
+                          value={editDraft.remarks}
+                          onChange={(e) => setEditDraft((p) => (p ? { ...p, remarks: e.target.value } : p))}
+                          rows={2}
+                          maxLength={2000}
+                          className="text-xs"
+                        />
+                      </label>
                       <div className="flex gap-2">
                         <Button size="sm" variant="gradient" onClick={() => void saveEdit()} disabled={savingEdit}>
                           {savingEdit ? "Saving..." : "Save"}
@@ -1264,14 +1363,29 @@ export function PendingRecurringDailySessions() {
                       <div className="text-xs text-zinc-500">
                         {s.sessionDate} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
                       </div>
-                      <div className="mt-2">
+                      {s.remarks?.trim() ? (
+                        <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
+                          <span className="font-medium text-zinc-500">Remarks: </span>
+                          {s.remarks.trim()}
+                        </div>
+                      ) : null}
+                      <div className="mt-2 flex flex-wrap gap-2">
                         {editable ? (
                           <Button size="sm" variant="outline" onClick={() => beginEdit(s)}>
                             Edit
                           </Button>
-                        ) : (
-                          <span className="text-[11px] text-zinc-400">Locked</span>
-                        )}
+                        ) : null}
+                        {deletable ? (
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => void deleteUploaded(s)}
+                            disabled={deletingId === s._id}
+                          >
+                            {deletingId === s._id ? "Deleting…" : "Delete"}
+                          </Button>
+                        ) : null}
+                        {!editable && !deletable ? <span className="text-[11px] text-zinc-400">Locked</span> : null}
                       </div>
                     </>
                   )}

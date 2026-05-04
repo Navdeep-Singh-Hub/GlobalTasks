@@ -454,6 +454,7 @@ router.post("/therapist-sessions", async (req, res) => {
     newActivityText: String(req.body.newActivityText || ""),
     monthlyTestDone: !!req.body.monthlyTestDone,
     monthlyTestNotes: String(req.body.monthlyTestNotes || ""),
+    remarks: String(req.body.remarks || "").trim().slice(0, 2000),
     createdBy: req.userId,
   });
 
@@ -579,6 +580,7 @@ router.patch("/therapist-sessions/:id", async (req, res) => {
   if (req.body.newActivityText !== undefined) session.newActivityText = String(req.body.newActivityText || "");
   if (req.body.monthlyTestDone !== undefined) session.monthlyTestDone = Boolean(req.body.monthlyTestDone);
   if (req.body.monthlyTestNotes !== undefined) session.monthlyTestNotes = String(req.body.monthlyTestNotes || "");
+  if (req.body.remarks !== undefined) session.remarks = String(req.body.remarks || "").trim().slice(0, 2000);
 
   await session.save();
   const populated = await TherapistSession.findById(session._id)
@@ -587,6 +589,38 @@ router.patch("/therapist-sessions/:id", async (req, res) => {
     .populate("markedBy", "name role")
     .lean();
   res.json({ session: populated });
+});
+
+router.delete("/therapist-sessions/:id", async (req, res) => {
+  const me = await actor(req);
+  const session = await TherapistSession.findById(req.params.id);
+  if (!session) return res.status(404).json({ message: "Session not found" });
+  if (!isCeo(req.userRole) && String(session.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can delete sessions from your center only" });
+  }
+
+  const role = String(req.userRole || "");
+  const isElevated = isCeo(req.userRole) || role === "centre_head";
+  if (isElevated) {
+    await TherapistSession.deleteOne({ _id: session._id });
+    return res.status(204).end();
+  }
+
+  if (String(session.createdBy || "") !== String(req.userId || "")) {
+    return res.status(403).json({ message: "Only the uploader can delete this session" });
+  }
+  const created = session.createdAt ? new Date(session.createdAt).getTime() : 0;
+  if (!created) {
+    return res.status(400).json({ message: "Session has no upload timestamp" });
+  }
+  const ageMs = Date.now() - created;
+  const maxMs = 24 * 60 * 60 * 1000;
+  if (ageMs > maxMs) {
+    return res.status(403).json({ message: "Session can be deleted only within 24 hours of upload" });
+  }
+
+  await TherapistSession.deleteOne({ _id: session._id });
+  return res.status(204).end();
 });
 
 router.get("/therapist-performance", async (req, res) => {
