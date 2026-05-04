@@ -117,7 +117,7 @@ router.get("/team-performance", async (_req, res) => {
   if (!isCeo(_req.userRole)) userFilter.centerId = me?.centerId || null;
   if (visibleIds) userFilter._id = { $in: visibleIds };
   if (_req.userRole === "centre_head") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
-  if (_req.userRole === "coordinator") userFilter.role = { $in: ["supervisor", "executor"] };
+  if (_req.userRole === "coordinator") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
   if (_req.userRole === "supervisor") userFilter.role = "executor";
   if (_req.userRole === "executor") userFilter._id = _req.userId;
   const users = await User.find(userFilter).select("_id name email role executorKind avatarUrl title").lean();
@@ -165,7 +165,7 @@ router.get("/member-tasks", async (req, res) => {
   }
 
   if (req.userRole === "centre_head") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
-  else if (req.userRole === "coordinator") userFilter.role = { $in: ["supervisor", "executor"] };
+  else if (req.userRole === "coordinator") userFilter.role = { $in: ["coordinator", "supervisor", "executor"] };
   else if (req.userRole === "supervisor") userFilter.role = "executor";
   else if (req.userRole === "executor") {
     if (String(assigneeId) !== String(req.userId)) return res.status(403).json({ message: "Not allowed" });

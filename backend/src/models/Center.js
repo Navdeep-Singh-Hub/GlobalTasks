@@ -9,7 +9,4 @@ const centerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-centerSchema.index({ code: 1 }, { unique: true });
-centerSchema.index({ name: 1 }, { unique: true });
-
 export const Center = mongoose.model("Center", centerSchema);

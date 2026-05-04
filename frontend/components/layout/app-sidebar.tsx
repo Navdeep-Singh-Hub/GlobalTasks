@@ -51,7 +51,7 @@ const NAV: NavItem[] = [
   { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },
   { href: "/performance", label: "Performance", icon: Zap, roles: NAV_MANAGEMENT },
   { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_MANAGEMENT },
-  { href: "/supervisor-performance", label: "Supervisor Performance", icon: Activity, roles: NAV_MANAGEMENT },
+  { href: "/supervisor-performance", label: "Supervisor & coordinator sheets", icon: Activity, roles: NAV_MANAGEMENT },
   { href: "/integrations", label: "Integrations", icon: Plug, roles: NAV_CEO_ONLY, badge: "NEW", accent: "new" },
   { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: NAV_MANAGEMENT },
   { href: "/settings", label: "Settings", icon: Settings, roles: NAV_ALL },

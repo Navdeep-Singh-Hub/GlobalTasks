@@ -91,10 +91,37 @@ async function migrateLegacySupervisorSheets(supervisorId, sheetDate, centerId) 
   );
 }
 
-function canAccessCoordinatorSheet(req, _meUser, targetCoordinatorId) {
+function canReadCoordinatorSheet(req, targetCoordinatorId) {
+  if (isCeo(req.userRole)) return true;
+  if (req.userRole === "coordinator") return String(targetCoordinatorId || "") === String(req.userId || "");
+  if (req.userRole === "centre_head") return true;
+  return false;
+}
+
+function canWriteCoordinatorSheet(req, targetCoordinatorId) {
   if (isCeo(req.userRole)) return true;
   if (req.userRole === "coordinator") return String(targetCoordinatorId || "") === String(req.userId || "");
   return false;
+}
+
+async function assertCoordinatorPerformanceAccess(req, me, coordinatorId) {
+  const coord = await User.findById(coordinatorId).select("_id role centerId").lean();
+  if (!coord || coord.role !== "coordinator") {
+    return { ok: false, status: 404, message: "Coordinator not found" };
+  }
+  if (!isCeo(req.userRole) && String(coord.centerId || "") !== String(me?.centerId || "")) {
+    return { ok: false, status: 403, message: "You can access coordinators in your center only" };
+  }
+  if (req.userRole === "coordinator" && String(coordinatorId) !== String(req.userId)) {
+    return { ok: false, status: 403, message: "Not allowed" };
+  }
+  if (req.userRole === "supervisor") {
+    const sup = await User.findById(req.userId).select("reportsTo").lean();
+    if (String(sup?.reportsTo || "") !== String(coordinatorId)) {
+      return { ok: false, status: 403, message: "Not allowed" };
+    }
+  }
+  return { ok: true, coordinator: coord };
 }
 
 async function getSupervisorTherapistIds(supervisorId, centerId) {
@@ -786,7 +813,7 @@ router.delete("/supervisor-sheet", async (req, res) => {
 router.get("/coordinator-sheet", async (req, res) => {
   const me = await actor(req);
   const targetCoordinatorId = String(req.query.coordinatorId || req.userId || "");
-  if (!canAccessCoordinatorSheet(req, me, targetCoordinatorId)) {
+  if (!canReadCoordinatorSheet(req, targetCoordinatorId)) {
     return res.status(403).json({ message: "You can access coordinator sheet for allowed users only" });
   }
   const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
@@ -805,7 +832,7 @@ router.get("/coordinator-sheet", async (req, res) => {
 router.put("/coordinator-sheet", async (req, res) => {
   const me = await actor(req);
   const targetCoordinatorId = String(req.body.coordinatorId || req.userId || "");
-  if (!canAccessCoordinatorSheet(req, me, targetCoordinatorId)) {
+  if (!canWriteCoordinatorSheet(req, targetCoordinatorId)) {
     return res.status(403).json({ message: "You can update coordinator sheet for allowed users only" });
   }
   const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
@@ -832,6 +859,113 @@ router.put("/coordinator-sheet", async (req, res) => {
   const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
   const sheet = await CoordinatorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
   res.json({ sheetDate: sheet.sheetDate, entries: sheet.entries || [] });
+});
+
+router.get("/coordinator-performance", async (req, res) => {
+  const me = await actor(req);
+  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
+
+  const userQuery = { role: "coordinator", active: true };
+  if (!isCeo(req.userRole)) userQuery.centerId = me?.centerId || null;
+
+  if (req.userRole === "coordinator") {
+    userQuery._id = req.userId;
+  } else if (req.userRole === "supervisor") {
+    const sup = await User.findById(req.userId).select("reportsTo").lean();
+    const rid = sup?.reportsTo;
+    if (!rid) return res.json({ rows: [], total: 0, page, limit });
+    const boss = await User.findById(rid).select("role centerId").lean();
+    if (!boss || boss.role !== "coordinator") return res.json({ rows: [], total: 0, page, limit });
+    if (!isCeo(req.userRole) && String(boss.centerId || "") !== String(me?.centerId || "")) {
+      return res.json({ rows: [], total: 0, page, limit });
+    }
+    userQuery._id = rid;
+  }
+
+  if (req.query.coordinatorId) {
+    const gate = await assertCoordinatorPerformanceAccess(req, me, String(req.query.coordinatorId));
+    if (!gate.ok) return res.status(gate.status).json({ message: gate.message });
+    userQuery._id = req.query.coordinatorId;
+  }
+
+  const coordinators = await User.find(userQuery)
+    .select("_id name email centerId")
+    .populate("centerId", "name code")
+    .lean();
+  coordinators.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const total = coordinators.length;
+  const pageCoordinators = coordinators.slice(skip, skip + limit);
+  const coordinatorIds = pageCoordinators.map((c) => c._id);
+
+  const sheetQuery = { coordinatorId: { $in: coordinatorIds } };
+  if (req.query.from || req.query.to) {
+    sheetQuery.sheetDate = {};
+    if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
+    if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
+  }
+  if (!isCeo(req.userRole)) sheetQuery.centerId = me?.centerId || null;
+
+  const sheets = coordinatorIds.length ? await CoordinatorSheet.find(sheetQuery).lean() : [];
+  const byCoordinator = new Map();
+  for (const s of sheets) {
+    const key = String(s.coordinatorId);
+    if (!byCoordinator.has(key)) byCoordinator.set(key, []);
+    byCoordinator.get(key).push(s);
+  }
+
+  const rows = pageCoordinators.map((c) => {
+    const list = byCoordinator.get(String(c._id)) || [];
+    const uniqueDates = new Set(list.map((doc) => String(doc.sheetDate || "")));
+    let yesCount = 0;
+    let noCount = 0;
+    let remarksCount = 0;
+    let lastUpdatedAt = null;
+    for (const day of list) {
+      if (!lastUpdatedAt || new Date(day.updatedAt).getTime() > new Date(lastUpdatedAt).getTime()) {
+        lastUpdatedAt = day.updatedAt;
+      }
+      for (const e of day.entries || []) {
+        if (e.status === "yes") yesCount += 1;
+        else noCount += 1;
+        if (String(e.remarks || "").trim()) remarksCount += 1;
+      }
+    }
+    return {
+      _id: String(c._id),
+      coordinator: c,
+      daysSubmitted: uniqueDates.size,
+      yesCount,
+      noCount,
+      remarksCount,
+      lastUpdatedAt,
+    };
+  });
+
+  res.json({ rows, total, page, limit });
+});
+
+router.get("/coordinator-performance/details", async (req, res) => {
+  const me = await actor(req);
+  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  const coordinatorId = String(req.query.coordinatorId || "");
+  if (!coordinatorId) return res.status(400).json({ message: "coordinatorId is required" });
+  const gate = await assertCoordinatorPerformanceAccess(req, me, coordinatorId);
+  if (!gate.ok) return res.status(gate.status).json({ message: gate.message });
+
+  const { page, limit, skip } = parsePageLimit(req.query, 20, 100);
+  const coord = gate.coordinator;
+  const q = { coordinatorId: coord._id, centerId: coord.centerId || null };
+  if (req.query.from || req.query.to) {
+    q.sheetDate = {};
+    if (req.query.from) q.sheetDate.$gte = String(req.query.from);
+    if (req.query.to) q.sheetDate.$lte = String(req.query.to);
+  }
+  const [sheets, total] = await Promise.all([
+    CoordinatorSheet.find(q).sort({ sheetDate: -1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
+    CoordinatorSheet.countDocuments(q),
+  ]);
+  res.json({ sheets, total, page, limit });
 });
 
 router.get("/supervisor-performance", async (req, res) => {
