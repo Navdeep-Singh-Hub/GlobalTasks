@@ -77,6 +77,44 @@ function emptyDraft(id: number): Draft {
   };
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeDraft(d: Draft): Draft {
+  const normalizedAssignees = Array.from(
+    new Set(
+      (Array.isArray(d.assignees) ? d.assignees : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const recurring = d.taskType !== "one_time";
+  const normalizedDueDate = String(d.dueDate || "").trim() || (recurring && d.forever ? todayIsoDate() : "");
+  return {
+    ...d,
+    title: String(d.title || "").trim(),
+    description: String(d.description || "").trim(),
+    centerId: String(d.centerId || "").trim(),
+    departmentId: String(d.departmentId || "").trim(),
+    functionTag: String(d.functionTag || "").trim(),
+    requiredFieldsCsv: String(d.requiredFieldsCsv || "").trim(),
+    dueDate: normalizedDueDate,
+    assignees: normalizedAssignees,
+  };
+}
+
+function missingFieldsForDraft(d: Draft): string[] {
+  const missing: string[] = [];
+  if (!d.title) missing.push("title");
+  if (!d.centerId) missing.push("center");
+  if (!d.departmentId) missing.push("department");
+  if (!d.functionTag) missing.push("function tag");
+  if (!d.dueDate) missing.push("due date");
+  if (!Array.isArray(d.assignees) || d.assignees.length === 0) missing.push("assignee");
+  return missing;
+}
+
 async function uploadAttachments(files: File[]): Promise<{ name: string; url: string; size: number; mimeType?: string }[]> {
   if (!files.length) return [];
   const fd = new FormData();
@@ -143,20 +181,20 @@ export function AssignTaskForm() {
     );
 
   const submit = async () => {
-    const invalid = drafts.find(
-      (d) => !d.title.trim() || !d.dueDate || d.assignees.length === 0 || !d.centerId || !d.departmentId || !d.functionTag.trim()
-    );
+    const normalizedDrafts = drafts.map(normalizeDraft);
+    const invalid = normalizedDrafts.find((d) => missingFieldsForDraft(d).length > 0);
     if (invalid) {
+      const missing = missingFieldsForDraft(invalid);
       setMessage({
         type: "error",
-        text: `Task #${invalid.id}: title, center, department, function tag, due date and assignee are required.`,
+        text: `Task #${invalid.id}: missing ${missing.join(", ")}.`,
       });
       return;
     }
     setSubmitting(true);
     setMessage(null);
     try {
-      for (const d of drafts) {
+      for (const d of normalizedDrafts) {
         const [attachments, voiceNoteUrl] = await Promise.all([
           uploadAttachments(d.attachments),
           d.voiceBlob ? uploadVoice(d.voiceBlob) : Promise.resolve(""),
@@ -165,19 +203,24 @@ export function AssignTaskForm() {
           .split(",")
           .map((x) => x.trim())
           .filter(Boolean);
+        const dueDateObj = new Date(`${d.dueDate}T00:00:00`);
+        if (Number.isNaN(dueDateObj.getTime())) {
+          throw new Error(`Task #${d.id}: invalid due date`);
+        }
+        const dueDateIso = dueDateObj.toISOString();
         await api("/tasks", {
           method: "POST",
           body: JSON.stringify({
-            title: d.title.trim(),
+            title: d.title,
             description: d.description,
             centerId: d.centerId,
             departmentId: d.departmentId,
-            functionTag: d.functionTag.trim(),
+            functionTag: d.functionTag,
             taskType: d.taskType,
             priority: d.priority,
             assignees: d.assignees,
             requiresApproval: d.requiresApproval,
-            dueDate: new Date(d.dueDate).toISOString(),
+            dueDate: dueDateIso,
             recurrence: {
               forever: d.forever,
               includeSunday: d.includeSunday,
