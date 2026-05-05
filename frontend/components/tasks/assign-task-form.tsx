@@ -128,6 +128,19 @@ export function AssignTaskForm() {
   const addDraft = () => setDrafts((d) => [...d, emptyDraft(d.length + 1)]);
   const resetAll = () => setDrafts([emptyDraft(1)]);
   const updateDraft = (id: number, patch: Partial<Draft>) => setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const toggleDraftAssignee = (id: number, userId: string) =>
+    setDrafts((list) =>
+      list.map((d) =>
+        d.id === id
+          ? {
+              ...d,
+              assignees: d.assignees.includes(userId)
+                ? d.assignees.filter((aid) => aid !== userId)
+                : [...d.assignees, userId],
+            }
+          : d
+      )
+    );
 
   const submit = async () => {
     const invalid = drafts.find(
@@ -203,6 +216,7 @@ export function AssignTaskForm() {
           centers={centers}
           departments={departments}
           onChange={(patch) => updateDraft(d.id, patch)}
+          onToggleAssignee={(userId) => toggleDraftAssignee(d.id, userId)}
           onRemove={drafts.length > 1 ? () => setDrafts((list) => list.filter((x) => x.id !== d.id)) : undefined}
         />
       ))}
@@ -250,6 +264,7 @@ function DraftCard({
   centers,
   departments,
   onChange,
+  onToggleAssignee,
   onRemove,
 }: {
   index: number;
@@ -258,6 +273,7 @@ function DraftCard({
   centers: CenterLite[];
   departments: DepartmentLite[];
   onChange: (p: Partial<Draft>) => void;
+  onToggleAssignee: (userId: string) => void;
   onRemove?: () => void;
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
@@ -374,7 +390,7 @@ function DraftCard({
                     <button
                       key={u._id}
                       type="button"
-                      onClick={() => onChange({ assignees: checked ? draft.assignees.filter((id) => id !== u._id) : [...draft.assignees, u._id] })}
+                      onClick={() => onToggleAssignee(u._id)}
                       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 ${checked ? "bg-brand-50 dark:bg-brand-900/30" : ""}`}
                     >
                       <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? "border-brand-500 bg-brand-500 text-white" : "border-zinc-300"}`}>
