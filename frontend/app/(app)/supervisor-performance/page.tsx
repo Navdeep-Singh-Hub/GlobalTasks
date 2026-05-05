@@ -5,6 +5,7 @@ import { Input, Select } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-remarks-display";
+import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
 import { cn } from "@/lib/utils";
 import { formatRoleLine, isManagement } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight } from "lucide-react";
@@ -73,6 +74,8 @@ function taskLabel(taskKey: string, kind: SheetKind) {
 export default function SupervisorPerformancePage() {
   const { user } = useAuth();
   const canManage = isManagement(user?.role);
+  const viewerIsSupervisor = user?.role === "supervisor";
+  const viewerIsCoordinator = user?.role === "coordinator";
   const [sheetKind, setSheetKind] = useState<SheetKind>("supervisor");
 
   const [supRows, setSupRows] = useState<SupervisorSummaryRow[]>([]);
@@ -265,14 +268,24 @@ export default function SupervisorPerformancePage() {
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">{roleLabel}</span>
             {sheetKind === "supervisor" ? (
-              <Select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
-                <option value="">All supervisors</option>
-                {supervisors.map((s) => (
-                  <option key={s._id} value={s._id}>
-                    {s.name} ({formatRoleLine(s.role, s.executorKind)})
-                  </option>
-                ))}
-              </Select>
+              viewerIsSupervisor ? (
+                <div className="flex min-h-10 items-center rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                  Your sheets only (other supervisors are hidden)
+                </div>
+              ) : (
+                <Select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)}>
+                  <option value="">All supervisors</option>
+                  {supervisors.map((s) => (
+                    <option key={s._id} value={s._id}>
+                      {s.name} ({formatRoleLine(s.role, s.executorKind)})
+                    </option>
+                  ))}
+                </Select>
+              )
+            ) : viewerIsCoordinator ? (
+              <div className="flex min-h-10 items-center rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                Your sheets only (other coordinators are hidden)
+              </div>
             ) : (
               <Select value={coordinatorId} onChange={(e) => setCoordinatorId(e.target.value)}>
                 <option value="">All coordinators</option>
@@ -471,7 +484,9 @@ export default function SupervisorPerformancePage() {
                                               <tr key={`${sheet._id}-${e.taskKey}-${idx}`} className="border-t border-zinc-100 dark:border-zinc-800">
                                                 <td className="px-2 py-1.5">{taskLabel(e.taskKey, "supervisor")}</td>
                                                 <td className="px-2 py-1.5 uppercase">{e.status}</td>
-                                                <td className="px-2 py-1.5">{e.remarks || "—"}</td>
+                                                <td className="max-w-[min(96vw,720px)] px-2 py-1.5 align-top">
+                                                  <SupervisorRemarksDisplay remarks={e.remarks} />
+                                                </td>
                                               </tr>
                                             ))}
                                           </tbody>
@@ -603,8 +618,9 @@ export default function SupervisorPerformancePage() {
                                 {sheet.entries.map((e, idx) => (
                                   <div key={`${sheet._id}-${e.taskKey}-${idx}`} className="rounded bg-zinc-50 px-2 py-1 text-xs dark:bg-zinc-900">
                                     <div className="font-medium">{taskLabel(e.taskKey, "supervisor")}</div>
-                                    <div className="text-zinc-500">
-                                      {String(e.status || "").toUpperCase()} · {e.remarks || "—"}
+                                    <div className="text-zinc-500">{String(e.status || "").toUpperCase()}</div>
+                                    <div className="mt-1 border-t border-zinc-200/80 pt-1 dark:border-zinc-700">
+                                      <SupervisorRemarksDisplay remarks={e.remarks} />
                                     </div>
                                   </div>
                                 ))}

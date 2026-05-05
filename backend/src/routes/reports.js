@@ -1009,7 +1009,11 @@ router.get("/supervisor-performance", async (req, res) => {
 
   const userQuery = { role: "supervisor", active: true };
   if (!isCeo(req.userRole)) userQuery.centerId = me?.centerId || null;
-  if (req.query.supervisorId) userQuery._id = req.query.supervisorId;
+  if (req.userRole === "supervisor") {
+    userQuery._id = req.userId;
+  } else if (req.query.supervisorId) {
+    userQuery._id = req.query.supervisorId;
+  }
 
   const supervisors = await User.find(userQuery)
     .select("_id name email centerId")
@@ -1078,6 +1082,9 @@ router.get("/supervisor-performance/details", async (req, res) => {
   if (!supervisor || supervisor.role !== "supervisor") return res.status(404).json({ message: "Supervisor not found" });
   if (!isCeo(req.userRole) && String(supervisor.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access supervisors in your center only" });
+  }
+  if (req.userRole === "supervisor" && String(supervisorId) !== String(req.userId || "")) {
+    return res.status(403).json({ message: "You can only view your own supervisor sheets" });
   }
 
   const q = { supervisorId: supervisor._id, centerId: supervisor.centerId || null };
