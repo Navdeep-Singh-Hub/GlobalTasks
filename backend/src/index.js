@@ -23,6 +23,7 @@ import { setSocket } from "./services/notificationService.js";
 import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
 import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
 import { runWhatsAppDigestTick, startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
+import { SupervisorSheet } from "./models/SupervisorSheet.js";
 
 const app = express();
 const server = createServer(app);
@@ -110,10 +111,26 @@ app.use((err, _req, res, _next) => {
 });
 
 const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/tms";
+
+async function ensureSupervisorSheetIndexes() {
+  const coll = SupervisorSheet.collection;
+  const indexes = await coll.indexes();
+  const legacy = indexes.find((idx) => {
+    const key = idx?.key || {};
+    return Number(key.supervisorId) === 1 && Number(key.sheetDate) === 1 && key.instanceKey === undefined;
+  });
+  if (legacy?.name) {
+    await coll.dropIndex(legacy.name);
+    console.log(`[db] dropped legacy SupervisorSheet index: ${legacy.name}`);
+  }
+  await coll.createIndex({ supervisorId: 1, sheetDate: 1, instanceKey: 1 }, { unique: true });
+}
+
 connectDatabase(uri)
   .then(async () => {
     await migrateLegacyUserRoles();
     await ensureMasterData();
+    await ensureSupervisorSheetIndexes();
     startTrashPurgeScheduler();
     startEscalationScheduler();
     const digestEnabled = String(process.env.WHATSAPP_DIGEST_SCHEDULER_ENABLED || "true").toLowerCase() === "true";
