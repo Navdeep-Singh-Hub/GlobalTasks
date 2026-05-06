@@ -4,11 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
-import { formatRoleLine, isManagement } from "@/lib/roles";
+import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight, Star } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 type TherapistUser = { _id: string; name: string; email: string; role: string; executorKind?: string };
+type CenterLite = { _id: string; name: string; code?: string };
 type SessionItem = {
   _id: string;
   sessionDate: string;
@@ -63,7 +64,9 @@ export default function TherapistPerformancePage() {
   const [page, setPage] = useState(1);
   const [sessionsPage, setSessionsPage] = useState(1);
   const [therapists, setTherapists] = useState<TherapistUser[]>([]);
+  const [centers, setCenters] = useState<CenterLite[]>([]);
   const [therapistId, setTherapistId] = useState("");
+  const [centerId, setCenterId] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [scoreDraft, setScoreDraft] = useState<Record<string, { score: string; remarks: string }>>({});
@@ -73,6 +76,7 @@ export default function TherapistPerformancePage() {
 
   const canManage = isManagement(user?.role);
   const canMark = user?.role === "supervisor";
+  const canFilterCenter = isCeo(user?.role);
 
   const load = useCallback(async () => {
     const qsPerf = new URLSearchParams();
@@ -80,6 +84,10 @@ export default function TherapistPerformancePage() {
     if (therapistId) {
       qsPerf.set("therapistId", therapistId);
       qsSessions.set("therapistId", therapistId);
+    }
+    if (canFilterCenter && centerId) {
+      qsPerf.set("centerId", centerId);
+      qsSessions.set("centerId", centerId);
     }
     if (from) {
       qsPerf.set("from", from);
@@ -101,22 +109,31 @@ export default function TherapistPerformancePage() {
     setSessions(sess.sessions || []);
     setRows(perf.rows);
     setRowsTotal(Number(perf.total) || 0);
-  }, [from, therapistId, to, page, sessionsPage, canMark]);
+  }, [from, therapistId, to, page, sessionsPage, canMark, canFilterCenter, centerId]);
 
   useEffect(() => {
     if (!user) return;
-    api<{ users: TherapistUser[] }>("/users")
+    const qs = new URLSearchParams();
+    if (canFilterCenter && centerId) qs.set("centerId", centerId);
+    api<{ users: TherapistUser[] }>(`/users${qs.toString() ? `?${qs.toString()}` : ""}`)
       .then((d) => {
         const list = d.users.filter((u) => u.role === "supervisor" || (u.role === "executor" && u.executorKind === "therapist"));
         setTherapists(list);
       })
       .catch(() => setTherapists([]));
-  }, [user]);
+  }, [user, canFilterCenter, centerId]);
+
+  useEffect(() => {
+    if (!user || !canFilterCenter) return;
+    api<{ centers: CenterLite[] }>("/centers")
+      .then((d) => setCenters(Array.isArray(d.centers) ? d.centers : []))
+      .catch(() => setCenters([]));
+  }, [user, canFilterCenter]);
 
   useEffect(() => {
     setPage(1);
     setSessionsPage(1);
-  }, [therapistId, from, to]);
+  }, [therapistId, from, to, centerId]);
 
   useEffect(() => {
     if (!user) return;
@@ -155,7 +172,7 @@ export default function TherapistPerformancePage() {
   useEffect(() => {
     setExpandedSessionTherapists({});
     setSessionByTherapist({});
-  }, [page, therapistId, from, to]);
+  }, [page, therapistId, from, to, centerId]);
 
   async function loadTherapistSessions(therapist: TherapistUser) {
     const therapistKey = String(therapist._id);
@@ -170,6 +187,7 @@ export default function TherapistPerformancePage() {
       qs.set("therapistId", therapistKey);
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
+      if (canFilterCenter && centerId) qs.set("centerId", centerId);
       qs.set("page", "1");
       qs.set("limit", "500");
       const data = await api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions?${qs.toString()}`);
@@ -242,7 +260,24 @@ export default function TherapistPerformancePage() {
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="space-y-1">
+            <span className="text-xs font-semibold text-zinc-500">Center</span>
+            {canFilterCenter ? (
+              <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
+                <option value="">All centers</option>
+                {centers.map((c) => (
+                  <option key={c._id} value={c._id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <div className="flex h-10 items-center rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900">
+                Your center
+              </div>
+            )}
+          </label>
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Staff</span>
             <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>

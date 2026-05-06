@@ -37,6 +37,7 @@ function perfCacheKey(req, me) {
     center: String(me?.centerId || ""),
     from: String(req.query.from || ""),
     to: String(req.query.to || ""),
+    centerId: String(req.query.centerId || ""),
     therapistId: String(req.query.therapistId || ""),
     page: Number(req.query.page) || 1,
     limit: Number(req.query.limit) || 25,
@@ -476,6 +477,7 @@ router.get("/therapist-sessions", async (req, res) => {
   const { page, limit, skip } = parsePageLimit(req.query, 30, 100);
 
   const q = {};
+  const selectedCenterId = String(req.query.centerId || "").trim();
   if (req.query.from || req.query.to) {
     q.sessionDate = {};
     if (req.query.from) q.sessionDate.$gte = String(req.query.from);
@@ -485,6 +487,7 @@ router.get("/therapist-sessions", async (req, res) => {
   if (isTherapist) q.therapistId = req.userId;
   if (isSupervisor && String(req.query.scope || "").toLowerCase() === "self") q.therapistId = req.userId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  else if (selectedCenterId) q.centerId = selectedCenterId;
   if (req.userRole === "supervisor" && !q.therapistId) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
@@ -633,6 +636,7 @@ router.get("/therapist-performance", async (req, res) => {
   const cached = getCachedPerf(cacheKey);
   if (cached) return res.json(cached);
   const q = {};
+  const selectedCenterId = String(req.query.centerId || "").trim();
   if (req.query.from || req.query.to) {
     q.sessionDate = {};
     if (req.query.from) q.sessionDate.$gte = String(req.query.from);
@@ -640,6 +644,7 @@ router.get("/therapist-performance", async (req, res) => {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  else if (selectedCenterId) q.centerId = selectedCenterId;
   if (req.userRole === "supervisor") {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = null;
@@ -682,6 +687,7 @@ router.get("/therapist-performance", async (req, res) => {
     $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
   };
   if (!isCeo(req.userRole)) therapistQuery.centerId = me?.centerId || null;
+  else if (selectedCenterId) therapistQuery.centerId = selectedCenterId;
   if (req.userRole === "supervisor") {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     const allowed = [String(req.userId), ...therapistIds.map((id) => String(id))];

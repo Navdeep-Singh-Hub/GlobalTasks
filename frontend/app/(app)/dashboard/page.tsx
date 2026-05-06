@@ -5,6 +5,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { formatRoleLine } from "@/lib/roles";
 import { CalendarDays, ChevronDown, Sparkles } from "lucide-react";
+import Link from "next/link";
 import type { CioSummary, CoordinatorReport, CentreHeadReport, IndividualReport, Summary, SupervisorReport, TeamMember, ActivityItem } from "@/components/dashboard/types";
 import { CioDashboard, CoordinatorDashboard, CentreHeadDashboard, ExecutorDashboard, SupervisorDashboard } from "@/components/dashboard/role-sections";
 
@@ -19,6 +20,8 @@ export default function DashboardPage() {
   const [coordinator, setCoordinator] = useState<CoordinatorReport | null>(null);
   const [centreHead, setCentreHead] = useState<CentreHeadReport | null>(null);
   const [ceo, setCeo] = useState<CioSummary | null>(null);
+  const [myPendingSingle, setMyPendingSingle] = useState(0);
+  const [myPendingRecurring, setMyPendingRecurring] = useState(0);
 
   useEffect(() => {
     api<Summary>(`/dashboard/summary?scope=${scope}`).then(setSummary).catch(() => {});
@@ -30,6 +33,21 @@ export default function DashboardPage() {
     if (user.role === "coordinator") api<CoordinatorReport>("/reports/coordinator").then(setCoordinator).catch(() => setCoordinator(null));
     if (user.role === "centre_head") api<CentreHeadReport>("/reports/centre-head").then(setCentreHead).catch(() => setCentreHead(null));
     if (user.role === "ceo") api<CioSummary>("/reports/ceo-summary").then(setCeo).catch(() => setCeo(null));
+
+    const showMyPending = user.role === "executor" || user.role === "coordinator" || user.role === "centre_head";
+    if (!showMyPending) return;
+    void Promise.all([
+      api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=false&page=1&limit=1"),
+      api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=true&page=1&limit=1"),
+    ])
+      .then(([single, recurring]) => {
+        setMyPendingSingle(Number(single.total) || 0);
+        setMyPendingRecurring(Number(recurring.total) || 0);
+      })
+      .catch(() => {
+        setMyPendingSingle(0);
+        setMyPendingRecurring(0);
+      });
   }, [scope, user]);
 
   const monthLabel = useMemo(() => new Date().toLocaleDateString([], { month: "long", year: "numeric" }), []);
@@ -95,6 +113,27 @@ export default function DashboardPage() {
           </div>
         </div>
       </section>
+
+      {(user?.role === "executor" || user?.role === "coordinator" || user?.role === "centre_head") && (
+        <section className="grid gap-3 sm:grid-cols-2">
+          <Link
+            href="/pending-single"
+            className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card transition hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">My pending single</div>
+            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{myPendingSingle}</div>
+            <div className="mt-1 text-xs text-zinc-500">Open single tasks assigned to you</div>
+          </Link>
+          <Link
+            href="/pending-recurring"
+            className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card transition hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-950"
+          >
+            <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">My pending recurring</div>
+            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{myPendingRecurring}</div>
+            <div className="mt-1 text-xs text-zinc-500">Open recurring tasks assigned to you</div>
+          </Link>
+        </section>
+      )}
 
       {user?.role === "executor" && <ExecutorDashboard individual={individual} summary={summary} activity={activity} />}
       {user?.role === "supervisor" && (

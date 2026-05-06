@@ -41,9 +41,10 @@ const ADMIN_TASK_FIELDS = new Set([
 ]);
 
 function assertTaskPatchPermission(req, body) {
+  const isAdminLike = req.userRole === "ceo" || req.userRole === "centre_head";
   for (const k of Object.keys(body)) {
-    if (ADMIN_TASK_FIELDS.has(k) && !isCeo(req.userRole)) {
-      return "Only the CEO can edit these task fields";
+    if (ADMIN_TASK_FIELDS.has(k) && !isAdminLike) {
+      return "Only admin roles can edit these task fields";
     }
     if (k === "assignees" && !isManagement(req.userRole)) {
       return "Insufficient permissions to reassign tasks";
