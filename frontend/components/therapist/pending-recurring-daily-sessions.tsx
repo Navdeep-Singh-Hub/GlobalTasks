@@ -412,7 +412,15 @@ export function PendingRecurringDailySessions() {
               })
             : sheetRemarksByTask[task.key] || "",
       }));
-      await api("/reports/supervisor-sheet", {
+      const res = await api<{
+        taskApproval?: {
+          ok?: boolean;
+          queued?: boolean;
+          alreadyQueued?: boolean;
+          autoCompleted?: boolean;
+          reason?: string;
+        };
+      }>("/reports/supervisor-sheet", {
         method: "PUT",
         body: JSON.stringify({
           supervisorId: user._id,
@@ -425,7 +433,20 @@ export function PendingRecurringDailySessions() {
       setPendingSupervisorSheetKeys((prev) => prev.filter((k) => k !== activeSupervisorSheetKey));
       await refreshSupervisorSheetInstances();
       setSupervisorSheetViewOnly(true);
-      setMessage({ type: "ok", text: "Supervisor sheet saved." });
+      const ta = res?.taskApproval;
+      let okText = "Supervisor sheet saved.";
+      if (ta?.queued) okText = "Supervisor sheet saved. Sent for approval — your coordinator can review it under For Approval.";
+      else if (ta?.alreadyQueued) okText = "Supervisor sheet saved. Still pending approval.";
+      else if (ta?.autoCompleted) okText = "Supervisor sheet saved. Linked task marked completed.";
+      else if (ta?.ok === false && ta?.reason === "no_matching_task") {
+        okText =
+          "Supervisor sheet saved. Add a daily task titled “Fill Daily Supervisor Sheet” (due today, assigned to you) to sync approvals.";
+      } else if (ta?.ok === false && ta?.reason === "due_date_mismatch") {
+        okText = "Supervisor sheet saved. Match the sheet task due date to this sheet date (Asia/Kolkata) for approval sync.";
+      } else if (ta?.ok === false && ta?.reason === "no_approver_found") {
+        okText = "Supervisor sheet saved, but no coordinator mapping found for your department in this center. Approval routing is blocked.";
+      }
+      setMessage({ type: "ok", text: okText });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not save supervisor sheet." });
     } finally {

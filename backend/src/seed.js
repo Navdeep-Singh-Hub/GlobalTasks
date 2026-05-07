@@ -223,6 +223,44 @@ async function run() {
     });
   }
 
+  // Daily sheet tasks (supervisor / coordinator) — saving the sheet queues these for assigner approval like other tasks.
+  tasks.push({
+    title: "Fill Daily Supervisor Sheet",
+    description: "Complete and save the daily supervisor checklist in Pending Recurring.",
+    taskType: "daily",
+    status: "pending",
+    priority: "high",
+    dueDate: plusDays(0),
+    departmentId: deptByCode.OT._id,
+    centerId: cLudhiana._id,
+    functionTag: "daily_supervisor_sheet",
+    requiredInputsSchema: { type: "object", properties: {}, required: [] },
+    recurrence: { forever: true, includeSunday: false, weekOff: "Sunday" },
+    assignees: [supervisorUser._id],
+    createdBy: coordinatorUser._id,
+    requiresApproval: true,
+    approvalStatus: "none",
+    tags: ["daily_sheet_supervisor", "recurring"],
+  });
+  tasks.push({
+    title: "Fill Daily Coordinator Sheet",
+    description: "Complete and save the daily coordinator sheet in Pending Recurring.",
+    taskType: "daily",
+    status: "pending",
+    priority: "high",
+    dueDate: plusDays(0),
+    departmentId: deptByCode.OT._id,
+    centerId: cLudhiana._id,
+    functionTag: "daily_coordinator_sheet",
+    requiredInputsSchema: { type: "object", properties: {}, required: [] },
+    recurrence: { forever: true, includeSunday: false, weekOff: "Sunday" },
+    assignees: [coordinatorUser._id],
+    createdBy: centreHead._id,
+    requiresApproval: true,
+    approvalStatus: "none",
+    tags: ["daily_sheet_coordinator", "recurring"],
+  });
+
   // 1 overdue
   tasks.push({
     title: "submit compliance pack",

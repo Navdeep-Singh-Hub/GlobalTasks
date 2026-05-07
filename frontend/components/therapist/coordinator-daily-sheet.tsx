@@ -402,7 +402,15 @@ export function CoordinatorDailySheet() {
                       ? serializeRoundsOfCentreRemarks(roundsPlanRows, remarksByTask[row.key] || "")
                       : remarksByTask[row.key] || "",
       }));
-      await api("/reports/coordinator-sheet", {
+      const res = await api<{
+        taskApproval?: {
+          ok?: boolean;
+          queued?: boolean;
+          alreadyQueued?: boolean;
+          autoCompleted?: boolean;
+          reason?: string;
+        };
+      }>("/reports/coordinator-sheet", {
         method: "PUT",
         body: JSON.stringify({
           coordinatorId: user._id,
@@ -411,7 +419,20 @@ export function CoordinatorDailySheet() {
         }),
       });
       setSheetViewOnly(true);
-      setMessage({ type: "ok", text: "Coordinator sheet saved." });
+      const ta = res?.taskApproval;
+      let okText = "Coordinator sheet saved.";
+      if (ta?.queued) okText = "Coordinator sheet saved. Sent for approval — your centre head can review it under For Approval.";
+      else if (ta?.alreadyQueued) okText = "Coordinator sheet saved. Still pending approval.";
+      else if (ta?.autoCompleted) okText = "Coordinator sheet saved. Linked task marked completed.";
+      else if (ta?.ok === false && ta?.reason === "no_matching_task") {
+        okText =
+          "Coordinator sheet saved. Add a daily task titled “Fill Daily Coordinator Sheet” (due today, assigned to you) to sync approvals.";
+      } else if (ta?.ok === false && ta?.reason === "due_date_mismatch") {
+        okText = "Coordinator sheet saved. Match the sheet task due date to this sheet date (Asia/Kolkata) for approval sync.";
+      } else if (ta?.ok === false && ta?.reason === "no_approver_found") {
+        okText = "Coordinator sheet saved, but no centre head mapping found for your center. Approval routing is blocked.";
+      }
+      setMessage({ type: "ok", text: okText });
     } catch (e) {
       setMessage({ type: "err", text: e instanceof ApiError ? e.message : "Could not save coordinator sheet." });
     } finally {

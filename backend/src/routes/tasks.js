@@ -490,8 +490,8 @@ router.post("/:id/approve", async (req, res) => {
   task.rejectionMode = "";
   await task.save();
   await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: {} });
-  const actor = await User.findById(req.userId).lean();
-  await advanceIfRecurring(task, req.userId, actor?.name);
+  const actorUser = await User.findById(req.userId).lean();
+  await advanceIfRecurring(task, req.userId, actorUser?.name);
   if (task.assignees?.length) {
     await notifyMany(task.assignees, {
       type: "task_approved",
@@ -535,15 +535,15 @@ router.post("/:id/reject", async (req, res) => {
     await task.save();
     await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "rejected", meta: { mode, remarks: text } });
 
-    const actor = await User.findById(req.userId).lean();
+    const actorUser = await User.findById(req.userId).lean();
     await logActivity({
       actor: req.userId,
-      actorName: actor?.name,
+      actorName: actorUser?.name,
       type: "task_rejected",
       message:
         mode === "no_action"
-          ? `${actor?.name || "Admin"} permanently closed "${task.title}" (${text.slice(0, 80)}${text.length > 80 ? "…" : ""})`
-          : `${actor?.name || "Admin"} rejected completion of "${task.title}" for rework (${text.slice(0, 80)}${text.length > 80 ? "…" : ""})`,
+          ? `${actorUser?.name || "Admin"} permanently closed "${task.title}" (${text.slice(0, 80)}${text.length > 80 ? "…" : ""})`
+          : `${actorUser?.name || "Admin"} rejected completion of "${task.title}" for rework (${text.slice(0, 80)}${text.length > 80 ? "…" : ""})`,
       task: task._id,
       taskTitle: task.title,
       taskType: task.taskType,

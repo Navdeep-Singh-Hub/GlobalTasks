@@ -10,6 +10,7 @@ import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
+import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
 
 const router = Router();
 router.use(authRequired);
@@ -814,7 +815,26 @@ router.put("/supervisor-sheet", async (req, res) => {
   };
   const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
   const sheet = await SupervisorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
-  res.json({ sheetDate: sheet.sheetDate, instanceKey: sheet.instanceKey || instanceKey, entries: sheet.entries || [], label: sheet.label || "" });
+  let taskApproval = null;
+  try {
+    taskApproval = await submitDailySheetTaskForApproval({
+      assigneeId: targetSupervisorId,
+      centerId: supervisorUser.centerId,
+      sheetDate,
+      kind: "supervisor",
+      actorUserId: req.userId,
+      actorRole: req.userRole,
+    });
+  } catch (e) {
+    taskApproval = { ok: false, reason: String(e?.message || e) };
+  }
+  res.json({
+    sheetDate: sheet.sheetDate,
+    instanceKey: sheet.instanceKey || instanceKey,
+    entries: sheet.entries || [],
+    label: sheet.label || "",
+    taskApproval,
+  });
 });
 
 router.delete("/supervisor-sheet", async (req, res) => {
@@ -898,7 +918,20 @@ router.put("/coordinator-sheet", async (req, res) => {
   };
   const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
   const sheet = await CoordinatorSheet.findOneAndUpdate(where, { $set: payload }, { upsert: true, new: true, setDefaultsOnInsert: true }).lean();
-  res.json({ sheetDate: sheet.sheetDate, entries: sheet.entries || [] });
+  let taskApproval = null;
+  try {
+    taskApproval = await submitDailySheetTaskForApproval({
+      assigneeId: targetCoordinatorId,
+      centerId: coordinatorUser.centerId,
+      sheetDate,
+      kind: "coordinator",
+      actorUserId: req.userId,
+      actorRole: req.userRole,
+    });
+  } catch (e) {
+    taskApproval = { ok: false, reason: String(e?.message || e) };
+  }
+  res.json({ sheetDate: sheet.sheetDate, entries: sheet.entries || [], taskApproval });
 });
 
 router.get("/coordinator-performance", async (req, res) => {
