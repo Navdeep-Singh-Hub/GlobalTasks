@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import type { Role } from "@/lib/roles";
-import { NAV_ALL, NAV_CEO_ONLY, NAV_MANAGEMENT, formatRoleLine } from "@/lib/roles";
+import { NAV_ALL, NAV_MANAGEMENT, formatRoleLine } from "@/lib/roles";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -13,14 +13,11 @@ import {
   UserPlus,
   ClipboardCheck,
   Shuffle,
-  MessageCircle,
   Trash2,
   Zap,
   Activity,
-  Plug,
   ShieldCheck,
   Settings,
-  LifeBuoy,
   ChevronLeft,
   ChevronRight,
   X,
@@ -47,15 +44,12 @@ const NAV: NavItem[] = [
   { href: "/assign-task", label: "Assign Task", icon: UserPlus, roles: NAV_MANAGEMENT },
   { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: NAV_MANAGEMENT },
   { href: "/task-shift", label: "Task Shift", icon: Shuffle, roles: NAV_MANAGEMENT },
-  { href: "/chat-support", label: "Chat Support", icon: MessageCircle, roles: NAV_ALL },
   { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },
   { href: "/performance", label: "Performance", icon: Zap, roles: NAV_MANAGEMENT },
   { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_MANAGEMENT },
   { href: "/supervisor-performance", label: "Supervisor & coordinator sheets", icon: Activity, roles: NAV_MANAGEMENT },
-  { href: "/integrations", label: "Integrations", icon: Plug, roles: NAV_CEO_ONLY, badge: "NEW", accent: "new" },
   { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: NAV_MANAGEMENT },
   { href: "/settings", label: "Settings", icon: Settings, roles: NAV_ALL },
-  { href: "/help", label: "Help & Support", icon: LifeBuoy, roles: NAV_ALL },
 ];
 
 export function AppSidebar({

@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
+import { formatCenterName } from "@/lib/utils";
 import { useCallback, useEffect, useState } from "react";
 
 type TaskPayload = {
@@ -233,7 +234,7 @@ export function TaskEditModal({
               <option value="">Select center</option>
               {centers.map((c) => (
                 <option key={c._id} value={c._id}>
-                  {c.name}
+                  {formatCenterName(c.name)}
                 </option>
               ))}
             </Select>

@@ -7,7 +7,7 @@ import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { isCeo, isManagement } from "@/lib/roles";
-import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Table2, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { TaskDetailDrawer } from "./task-detail-drawer";
@@ -70,7 +70,7 @@ export function TasksView({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"table" | "cards">("table");
+  const [view, setView] = useState<"cards">("cards");
   const [isMobile, setIsMobile] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState("");
@@ -253,15 +253,6 @@ export function TasksView({
             >
               <Grid3x3 className="h-3.5 w-3.5" /> Cards
             </button>
-            {!isMobile && (
-              <button
-                type="button"
-                onClick={() => setView("table")}
-                className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold", view === "table" ? "bg-brand-gradient text-white shadow-brand" : "text-zinc-500")}
-              >
-                <Table2 className="h-3.5 w-3.5" /> Table
-              </button>
-            )}
           </div>
         </div>
       </div>
@@ -310,7 +301,7 @@ export function TasksView({
 
       {tasks.length === 0 ? (
         <EmptyState loading={loading} />
-      ) : view === "table" ? (
+      ) : false ? (
         <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
           <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
             <table

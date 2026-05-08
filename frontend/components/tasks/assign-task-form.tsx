@@ -3,16 +3,15 @@
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { api, ApiError, API_ORIGIN, getToken } from "@/lib/api";
+import { formatCenterName } from "@/lib/utils";
 import {
   Calendar,
   CheckCircle2,
   ChevronDown,
-  Download,
   Mic,
   Paperclip,
   Plus,
   RotateCcw,
-  Sparkles,
   Users,
   Zap,
 } from "lucide-react";
@@ -44,8 +43,6 @@ type Draft = {
   dueDate: string;
   centerId: string;
   departmentId: string;
-  functionTag: string;
-  requiredFieldsCsv: string;
   forever: boolean;
   includeSunday: boolean;
   weekOff: string;
@@ -66,8 +63,6 @@ function emptyDraft(id: number): Draft {
     dueDate: "",
     centerId: "",
     departmentId: "",
-    functionTag: "",
-    requiredFieldsCsv: "",
     forever: true,
     includeSunday: false,
     weekOff: "Sunday",
@@ -97,8 +92,6 @@ function normalizeDraft(d: Draft): Draft {
     description: String(d.description || "").trim(),
     centerId: String(d.centerId || "").trim(),
     departmentId: String(d.departmentId || "").trim(),
-    functionTag: String(d.functionTag || "").trim(),
-    requiredFieldsCsv: String(d.requiredFieldsCsv || "").trim(),
     dueDate: normalizedDueDate,
     assignees: normalizedAssignees,
   };
@@ -107,9 +100,9 @@ function normalizeDraft(d: Draft): Draft {
 function missingFieldsForDraft(d: Draft): string[] {
   const missing: string[] = [];
   if (!d.title) missing.push("title");
+  if (!d.description) missing.push("description");
   if (!d.centerId) missing.push("center");
   if (!d.departmentId) missing.push("department");
-  if (!d.functionTag) missing.push("function tag");
   if (!d.dueDate) missing.push("due date");
   if (!Array.isArray(d.assignees) || d.assignees.length === 0) missing.push("assignee");
   return missing;
@@ -199,10 +192,6 @@ export function AssignTaskForm() {
           uploadAttachments(d.attachments),
           d.voiceBlob ? uploadVoice(d.voiceBlob) : Promise.resolve(""),
         ]);
-        const required = d.requiredFieldsCsv
-          .split(",")
-          .map((x) => x.trim())
-          .filter(Boolean);
         const dueDateObj = new Date(`${d.dueDate}T00:00:00`);
         if (Number.isNaN(dueDateObj.getTime())) {
           throw new Error(`Task #${d.id}: invalid due date`);
@@ -215,7 +204,6 @@ export function AssignTaskForm() {
             description: d.description,
             centerId: d.centerId,
             departmentId: d.departmentId,
-            functionTag: d.functionTag,
             taskType: d.taskType,
             priority: d.priority,
             assignees: d.assignees,
@@ -228,8 +216,8 @@ export function AssignTaskForm() {
             },
             requiredInputsSchema: {
               type: "object",
-              properties: Object.fromEntries(required.map((f) => [f, { type: "string" }])),
-              required,
+              properties: {},
+              required: [],
             },
             attachments,
             voiceNoteUrl,
@@ -360,12 +348,6 @@ function DraftCard({
           </div>
         </div>
         <div className="flex w-full flex-wrap items-stretch gap-2 sm:w-auto sm:justify-end">
-          <Button variant="outline" size="sm" className="min-h-10 flex-1 gap-1.5 sm:flex-initial">
-            <Download className="h-3.5 w-3.5" /> Template
-          </Button>
-          <Button variant="gradient" size="sm" className="min-h-10 flex-1 gap-1.5 sm:flex-initial">
-            <Sparkles className="h-3.5 w-3.5" /> Upload Template
-          </Button>
           {onRemove && (
             <button onClick={onRemove} className="min-h-10 px-2 text-xs text-zinc-400 hover:text-rose-500 sm:ml-1" title="Remove task">
               ×
@@ -391,7 +373,7 @@ function DraftCard({
             <option value="">Select center…</option>
             {centers.map((c) => (
               <option key={c._id} value={c._id}>
-                {c.name}
+                {formatCenterName(c.name)}
               </option>
             ))}
           </Select>
@@ -407,19 +389,8 @@ function DraftCard({
           </Select>
         </Field>
 
-        <Field label="Function Tag" required>
-          <Input placeholder="e.g. doctor_visit, daily_followup" value={draft.functionTag} onChange={(e) => onChange({ functionTag: e.target.value })} />
-        </Field>
-        <Field label="Required Inputs (comma separated)">
-          <Input
-            placeholder="e.g. doctorName, clinicPhoto, area, outcome"
-            value={draft.requiredFieldsCsv}
-            onChange={(e) => onChange({ requiredFieldsCsv: e.target.value })}
-          />
-        </Field>
-
         <div className="md:col-span-2">
-          <Field label="Description">
+          <Field label="Description" required>
             <Textarea rows={3} placeholder="Enter task description" value={draft.description} onChange={(e) => onChange({ description: e.target.value })} />
           </Field>
         </div>

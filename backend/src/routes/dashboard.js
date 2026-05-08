@@ -25,14 +25,35 @@ function rangeForScope(scope) {
   if (scope === "all") return {};
   const from = new Date(now.getFullYear(), now.getMonth(), 1);
   const to = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
-  return { createdAt: { $gte: from, $lte: to } };
+  return { dueDate: { $gte: from, $lte: to } };
+}
+
+function parseDateRangeFromQuery(query, scope = "month", field = "dueDate") {
+  const fromRaw = String(query.from || "").trim();
+  const toRaw = String(query.to || "").trim();
+  if (!fromRaw && !toRaw) return rangeForScope(scope);
+
+  const range = {};
+  if (fromRaw) {
+    const from = new Date(`${fromRaw}T00:00:00.000`);
+    if (!Number.isNaN(from.getTime())) {
+      range.$gte = from;
+    }
+  }
+  if (toRaw) {
+    const to = new Date(`${toRaw}T23:59:59.999`);
+    if (!Number.isNaN(to.getTime())) {
+      range.$lte = to;
+    }
+  }
+  return Object.keys(range).length ? { [field]: range } : rangeForScope(scope);
 }
 
 router.get("/summary", async (req, res) => {
   const me = await actor(req);
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const scope = String(req.query.scope || "month");
-  const base = { deletedAt: null, ...rangeForScope(scope) };
+  const base = { deletedAt: null, ...parseDateRangeFromQuery(req.query, scope, "dueDate") };
   if (req.query.centerId) base.centerId = req.query.centerId;
   if (req.query.departmentId) base.departmentId = req.query.departmentId;
   if (!isCeo(req.userRole)) base.centerId = me?.centerId || null;
@@ -112,6 +133,8 @@ router.get("/summary", async (req, res) => {
 
 router.get("/team-performance", async (_req, res) => {
   const me = await actor(_req);
+  const scope = String(_req.query.scope || "month");
+  const taskRange = parseDateRangeFromQuery(_req.query, scope, "dueDate");
   const userFilter = { active: true };
   const visibleIds = await getVisibleUserIds({ actorId: _req.userId, actorRole: _req.userRole, centerId: me?.centerId || null });
   if (!isCeo(_req.userRole)) userFilter.centerId = me?.centerId || null;
@@ -124,22 +147,24 @@ router.get("/team-performance", async (_req, res) => {
   const results = await Promise.all(
     users.map(async (u) => {
       const [total, pending, overdue, completed] = await Promise.all([
-        Task.countDocuments({ assignees: u._id, deletedAt: null, ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
-        Task.countDocuments({ assignees: u._id, deletedAt: null, status: "pending", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
+        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
+        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, status: "pending", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
         Task.countDocuments({
           assignees: u._id,
           deletedAt: null,
+          ...taskRange,
           status: { $ne: "completed" },
           dueDate: { $lt: new Date() },
           ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }),
         }),
-        Task.countDocuments({ assignees: u._id, deletedAt: null, status: "completed", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
+        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, status: "completed", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
       ]);
-      const oneTime = await Task.countDocuments({ assignees: u._id, deletedAt: null, taskType: "one_time", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
-      const daily = await Task.countDocuments({ assignees: u._id, deletedAt: null, taskType: "daily", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
+      const oneTime = await Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, taskType: "one_time", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
+      const daily = await Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, taskType: "daily", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
       const recurring = await Task.countDocuments({
         assignees: u._id,
         deletedAt: null,
+        ...taskRange,
         taskType: { $in: RECURRING },
         ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }),
       });
@@ -214,9 +239,12 @@ router.get("/activity", async (req, res) => {
   const me = await actor(req);
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const limit = Math.min(50, Number(req.query.limit) || 10);
+  const scope = String(req.query.scope || "month");
+  const createdAtFilter = parseDateRangeFromQuery(req.query, scope, "createdAt").createdAt;
+  const activityRange = createdAtFilter ? { createdAt: createdAtFilter } : {};
   let items = [];
   if (isCeo(req.userRole)) {
-    items = await Activity.find().sort({ createdAt: -1 }).limit(limit).lean();
+    items = await Activity.find(activityRange).sort({ createdAt: -1 }).limit(limit).lean();
   } else {
     const taskIds = await Task.find({
       centerId: me?.centerId || null,
@@ -225,7 +253,7 @@ router.get("/activity", async (req, res) => {
       .select("_id")
       .limit(2000)
       .lean();
-    items = await Activity.find({ task: { $in: taskIds.map((t) => t._id) } }).sort({ createdAt: -1 }).limit(limit).lean();
+    items = await Activity.find({ task: { $in: taskIds.map((t) => t._id) }, ...activityRange }).sort({ createdAt: -1 }).limit(limit).lean();
   }
   res.json({ items });
 });

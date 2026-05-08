@@ -720,14 +720,40 @@ export function CoordinatorDailySheet() {
                     </div>
                     {isRoundsExpandable && expandedRoundsCentre && (
                       <div className="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
+                        {!ro && (
+                          <div className="mb-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setRoundsPlanRows((prev) => [...prev, newRoundsPlanRow()])}
+                              className="inline-flex items-center gap-1 rounded-lg border border-brand-300 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                              Add row
+                            </button>
+                          </div>
+                        )}
                         <div className="space-y-2">
                           {roundsPlanRows.map((plan) => (
-                            <div key={`m-r-${plan.id}`} className="grid gap-1">
+                            <div key={`m-r-${plan.id}`} className="space-y-1.5 rounded-md border border-zinc-200/80 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/70">
                               <Input
                                 placeholder="Name"
                                 value={plan.name}
                                 readOnly={ro}
                                 onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, name: e.target.value } : p)))}
+                                className="h-8 text-xs"
+                              />
+                              <Input
+                                type="time"
+                                value={plan.time}
+                                readOnly={ro}
+                                onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, time: e.target.value } : p)))}
+                                className="h-8 text-xs"
+                              />
+                              <Input
+                                placeholder="Room no."
+                                value={plan.roomNo}
+                                readOnly={ro}
+                                onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, roomNo: e.target.value } : p)))}
                                 className="h-8 text-xs"
                               />
                               <Input
@@ -737,6 +763,25 @@ export function CoordinatorDailySheet() {
                                 onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, child: e.target.value } : p)))}
                                 className="h-8 text-xs"
                               />
+                              <Input
+                                placeholder="Activity"
+                                value={plan.activity}
+                                readOnly={ro}
+                                onChange={(e) => setRoundsPlanRows((prev) => prev.map((p) => (p.id === plan.id ? { ...p, activity: e.target.value } : p)))}
+                                className="h-8 text-xs"
+                              />
+                              {!ro && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setRoundsPlanRows((prev) => (prev.length <= 1 ? prev : prev.filter((p) => p.id !== plan.id)))
+                                  }
+                                  className="inline-flex h-8 items-center justify-center rounded-lg border border-zinc-200 px-2 text-[11px] font-semibold text-zinc-500 hover:border-rose-200 hover:text-rose-600 disabled:opacity-30 dark:border-zinc-700"
+                                  disabled={roundsPlanRows.length <= 1}
+                                >
+                                  Remove row
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>

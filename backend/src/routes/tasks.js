@@ -203,8 +203,8 @@ router.post("/", async (req, res, next) => {
     if (!payload.departmentId) return res.status(400).json({ message: "Department is required" });
     const deptOk = await assertAllowedDepartmentId(payload.departmentId);
     if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
-    if (!payload.functionTag || !String(payload.functionTag).trim()) {
-      return res.status(400).json({ message: "Function tag is required" });
+    if (!payload.description || !String(payload.description).trim()) {
+      return res.status(400).json({ message: "Description is required" });
     }
     if (!payload.centerId) return res.status(400).json({ message: "Center is required" });
     if (!isCeo(req.userRole) && String(payload.centerId) !== String(me?.centerId || "")) {

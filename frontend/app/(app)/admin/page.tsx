@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/modal";
 import { Badge, roleTone } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { formatCenterName } from "@/lib/utils";
 import {
   EXECUTOR_KIND_LABELS,
   EXECUTOR_KIND_OPTIONS,
@@ -16,7 +17,6 @@ import {
   type Role,
 } from "@/lib/roles";
 import {
-  CreditCard,
   Filter,
   Info,
   Lock,
@@ -195,9 +195,6 @@ export default function AdminPanelPage() {
             </div>
           </div>
           <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:justify-end">
-            <Button variant="outline" className="w-full gap-2 sm:w-auto">
-              <CreditCard className="h-4 w-4" /> View Plan
-            </Button>
             <Button variant="gradient" className="w-full gap-2 sm:w-auto" onClick={() => setCreateOpen(true)}>
               <UserPlus className="h-4 w-4" /> Create User
             </Button>
@@ -523,7 +520,7 @@ function CreateUserModal({
           <option value="">Select center…</option>
           {centers.map((c) => (
             <option key={c._id} value={c._id}>
-              {c.name}
+              {formatCenterName(c.name)}
             </option>
           ))}
         </Select>
@@ -790,7 +787,7 @@ function EditUserModal({
           <option value="">Select center…</option>
           {centers.map((c) => (
             <option key={c._id} value={c._id}>
-              {c.name}
+              {formatCenterName(c.name)}
             </option>
           ))}
         </Select>

@@ -5,6 +5,7 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
 import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
+import { formatCenterName } from "@/lib/utils";
 import { Activity, ChevronDown, ChevronRight, Star } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -268,7 +269,7 @@ export default function TherapistPerformancePage() {
                 <option value="">All centers</option>
                 {centers.map((c) => (
                   <option key={c._id} value={c._id}>
-                    {c.name}
+                    {formatCenterName(c.name)}
                   </option>
                 ))}
               </Select>

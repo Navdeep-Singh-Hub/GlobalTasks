@@ -6,7 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-remarks-display";
 import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
-import { cn } from "@/lib/utils";
+import { cn, formatCenterName } from "@/lib/utils";
 import { formatRoleLine, isManagement } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -311,7 +311,7 @@ export default function SupervisorPerformancePage() {
               <option value="">{isCeoUser ? "All centers" : "Your center"}</option>
               {centers.map((c) => (
                 <option key={c._id} value={c._id}>
-                  {c.name}
+                  {formatCenterName(c.name)}
                   {c.code ? ` (${c.code})` : ""}
                 </option>
               ))}

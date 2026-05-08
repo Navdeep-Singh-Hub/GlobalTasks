@@ -74,6 +74,22 @@ function nowDateInTz(timeZone = "Asia/Kolkata") {
   return dateInTz(new Date(), timeZone);
 }
 
+function taskDueDateRangeFromQuery(query) {
+  const fromRaw = String(query.from || "").trim();
+  const toRaw = String(query.to || "").trim();
+  if (!fromRaw && !toRaw) return {};
+  const createdAt = {};
+  if (fromRaw) {
+    const from = new Date(`${fromRaw}T00:00:00.000`);
+    if (!Number.isNaN(from.getTime())) createdAt.$gte = from;
+  }
+  if (toRaw) {
+    const to = new Date(`${toRaw}T23:59:59.999`);
+    if (!Number.isNaN(to.getTime())) createdAt.$lte = to;
+  }
+  return Object.keys(createdAt).length ? { dueDate: createdAt } : {};
+}
+
 function canAccessSupervisorSheet(req, meUser, targetSupervisorId) {
   if (isCeo(req.userRole)) return true;
   if (req.userRole === "supervisor") return String(targetSupervisorId || "") === String(req.userId || "");
@@ -264,7 +280,12 @@ router.get("/daily", async (req, res) => {
 router.get("/individual", async (req, res) => {
   const me = await actor(req);
   const userId = req.query.userId || req.userId;
-  const base = { assignees: userId, deletedAt: null, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) };
+  const base = {
+    assignees: userId,
+    deletedAt: null,
+    ...taskDueDateRangeFromQuery(req.query),
+    ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
+  };
   const [completed, pending, overdue, total] = await Promise.all([
     Task.countDocuments({ ...base, status: "completed" }),
     Task.countDocuments({ ...base, status: { $in: ["pending", "in_progress", "awaiting_approval"] } }),
@@ -278,6 +299,7 @@ router.get("/individual", async (req, res) => {
 router.get("/supervisor", async (req, res) => {
   const me = await actor(req);
   const supervisorId = req.query.supervisorId || req.userId;
+  const taskRange = taskDueDateRangeFromQuery(req.query);
   const team = await User.find({
     reportsTo: supervisorId,
     active: true,
@@ -287,20 +309,22 @@ router.get("/supervisor", async (req, res) => {
     .lean();
   const ids = team.map((u) => u._id);
   const [total, completed, pending, overdue] = await Promise.all([
-    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) }),
+    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) }),
     Task.countDocuments({
       assignees: { $in: ids },
       deletedAt: null,
+      ...taskRange,
       status: "completed",
       ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
     }),
     Task.countDocuments({
       assignees: { $in: ids },
       deletedAt: null,
+      ...taskRange,
       status: { $in: ["pending", "in_progress", "awaiting_approval"] },
       ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
     }),
-    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, status: "overdue", ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) }),
+    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, status: "overdue", ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) }),
   ]);
   res.json({ supervisorId, teamCount: team.length, total, completed, pending, overdue, team });
 });
@@ -308,6 +332,7 @@ router.get("/supervisor", async (req, res) => {
 router.get("/coordinator", async (req, res) => {
   const me = await actor(req);
   const coordinatorId = req.query.coordinatorId || req.userId;
+  const taskRange = taskDueDateRangeFromQuery(req.query);
   const supervisors = await User.find({
     role: "supervisor",
     active: true,
@@ -324,7 +349,7 @@ router.get("/coordinator", async (req, res) => {
     .lean();
   const executorIds = executors.map((u) => u._id);
   const byDepartment = await Task.aggregate([
-    { $match: { assignees: { $in: executorIds }, deletedAt: null, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) } },
+    { $match: { assignees: { $in: executorIds }, deletedAt: null, ...taskRange, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) } },
     {
       $group: {
         _id: "$departmentId",
@@ -340,6 +365,7 @@ router.get("/coordinator", async (req, res) => {
 router.get("/centre-head", async (req, res) => {
   const me = await actor(req);
   const centreHeadId = req.query.centreHeadId || req.userId;
+  const taskRange = taskDueDateRangeFromQuery(req.query);
   const centerUsers = await User.find({
     reportsTo: centreHeadId,
     active: true,
@@ -349,7 +375,7 @@ router.get("/centre-head", async (req, res) => {
     .lean();
   const childIds = centerUsers.map((u) => u._id);
   const summary = await Task.aggregate([
-    { $match: { assignees: { $in: childIds }, deletedAt: null, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) } },
+    { $match: { assignees: { $in: childIds }, deletedAt: null, ...taskRange, ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }) } },
     {
       $group: {
         _id: "$centerId",
@@ -513,7 +539,22 @@ router.get("/therapist-sessions", async (req, res) => {
   if (isTherapist) q.therapistId = req.userId;
   if (isSupervisor && String(req.query.scope || "").toLowerCase() === "self") q.therapistId = req.userId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (selectedCenterId) q.centerId = selectedCenterId;
+  else if (selectedCenterId) {
+    // CEO center filter should work even for legacy sessions that may have missing centerId.
+    const centerTherapistIds = await User.find({
+      active: true,
+      centerId: selectedCenterId,
+      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+    }).distinct("_id");
+    if (q.therapistId && typeof q.therapistId === "string") {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else if (q.therapistId && q.therapistId.$in) {
+      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
+      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else {
+      q.therapistId = { $in: centerTherapistIds };
+    }
+  }
   if (req.userRole === "supervisor" && !q.therapistId) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
@@ -670,7 +711,22 @@ router.get("/therapist-performance", async (req, res) => {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (selectedCenterId) q.centerId = selectedCenterId;
+  else if (selectedCenterId) {
+    // For CEO center filtering, prefer therapist membership to support legacy sessions with null centerId.
+    const centerTherapistIds = await User.find({
+      active: true,
+      centerId: selectedCenterId,
+      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+    }).distinct("_id");
+    if (q.therapistId && typeof q.therapistId === "string") {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else if (q.therapistId && q.therapistId.$in) {
+      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
+      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else {
+      q.therapistId = { $in: centerTherapistIds };
+    }
+  }
   if (req.userRole === "supervisor") {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = null;
@@ -692,7 +748,12 @@ router.get("/therapist-performance", async (req, res) => {
         planUpdates15d: { $sum: { $cond: [{ $eq: ["$planUpdated15d", true] }, 1, 0] } },
         newActivities15d: { $sum: { $cond: [{ $eq: ["$newActivity15d", true] }, 1, 0] } },
         monthlyTests: { $sum: { $cond: [{ $eq: ["$monthlyTestDone", true] }, 1, 0] } },
-        avgSupervisorScore: { $avg: "$supervisorScore" },
+        // Only include sessions that were explicitly marked by a supervisor.
+        avgSupervisorScore: {
+          $avg: {
+            $cond: [{ $ne: ["$markedAt", null] }, "$supervisorScore", null],
+          },
+        },
       },
     },
     {
@@ -727,8 +788,10 @@ router.get("/therapist-performance", async (req, res) => {
     .populate("centerId", "name code")
     .lean();
   const summaryById = new Map(summary.map((s) => [String(s._id), s]));
+  const hasDateFilter = Boolean(req.query.from || req.query.to);
+  const hasStaffFilter = Boolean(req.query.therapistId);
 
-  const rows = users
+  let rows = users
     .map((u) => {
       const stat = summaryById.get(String(u._id));
       return {
@@ -744,6 +807,12 @@ router.get("/therapist-performance", async (req, res) => {
       };
     })
     .sort((a, b) => b.sessions - a.sessions || a.therapist.name.localeCompare(b.therapist.name, undefined, { sensitivity: "base" }));
+
+  // Date filtering should narrow rows to active staff in that range unless a specific staff member is selected.
+  if (hasDateFilter && !hasStaffFilter) {
+    rows = rows.filter((r) => Number(r.sessions || 0) > 0);
+  }
+
   const total = rows.length;
   const pagedRows = rows.slice(skip, skip + limit);
   const payload = { rows: pagedRows, total, page, limit };
