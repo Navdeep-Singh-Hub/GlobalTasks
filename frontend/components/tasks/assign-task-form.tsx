@@ -320,11 +320,22 @@ function DraftCard({
   onRemove?: () => void;
 }) {
   const [assigneeOpen, setAssigneeOpen] = useState(false);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
 
   const selectedNames = useMemo(
     () => users.filter((u) => draft.assignees.includes(u._id)).map((u) => u.name),
     [users, draft.assignees]
   );
+  const filteredUsers = useMemo(() => {
+    const q = assigneeSearch.trim().toLowerCase();
+    if (!q) return users;
+    return users.filter((u) => {
+      const name = String(u.name || "").toLowerCase();
+      const email = String(u.email || "").toLowerCase();
+      const role = String(u.role || "").toLowerCase();
+      return name.includes(q) || email.includes(q) || role.includes(q);
+    });
+  }, [users, assigneeSearch]);
 
   const isRecurring = draft.taskType !== "one_time";
   const typeLabel = TYPES.find((t) => t.value === draft.taskType)?.label || "One Time";
@@ -417,7 +428,13 @@ function DraftCard({
           <div className="relative">
             <button
               type="button"
-              onClick={() => setAssigneeOpen((v) => !v)}
+              onClick={() =>
+                setAssigneeOpen((v) => {
+                  const next = !v;
+                  if (!next) setAssigneeSearch("");
+                  return next;
+                })
+              }
               className="flex h-10 w-full items-center justify-between rounded-xl border border-zinc-200 bg-white px-3.5 text-left text-sm shadow-sm hover:border-brand-300 dark:border-zinc-700 dark:bg-zinc-950"
             >
               <span className={selectedNames.length ? "" : "text-zinc-400"}>
@@ -427,7 +444,15 @@ function DraftCard({
             </button>
             {assigneeOpen && (
               <div className="absolute z-20 mt-1.5 max-h-60 w-full overflow-y-auto rounded-xl border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-                {users.map((u) => {
+                <div className="sticky top-0 z-10 mb-1.5 bg-white px-1 pb-1 dark:bg-zinc-900">
+                  <Input
+                    placeholder="Search users..."
+                    value={assigneeSearch}
+                    onChange={(e) => setAssigneeSearch(e.target.value)}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                {filteredUsers.map((u) => {
                   const checked = draft.assignees.includes(u._id);
                   return (
                     <button
@@ -445,6 +470,9 @@ function DraftCard({
                   );
                 })}
                 {users.length === 0 && <div className="p-3 text-xs text-zinc-400">No users available</div>}
+                {users.length > 0 && filteredUsers.length === 0 && (
+                  <div className="p-3 text-xs text-zinc-400">No matching users</div>
+                )}
               </div>
             )}
           </div>

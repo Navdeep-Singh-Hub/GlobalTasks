@@ -360,7 +360,7 @@ export function TaskDetailDrawer({
                             load();
                           }}
                         >
-                          Mark in progress
+                          Not done
                         </Button>
                         <Button
                           size="sm"

@@ -88,10 +88,10 @@ function buildFilter(query, userId, role) {
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
 
   if (search) filter.$or = [{ title: new RegExp(search, "i") }, { description: new RegExp(search, "i") }];
-  if (statusGroup === "open") {
-    filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
-  } else if (status && status !== "all") {
+  if (status && status !== "all") {
     filter.status = status;
+  } else if (statusGroup === "open") {
+    filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
   } else if (!trashOnly) {
     filter.status = { $ne: "cancelled" };
   }

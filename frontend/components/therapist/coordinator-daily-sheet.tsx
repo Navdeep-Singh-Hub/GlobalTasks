@@ -673,7 +673,18 @@ export function CoordinatorDailySheet() {
                 const isRoundsExpandable = row.key === ROUNDS_OF_CENTRE_KEY;
                 return (
                   <div key={`m-${row.key}`} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
-                    <div className="mb-2 text-xs font-semibold text-zinc-800 dark:text-zinc-100">{row.task}</div>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="text-xs font-semibold text-zinc-800 dark:text-zinc-100">{row.task}</div>
+                      {isRoundsExpandable && (
+                        <button
+                          type="button"
+                          onClick={() => setExpandedRoundsCentre((v) => !v)}
+                          className="rounded-md border border-brand-300 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-brand-700 dark:border-brand-700 dark:text-brand-300"
+                        >
+                          {expandedRoundsCentre ? "Hide" : "Open"}
+                        </button>
+                      )}
+                    </div>
                     <div>
                       {row.key === PARENT_MEETING_TASK_KEY ? (
                         <ChildNameListEditor rows={parentMeetingChildren} setRows={setParentMeetingChildren} readOnly={ro} />

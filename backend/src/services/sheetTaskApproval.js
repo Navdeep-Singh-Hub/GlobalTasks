@@ -50,6 +50,20 @@ async function resolveSheetApprover({ kind, assigneeUser }) {
     if (byDept?._id) return byDept;
   }
 
+  // Legacy compatibility: some users still map departments via `department` string.
+  const departmentText = String(assigneeUser.department || "").trim();
+  if (departmentText) {
+    const byLegacyDepartment = await User.findOne({
+      role: "coordinator",
+      active: true,
+      centerId: assigneeUser.centerId,
+      department: departmentText,
+    })
+      .select("_id")
+      .lean();
+    if (byLegacyDepartment?._id) return byLegacyDepartment;
+  }
+
   // Fallback: supervisor's direct manager if it is a coordinator in same center.
   if (assigneeUser.reportsTo) {
     const direct = await User.findOne({
@@ -63,7 +77,51 @@ async function resolveSheetApprover({ kind, assigneeUser }) {
     if (direct?._id) return direct;
   }
 
+  // If there is exactly one active coordinator in this center, route to that coordinator.
+  const centerCoordinators = await User.find({
+    role: "coordinator",
+    active: true,
+    centerId: assigneeUser.centerId,
+  })
+    .select("_id")
+    .limit(2)
+    .lean();
+  if (centerCoordinators.length === 1 && centerCoordinators[0]?._id) return centerCoordinators[0];
+
   return null;
+}
+
+function dueDateFromSheetDate(sheetDate) {
+  // Keep day matching stable in Asia/Kolkata checks.
+  return new Date(`${sheetDate}T12:00:00.000+05:30`);
+}
+
+async function createDailySheetTask({ kind, assigneeUser, approverId, sheetDate }) {
+  const isSupervisor = kind === "supervisor";
+  const title = isSupervisor ? "Fill Daily Supervisor Sheet" : "Fill Daily Coordinator Sheet";
+  const tag = isSupervisor ? TAG_DAILY_SUPERVISOR_SHEET : TAG_DAILY_COORDINATOR_SHEET;
+  const functionTag = isSupervisor ? "daily_supervisor_sheet" : "daily_coordinator_sheet";
+  const description = isSupervisor
+    ? "Complete and submit the daily supervisor sheet."
+    : "Complete and submit the daily coordinator sheet.";
+
+  return Task.create({
+    title,
+    description,
+    taskType: "daily",
+    status: "pending",
+    priority: "high",
+    dueDate: dueDateFromSheetDate(sheetDate),
+    departmentId: assigneeUser?.departmentPrimary || null,
+    centerId: assigneeUser?.centerId || null,
+    functionTag,
+    recurrence: { forever: true, includeSunday: false, weekOff: "Sunday" },
+    assignees: [assigneeUser._id],
+    createdBy: approverId,
+    requiresApproval: true,
+    approvalStatus: "none",
+    tags: [tag, "recurring"],
+  });
 }
 
 async function advanceIfRecurring(task, actorId, actorName) {
@@ -112,6 +170,19 @@ export async function submitDailySheetTaskForApproval({
     return { ok: false, reason: "invalid_assignee" };
   }
 
+  const [actor, assigneeUser] = await Promise.all([
+    User.findById(actorUserId).select("name").lean(),
+    User.findById(assigneeId).select("_id centerId departmentPrimary department reportsTo").lean(),
+  ]);
+  if (!assigneeUser?._id) {
+    return { ok: false, reason: "invalid_assignee" };
+  }
+
+  const approver = await resolveSheetApprover({ kind, assigneeUser });
+  if (!approver?._id && !isCeo(actorRole)) {
+    return { ok: false, reason: "no_approver_found" };
+  }
+
   const openStatuses = ["pending", "in_progress", "overdue", "awaiting_approval"];
 
   const baseFilter = {
@@ -131,9 +202,15 @@ export async function submitDailySheetTaskForApproval({
     task = await Task.findOne({ ...baseFilter }).sort({ dueDate: -1 });
   }
 
-  if (!task) {
-    return { ok: false, reason: "no_matching_task" };
+  if (!task && !isCeo(actorRole)) {
+    task = await createDailySheetTask({
+      kind,
+      assigneeUser,
+      approverId: approver._id,
+      sheetDate,
+    });
   }
+  if (!task) return { ok: false, reason: "no_matching_task" };
 
   const taskDay = dateKeyAsiaKolkata(task.dueDate);
   if (taskDay !== sheetDate) {
@@ -141,15 +218,6 @@ export async function submitDailySheetTaskForApproval({
   }
 
   const prevStatus = task.status;
-  const [actor, assigneeUser] = await Promise.all([
-    User.findById(actorUserId).select("name").lean(),
-    User.findById(assigneeId).select("_id centerId departmentPrimary reportsTo").lean(),
-  ]);
-
-  const approver = await resolveSheetApprover({ kind, assigneeUser });
-  if (!approver?._id && !isCeo(actorRole)) {
-    return { ok: false, reason: "no_approver_found" };
-  }
 
   // Keep approval ownership aligned to hierarchy even for already queued items.
   if (!isCeo(actorRole) && approver?._id) {

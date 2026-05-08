@@ -13,7 +13,15 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 
 type SheetKind = "supervisor" | "coordinator";
 
-type PersonUser = { _id: string; name: string; email: string; role: string; executorKind?: string };
+type PersonUser = {
+  _id: string;
+  name: string;
+  email: string;
+  role: string;
+  executorKind?: string;
+  centerId?: string | { _id?: string; name?: string; code?: string } | null;
+};
+type CenterOption = { _id: string; name: string; code?: string; active?: boolean };
 
 type SupervisorSummaryRow = {
   _id: string;
@@ -74,6 +82,7 @@ function taskLabel(taskKey: string, kind: SheetKind) {
 export default function SupervisorPerformancePage() {
   const { user } = useAuth();
   const canManage = isManagement(user?.role);
+  const isCeoUser = user?.role === "ceo";
   const viewerIsSupervisor = user?.role === "supervisor";
   const viewerIsCoordinator = user?.role === "coordinator";
   const [sheetKind, setSheetKind] = useState<SheetKind>("supervisor");
@@ -84,6 +93,8 @@ export default function SupervisorPerformancePage() {
   const [coordTotal, setCoordTotal] = useState(0);
 
   const [page, setPage] = useState(1);
+  const [centers, setCenters] = useState<CenterOption[]>([]);
+  const [centerId, setCenterId] = useState("");
   const [supervisors, setSupervisors] = useState<PersonUser[]>([]);
   const [coordinators, setCoordinators] = useState<PersonUser[]>([]);
   const [supervisorId, setSupervisorId] = useState("");
@@ -95,9 +106,31 @@ export default function SupervisorPerformancePage() {
     Record<string, { loading: boolean; loaded: boolean; error: string; sheets: DetailSheet[] }>
   >({});
 
+  const myCenterId = useMemo(() => {
+    const cid = user?.centerId;
+    if (!cid) return "";
+    if (typeof cid === "string") return cid;
+    return String(cid._id || "");
+  }, [user?.centerId]);
+
+  useEffect(() => {
+    if (!user || !canManage) return;
+    api<{ centers: CenterOption[] }>("/centers")
+      .then((d) => setCenters(Array.isArray(d.centers) ? d.centers : []))
+      .catch(() => setCenters([]));
+  }, [user, canManage]);
+
+  useEffect(() => {
+    if (!user || !canManage) return;
+    if (!isCeoUser) setCenterId(myCenterId);
+  }, [user, canManage, isCeoUser, myCenterId]);
+
   useEffect(() => {
     if (!user) return;
-    api<{ users: PersonUser[] }>("/users")
+    const qs = new URLSearchParams();
+    const centerFilter = isCeoUser ? centerId : myCenterId;
+    if (centerFilter) qs.set("centerId", centerFilter);
+    api<{ users: PersonUser[] }>(`/users${qs.toString() ? `?${qs.toString()}` : ""}`)
       .then((d) => {
         const list = d.users || [];
         setSupervisors(list.filter((u) => u.role === "supervisor"));
@@ -107,16 +140,22 @@ export default function SupervisorPerformancePage() {
         setSupervisors([]);
         setCoordinators([]);
       });
-  }, [user]);
+  }, [user, isCeoUser, centerId, myCenterId]);
+
+  useEffect(() => {
+    setSupervisorId("");
+    setCoordinatorId("");
+  }, [centerId]);
 
   useEffect(() => {
     setPage(1);
-  }, [supervisorId, coordinatorId, from, to, sheetKind]);
+  }, [supervisorId, coordinatorId, from, to, sheetKind, centerId]);
 
   useEffect(() => {
     if (!user || sheetKind !== "supervisor") return;
     const qs = new URLSearchParams();
     if (supervisorId) qs.set("supervisorId", supervisorId);
+    if (centerId) qs.set("centerId", centerId);
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
     qs.set("page", String(page));
@@ -130,12 +169,13 @@ export default function SupervisorPerformancePage() {
         setSupRows([]);
         setSupTotal(0);
       });
-  }, [user, sheetKind, supervisorId, from, to, page]);
+  }, [user, sheetKind, supervisorId, centerId, from, to, page]);
 
   useEffect(() => {
     if (!user || sheetKind !== "coordinator") return;
     const qs = new URLSearchParams();
     if (coordinatorId) qs.set("coordinatorId", coordinatorId);
+    if (centerId) qs.set("centerId", centerId);
     if (from) qs.set("from", from);
     if (to) qs.set("to", to);
     qs.set("page", String(page));
@@ -149,12 +189,12 @@ export default function SupervisorPerformancePage() {
         setCoordRows([]);
         setCoordTotal(0);
       });
-  }, [user, sheetKind, coordinatorId, from, to, page]);
+  }, [user, sheetKind, coordinatorId, centerId, from, to, page]);
 
   useEffect(() => {
     setExpanded({});
     setDetailsById({});
-  }, [supervisorId, coordinatorId, from, to, page, sheetKind]);
+  }, [supervisorId, coordinatorId, centerId, from, to, page, sheetKind]);
 
   const rows = sheetKind === "supervisor" ? supRows : coordRows;
   const total = sheetKind === "supervisor" ? supTotal : coordTotal;
@@ -264,7 +304,19 @@ export default function SupervisorPerformancePage() {
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="space-y-1">
+            <span className="text-xs font-semibold text-zinc-500">Center</span>
+            <Select value={centerId} onChange={(e) => setCenterId(e.target.value)} disabled={!isCeoUser}>
+              <option value="">{isCeoUser ? "All centers" : "Your center"}</option>
+              {centers.map((c) => (
+                <option key={c._id} value={c._id}>
+                  {c.name}
+                  {c.code ? ` (${c.code})` : ""}
+                </option>
+              ))}
+            </Select>
+          </label>
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">{roleLabel}</span>
             {sheetKind === "supervisor" ? (

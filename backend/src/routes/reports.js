@@ -82,7 +82,32 @@ function canAccessSupervisorSheet(req, meUser, targetSupervisorId) {
 
 /** Legacy docs had no instanceKey; normalize so compound unique index works. */
 async function migrateLegacySupervisorSheets(supervisorId, sheetDate, centerId) {
-  await SupervisorSheet.updateMany(
+  const coll = SupervisorSheet.collection;
+
+  // Normalize legacy records regardless of center value first.
+  await coll.updateMany(
+    {
+      supervisorId,
+      sheetDate,
+      $or: [{ instanceKey: { $exists: false } }, { instanceKey: null }, { instanceKey: "" }],
+    },
+    { $set: { instanceKey: "default" } }
+  );
+
+  // Older records may have null/empty centerId; align them to the supervisor's center.
+  if (centerId) {
+    await coll.updateMany(
+      {
+        supervisorId,
+        sheetDate,
+        $or: [{ centerId: { $exists: false } }, { centerId: null }, { centerId: "" }],
+      },
+      { $set: { centerId } }
+    );
+  }
+
+  // Keep existing behavior for center-scoped normalization.
+  await coll.updateMany(
     {
       supervisorId,
       sheetDate,
@@ -938,9 +963,14 @@ router.get("/coordinator-performance", async (req, res) => {
   const me = await actor(req);
   if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
+  const requestedCenterId = String(req.query.centerId || "").trim();
+  const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
+  if (requestedCenterId && !isCeo(req.userRole) && requestedCenterId !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access coordinators in your center only" });
+  }
 
   const userQuery = { role: "coordinator", active: true };
-  if (!isCeo(req.userRole)) userQuery.centerId = me?.centerId || null;
+  if (effectiveCenterId) userQuery.centerId = effectiveCenterId;
 
   if (req.userRole === "coordinator") {
     userQuery._id = req.userId;
@@ -977,7 +1007,7 @@ router.get("/coordinator-performance", async (req, res) => {
     if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
     if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
   }
-  if (!isCeo(req.userRole)) sheetQuery.centerId = me?.centerId || null;
+  if (effectiveCenterId) sheetQuery.centerId = effectiveCenterId;
 
   const sheets = coordinatorIds.length ? await CoordinatorSheet.find(sheetQuery).lean() : [];
   const byCoordinator = new Map();
@@ -1045,9 +1075,14 @@ router.get("/supervisor-performance", async (req, res) => {
   const me = await actor(req);
   if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
+  const requestedCenterId = String(req.query.centerId || "").trim();
+  const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
+  if (requestedCenterId && !isCeo(req.userRole) && requestedCenterId !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can access supervisors in your center only" });
+  }
 
   const userQuery = { role: "supervisor", active: true };
-  if (!isCeo(req.userRole)) userQuery.centerId = me?.centerId || null;
+  if (effectiveCenterId) userQuery.centerId = effectiveCenterId;
   if (req.userRole === "supervisor") {
     userQuery._id = req.userId;
   } else if (req.query.supervisorId) {
@@ -1069,7 +1104,7 @@ router.get("/supervisor-performance", async (req, res) => {
     if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
     if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
   }
-  if (!isCeo(req.userRole)) sheetQuery.centerId = me?.centerId || null;
+  if (effectiveCenterId) sheetQuery.centerId = effectiveCenterId;
 
   const sheets = supervisorIds.length ? await SupervisorSheet.find(sheetQuery).lean() : [];
   const bySupervisor = new Map();
