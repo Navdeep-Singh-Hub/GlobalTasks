@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { formatRoleLine } from "@/lib/roles";
-import { CalendarDays, ChevronDown, Sparkles } from "lucide-react";
+import { CalendarDays, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import type { CioSummary, CoordinatorReport, CentreHeadReport, IndividualReport, Summary, SupervisorReport, TeamMember, ActivityItem } from "@/components/dashboard/types";

@@ -71,7 +71,6 @@ export function TasksView({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"cards">("cards");
-  const [isMobile, setIsMobile] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(preset.status || "all");
@@ -180,7 +179,6 @@ export function TasksView({
       const mq = window.matchMedia("(max-width: 767px)");
       const sync = () => {
         const mobile = mq.matches;
-        setIsMobile(mobile);
         if (mobile) setView("cards");
       };
       sync();
