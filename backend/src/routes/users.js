@@ -28,6 +28,10 @@ async function actor(req) {
   return req._actor;
 }
 
+function executorNeedsSupervisor(role, executorKind) {
+  return role === "executor" && (executorKind === "therapist" || executorKind === "marketing");
+}
+
 router.get("/", async (req, res) => {
   const { search, role, status, department, centerId, reportsTo } = req.query;
   const me = await actor(req);
@@ -127,16 +131,16 @@ router.post("/", requireManagement, async (req, res, next) => {
       if (existingCentreHead) return res.status(409).json({ message: "This center already has a Centre Head" });
     }
     let reportsToId = reportsTo || null;
-    if (role === "executor" && executorKind === "therapist") {
+    if (executorNeedsSupervisor(role, executorKind)) {
       if (!reportsToId) {
-        return res.status(400).json({ message: "Supervisor is required for therapist executor" });
+        return res.status(400).json({ message: "Supervisor is required for therapist/marketing executor" });
       }
       const supervisor = await User.findById(reportsToId).select("_id role centerId").lean();
       if (!supervisor || supervisor.role !== "supervisor") {
-        return res.status(400).json({ message: "Therapist must be mapped to a supervisor" });
+        return res.status(400).json({ message: "Executor must be mapped to a supervisor" });
       }
       if (String(supervisor.centerId || "") !== String(centerId)) {
-        return res.status(400).json({ message: "Therapist supervisor must belong to the same center" });
+        return res.status(400).json({ message: "Supervisor must belong to the same center" });
       }
     }
     if (role === "user") {
@@ -283,16 +287,16 @@ router.patch("/:id", async (req, res, next) => {
         return res.status(400).json({ message: "Operations lead must belong to the same center" });
       }
     }
-    if (user.role === "executor" && user.executorKind === "therapist") {
+    if (executorNeedsSupervisor(user.role, user.executorKind)) {
       if (!user.reportsTo) {
-        return res.status(400).json({ message: "Supervisor is required for therapist executor" });
+        return res.status(400).json({ message: "Supervisor is required for therapist/marketing executor" });
       }
       const supervisor = await User.findById(user.reportsTo).select("_id role centerId").lean();
       if (!supervisor || supervisor.role !== "supervisor") {
-        return res.status(400).json({ message: "Therapist must be mapped to a supervisor" });
+        return res.status(400).json({ message: "Executor must be mapped to a supervisor" });
       }
       if (String(supervisor.centerId || "") !== String(user.centerId || "")) {
-        return res.status(400).json({ message: "Therapist supervisor must belong to the same center" });
+        return res.status(400).json({ message: "Supervisor must belong to the same center" });
       }
     }
     if (phone !== undefined) user.phone = phone;

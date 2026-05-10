@@ -71,6 +71,10 @@ function formatDepartmentLabel(slug: string) {
     .join(" ");
 }
 
+function executorNeedsSupervisor(role: Role | string, executorKind: string) {
+  return role === "executor" && (executorKind === "therapist" || executorKind === "marketing");
+}
+
 function DepartmentSelect({
   value,
   onChange,
@@ -523,8 +527,8 @@ function CreateUserModal({
       setErr("Password is required.");
       return;
     }
-    if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {
-      setErr("Supervisor is required for therapist.");
+    if (executorNeedsSupervisor(form.role, form.executorKind) && !form.reportsTo) {
+      setErr("Supervisor is required for therapist/marketing.");
       return;
     }
     const reportsTo =
@@ -591,7 +595,7 @@ function CreateUserModal({
               role: r,
               executorKind: r === "executor" ? form.executorKind : "",
               reportsTo:
-                r === "executor" && form.executorKind === "therapist"
+                r === "executor" && executorNeedsSupervisor(r, form.executorKind)
                   ? form.reportsTo
                   : r === "user"
                     ? isOperationsActor && me?._id
@@ -616,7 +620,7 @@ function CreateUserModal({
               setForm((prev) => ({
                 ...prev,
                 executorKind: e.target.value,
-                reportsTo: e.target.value === "therapist" ? prev.reportsTo : "",
+                reportsTo: executorNeedsSupervisor(prev.role, e.target.value) ? prev.reportsTo : "",
               }))
             }
           >
@@ -628,7 +632,7 @@ function CreateUserModal({
             ))}
           </Select>
         )}
-        {form.role === "executor" && form.executorKind === "therapist" && (
+        {executorNeedsSupervisor(form.role, form.executorKind) && (
           <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
             <option value="">Select supervisor…</option>
             {supervisors.map((s) => (
@@ -794,8 +798,8 @@ function EditUserModal({
         setSaving(false);
         return;
       }
-      if (form.role === "executor" && form.executorKind === "therapist" && !form.reportsTo) {
-        setErr("Supervisor is required for therapist.");
+      if (executorNeedsSupervisor(form.role, form.executorKind) && !form.reportsTo) {
+        setErr("Supervisor is required for therapist/marketing.");
         setSaving(false);
         return;
       }
@@ -916,7 +920,7 @@ function EditUserModal({
               role: r,
               executorKind: r === "executor" ? form.executorKind : "",
               reportsTo:
-                r === "executor" && form.executorKind === "therapist"
+                r === "executor" && executorNeedsSupervisor(r, form.executorKind)
                   ? form.reportsTo
                   : r === "user"
                     ? isOperationsActor && me?._id
@@ -941,7 +945,7 @@ function EditUserModal({
               setForm((prev) => ({
                 ...prev,
                 executorKind: e.target.value,
-                reportsTo: e.target.value === "therapist" ? prev.reportsTo : "",
+                reportsTo: executorNeedsSupervisor(prev.role, e.target.value) ? prev.reportsTo : "",
               }))
             }
           >
@@ -953,7 +957,7 @@ function EditUserModal({
             ))}
           </Select>
         )}
-        {form.role === "executor" && form.executorKind === "therapist" && (
+        {executorNeedsSupervisor(form.role, form.executorKind) && (
           <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
             <option value="">Select supervisor…</option>
             {supervisors.map((s) => (

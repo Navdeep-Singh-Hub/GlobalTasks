@@ -131,6 +131,40 @@ function buildFilter(query, userId, role) {
   return filter;
 }
 
+/** Coordinators list/act only on tasks assigned to them or tasks they created (not full hierarchy). */
+function coordinatorTaskScopeClause(userId) {
+  return { $or: [{ assignees: userId }, { createdBy: userId }] };
+}
+
+function mergeCoordinatorScopeIntoTaskFilter(filter, userId) {
+  const clause = coordinatorTaskScopeClause(userId);
+  if (filter.$and && Array.isArray(filter.$and)) {
+    filter.$and.push(clause);
+    return;
+  }
+  if (filter.$or) {
+    filter.$and = [{ $or: filter.$or }, clause];
+    delete filter.$or;
+    return;
+  }
+  filter.$and = [clause];
+}
+
+function coordinatorCanAccessTask(task, userId) {
+  const uid = String(userId);
+  const createdBy = String(task.createdBy?._id || task.createdBy || "");
+  const assignees = (task.assignees || []).map((a) => String(a._id || a));
+  return createdBy === uid || assignees.includes(uid);
+}
+
+function canApproveTask({ userId, userRole, task }) {
+  if (!task) return false;
+  if (String(task.createdBy || "") === String(userId || "")) return true;
+  // Safety fallback for top-level oversight.
+  if (userRole === "ceo") return true;
+  return false;
+}
+
 router.get("/meta", (_req, res) => {
   res.json({ types: TASK_TYPES, statuses: TASK_STATUSES, priorities: TASK_PRIORITIES });
 });
@@ -143,16 +177,20 @@ router.get("/", async (req, res) => {
     const teamIds = await userAssigneeIdsForOperationsLead(req.userId, me?.centerId || null);
     filter.assignees = { $in: teamIds };
   }
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds) {
-    if (filter.assignees && typeof filter.assignees === "string") {
-      if (!visibleIds.includes(String(filter.assignees))) {
-        filter._id = { $in: [] };
+  if (req.userRole === "coordinator") {
+    mergeCoordinatorScopeIntoTaskFilter(filter, req.userId);
+  } else {
+    const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+    if (visibleIds) {
+      if (filter.assignees && typeof filter.assignees === "string") {
+        if (!visibleIds.includes(String(filter.assignees))) {
+          filter._id = { $in: [] };
+        }
+      } else if (filter.assignees?.$in) {
+        filter.assignees.$in = filter.assignees.$in.filter((id) => visibleIds.includes(String(id)));
+      } else {
+        filter.assignees = { $in: visibleIds };
       }
-    } else if (filter.assignees?.$in) {
-      filter.assignees.$in = filter.assignees.$in.filter((id) => visibleIds.includes(String(id)));
-    } else {
-      filter.assignees = { $in: visibleIds };
     }
   }
   const page = Math.max(1, Number(req.query.page) || 1);
@@ -176,7 +214,10 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const me = await actor(req);
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  const visibleIds =
+    req.userRole === "coordinator"
+      ? null
+      : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const task = await Task.findById(req.params.id)
     .populate("assignees", "name email avatarUrl role")
     .populate("createdBy", "name email")
@@ -187,7 +228,11 @@ router.get("/:id", async (req, res) => {
   if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
-  if (visibleIds && req.userRole !== "centre_head") {
+  if (req.userRole === "coordinator") {
+    if (!coordinatorCanAccessTask(task, req.userId)) {
+      return res.status(403).json({ message: "You can only access tasks assigned to you or that you created" });
+    }
+  } else if (visibleIds && req.userRole !== "centre_head") {
     const assignees = (task.assignees || []).map((a) => String(a._id || a));
     if (!assignees.some((id) => visibleIds.includes(id))) {
       return res.status(403).json({ message: "You can access tasks for your hierarchy only" });
@@ -265,13 +310,20 @@ router.post("/", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const me = await actor(req);
-    const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+    const visibleIds =
+      req.userRole === "coordinator"
+        ? null
+        : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
-    if (visibleIds && req.userRole !== "centre_head") {
+    if (req.userRole === "coordinator") {
+      if (!coordinatorCanAccessTask(task, req.userId)) {
+        return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
+      }
+    } else if (visibleIds && req.userRole !== "centre_head") {
       const assignees = (task.assignees || []).map((a) => String(a));
       if (!assignees.some((id) => visibleIds.includes(id))) {
         return res.status(403).json({ message: "You can edit tasks for your hierarchy only" });
@@ -413,8 +465,12 @@ router.post("/bulk", async (req, res) => {
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
   const scope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds) scope.assignees = { $in: visibleIds };
+  const visibleIds =
+    req.userRole === "coordinator"
+      ? null
+      : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (req.userRole === "coordinator") Object.assign(scope, coordinatorTaskScopeClause(req.userId));
+  else if (visibleIds) scope.assignees = { $in: visibleIds };
 
   if (action === "delete") {
     await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: new Date() } });
@@ -579,8 +635,12 @@ router.post("/:id/reject", async (req, res) => {
 router.delete("/:id", requireManagement, async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
+  const visibleIds =
+    req.userRole === "coordinator"
+      ? null
+      : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (req.userRole === "coordinator") Object.assign(where, coordinatorTaskScopeClause(req.userId));
+  else if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
   const task = await Task.findOneAndUpdate(where, { deletedAt: new Date() });
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: true } });
   res.json({ ok: true });
@@ -589,8 +649,12 @@ router.delete("/:id", requireManagement, async (req, res) => {
 router.post("/:id/restore", async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
+  const visibleIds =
+    req.userRole === "coordinator"
+      ? null
+      : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+  if (req.userRole === "coordinator") Object.assign(where, coordinatorTaskScopeClause(req.userId));
+  else if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
   const task = await Task.findOneAndUpdate(where, { deletedAt: null });
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
   res.json({ ok: true });

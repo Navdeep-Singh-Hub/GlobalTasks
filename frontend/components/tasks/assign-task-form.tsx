@@ -18,7 +18,13 @@ import {
 import { useAuth } from "@/contexts/auth-context";
 import { useEffect, useMemo, useState } from "react";
 
-type UserLite = { _id: string; name: string; email: string; role: string };
+type UserLite = {
+  _id: string;
+  name: string;
+  email: string;
+  role: string;
+  centerId?: string | { _id: string; name: string; code?: string } | null;
+};
 type CenterLite = { _id: string; name: string; code: string };
 type DepartmentLite = { _id: string; name: string; code: string };
 
@@ -51,6 +57,31 @@ type Draft = {
   voiceBlob: Blob | null;
   voicePreviewUrl: string | null;
 };
+
+/** Stable center id for comparisons whether API populated `centerId` or left it as an id string. */
+function userCenterIdRef(u: UserLite): string {
+  const c = u.centerId;
+  if (!c) return "";
+  if (typeof c === "object") return String(c._id || "");
+  return String(c);
+}
+
+function userCenterLabel(u: UserLite, centers: CenterLite[]): string {
+  const c = u.centerId;
+  if (c && typeof c === "object" && "name" in c) {
+    const code = c.code ? ` · ${c.code}` : "";
+    return `${formatCenterName(c.name)}${code}`;
+  }
+  const id = typeof c === "string" ? c : "";
+  if (id) {
+    const found = centers.find((x) => String(x._id) === String(id));
+    if (found) {
+      const code = found.code ? ` · ${found.code}` : "";
+      return `${formatCenterName(found.name)}${code}`;
+    }
+  }
+  return "—";
+}
 
 function emptyDraft(id: number): Draft {
   return {
@@ -315,20 +346,27 @@ function DraftCard({
   const [assigneeOpen, setAssigneeOpen] = useState(false);
   const [assigneeSearch, setAssigneeSearch] = useState("");
 
+  const usersInSelectedCenter = useMemo(() => {
+    if (!draft.centerId) return [];
+    return users.filter((u) => userCenterIdRef(u) === String(draft.centerId));
+  }, [users, draft.centerId]);
+
   const selectedNames = useMemo(
     () => users.filter((u) => draft.assignees.includes(u._id)).map((u) => u.name),
     [users, draft.assignees]
   );
   const filteredUsers = useMemo(() => {
     const q = assigneeSearch.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter((u) => {
+    const pool = usersInSelectedCenter;
+    if (!q) return pool;
+    return pool.filter((u) => {
       const name = String(u.name || "").toLowerCase();
       const email = String(u.email || "").toLowerCase();
       const role = String(u.role || "").toLowerCase();
-      return name.includes(q) || email.includes(q) || role.includes(q);
+      const center = userCenterLabel(u, centers).toLowerCase();
+      return name.includes(q) || email.includes(q) || role.includes(q) || center.includes(q);
     });
-  }, [users, assigneeSearch]);
+  }, [usersInSelectedCenter, assigneeSearch, centers]);
 
   const isRecurring = draft.taskType !== "one_time";
   const typeLabel = TYPES.find((t) => t.value === draft.taskType)?.label || "One Time";
@@ -374,7 +412,25 @@ function DraftCard({
         </Field>
 
         <Field label="Center" required>
-          <Select value={draft.centerId} onChange={(e) => onChange({ centerId: e.target.value })}>
+          <Select
+            value={draft.centerId}
+            onChange={(e) => {
+              const nextCenter = e.target.value;
+              if (!nextCenter) {
+                onChange({ centerId: "", assignees: [] });
+                return;
+              }
+              const allowedIds = new Set(
+                users
+                  .filter((u) => userCenterIdRef(u) === String(nextCenter))
+                  .map((u) => u._id)
+              );
+              onChange({
+                centerId: nextCenter,
+                assignees: draft.assignees.filter((id) => allowedIds.has(id)),
+              });
+            }}
+          >
             <option value="">Select center…</option>
             {centers.map((c) => (
               <option key={c._id} value={c._id}>
@@ -428,8 +484,12 @@ function DraftCard({
                     className="h-8 text-xs"
                   />
                 </div>
-                {filteredUsers.map((u) => {
+                {!draft.centerId && (
+                  <div className="p-3 text-xs text-zinc-500">Select a center above to see users for that center.</div>
+                )}
+                {draft.centerId && filteredUsers.map((u) => {
                   const checked = draft.assignees.includes(u._id);
+                  const centerText = userCenterLabel(u, centers);
                   return (
                     <button
                       key={u._id}
@@ -437,16 +497,24 @@ function DraftCard({
                       onClick={() => onToggleAssignee(u._id)}
                       className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-zinc-50 dark:hover:bg-zinc-800 ${checked ? "bg-brand-50 dark:bg-brand-900/30" : ""}`}
                     >
-                      <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? "border-brand-500 bg-brand-500 text-white" : "border-zinc-300"}`}>
+                      <span className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${checked ? "border-brand-500 bg-brand-500 text-white" : "border-zinc-300"}`}>
                         {checked && <CheckCircle2 className="h-3 w-3" />}
                       </span>
-                      <span className="flex-1">{u.name}</span>
-                      <span className="text-[10px] uppercase tracking-wider text-zinc-400">{u.role}</span>
+                      <span className="min-w-0 flex-1 truncate font-medium text-zinc-800 dark:text-zinc-100">{u.name}</span>
+                      <span className="flex max-w-[45%] shrink-0 flex-col items-end gap-0.5 text-right">
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{u.role}</span>
+                        <span className="max-w-full truncate text-[10px] text-zinc-400" title={centerText}>
+                          {centerText}
+                        </span>
+                      </span>
                     </button>
                   );
                 })}
+                {draft.centerId && usersInSelectedCenter.length === 0 && users.length > 0 && (
+                  <div className="p-3 text-xs text-zinc-400">No users in this center.</div>
+                )}
                 {users.length === 0 && <div className="p-3 text-xs text-zinc-400">No users available</div>}
-                {users.length > 0 && filteredUsers.length === 0 && (
+                {draft.centerId && usersInSelectedCenter.length > 0 && filteredUsers.length === 0 && (
                   <div className="p-3 text-xs text-zinc-400">No matching users</div>
                 )}
               </div>
