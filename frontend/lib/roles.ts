@@ -1,15 +1,23 @@
 /** Mirrors backend `constants/roles.js` — organisation hierarchy. */
 
-export const USER_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "executor"] as const;
+export const USER_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "operations", "user", "executor"] as const;
 export type Role = (typeof USER_ROLES)[number];
 
-export const MANAGEMENT_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor"];
+export const MANAGEMENT_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
+
+/** Therapist / supervisor / coordinator performance views (operations excluded). */
+export const CLINICAL_PERFORMANCE_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor"];
+
+/** Field staff — own tasks only (like executor). */
+export const ASSIGNEE_ONLY_ROLES: Role[] = ["user", "executor"];
 
 export const ROLE_LABELS: Record<Role, string> = {
   ceo: "CEO",
   centre_head: "Centre Head",
   coordinator: "Coordinator",
   supervisor: "Supervisor",
+  operations: "Operations",
+  user: "User",
   executor: "Executor",
 };
 
@@ -33,6 +41,19 @@ export function isManagement(role: string | undefined): boolean {
   return !!role && MANAGEMENT_ROLES.includes(role as Role);
 }
 
+export function canViewClinicalPerformance(role: string | undefined): boolean {
+  return !!role && CLINICAL_PERFORMANCE_ROLES.includes(role as Role);
+}
+
+/** Task throughput for operations-mapped `user` role staff. */
+export function canViewUserTeamPerformance(role: string | undefined): boolean {
+  return role === "operations" || isManagement(role);
+}
+
+export function isAssigneeOnly(role: string | undefined): boolean {
+  return !!role && ASSIGNEE_ONLY_ROLES.includes(role as Role);
+}
+
 export function isCeo(role: string | undefined): boolean {
   return role === "ceo";
 }
@@ -50,5 +71,12 @@ export function formatRoleLine(role: string | undefined, executorKind?: string):
 export const NAV_ALL: Role[] = [...USER_ROLES];
 
 export const NAV_MANAGEMENT: Role[] = [...MANAGEMENT_ROLES];
+
+export const NAV_CLINICAL_PERFORMANCE: Role[] = [...CLINICAL_PERFORMANCE_ROLES];
+
+/** General team throughput (all management except operations — they use user-team nav). */
+export const NAV_GENERAL_PERFORMANCE: Role[] = ["ceo", "centre_head", "coordinator", "supervisor"];
+
+export const NAV_USER_TEAM_PERFORMANCE: Role[] = ["operations"];
 
 export const NAV_CEO_ONLY: Role[] = ["ceo"];

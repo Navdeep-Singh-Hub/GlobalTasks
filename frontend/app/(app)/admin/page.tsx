@@ -29,6 +29,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+function operationsLeadOptions(users: Member[]): Member[] {
+  return users.filter((u) => u.role === "operations");
+}
+
 type Member = {
   _id: string;
   name: string;
@@ -435,14 +439,19 @@ function CreateUserModal({
 }) {
   const { user: me } = useAuth();
   const assignable = rolesAssignableBy((me?.role || "executor") as Role);
+  const isOperationsActor = me?.role === "operations";
+  const meCenterId =
+    me?.centerId && typeof me.centerId === "object" && "_id" in me.centerId
+      ? String(me.centerId._id)
+      : String(me?.centerId || "");
   const [form, setForm] = useState({
     name: "",
     email: "",
     phone: "",
-    role: (assignable.includes("executor") ? "executor" : assignable[0]) as Role,
+    role: (isOperationsActor ? "user" : assignable.includes("executor") ? "executor" : assignable[0]) as Role,
     executorKind: "" as string,
-    centerId: "",
-    reportsTo: "",
+    centerId: isOperationsActor ? meCenterId : "",
+    reportsTo: isOperationsActor && me?._id ? me._id : "",
     department: "",
     title: "",
     avatarUrl: "",
@@ -453,16 +462,42 @@ function CreateUserModal({
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [supervisors, setSupervisors] = useState<Member[]>([]);
+  const [operationsLeads, setOperationsLeads] = useState<Member[]>([]);
 
   useEffect(() => {
     if (!form.centerId) {
       setSupervisors([]);
+      setOperationsLeads([]);
       return;
     }
     api<{ users: Member[] }>(`/users?role=supervisor&centerId=${form.centerId}`)
       .then((d) => setSupervisors(d.users))
       .catch(() => setSupervisors([]));
-  }, [form.centerId]);
+    if (isOperationsActor && me?._id) {
+      setOperationsLeads([{ _id: me._id, name: me.name, email: me.email, role: "operations" } as Member]);
+      return;
+    }
+    api<{ users: Member[] }>(`/users?role=operations&centerId=${form.centerId}&status=active`)
+      .then((d) => setOperationsLeads(operationsLeadOptions(d.users)))
+      .catch(() => setOperationsLeads([]));
+  }, [form.centerId, isOperationsActor, me?._id, me?.name, me?.email]);
+
+  useEffect(() => {
+    if (!isOperationsActor || !me?._id) return;
+    setForm((f) => ({
+      ...f,
+      centerId: f.centerId || meCenterId,
+      reportsTo: f.role === "user" ? me._id : f.reportsTo,
+    }));
+  }, [isOperationsActor, me?._id, meCenterId]);
+
+  useEffect(() => {
+    if (form.role !== "user" || isOperationsActor || !operationsLeads.length) return;
+    const valid = new Set(operationsLeads.map((o) => o._id));
+    if (form.reportsTo && !valid.has(form.reportsTo)) {
+      setForm((f) => ({ ...f, reportsTo: "" }));
+    }
+  }, [form.role, form.reportsTo, operationsLeads, isOperationsActor]);
 
   const togglePerm = (p: string) =>
     setForm((f) => ({
@@ -492,6 +527,19 @@ function CreateUserModal({
       setErr("Supervisor is required for therapist.");
       return;
     }
+    const reportsTo =
+      form.role === "user" && isOperationsActor && me?._id ? me._id : form.reportsTo;
+    if (form.role === "user" && !reportsTo) {
+      setErr("Operations lead is required for user role.");
+      return;
+    }
+    if (form.role === "user" && reportsTo && !isOperationsActor) {
+      const lead = operationsLeads.find((o) => o._id === reportsTo);
+      if (!lead) {
+        setErr("Select a valid Operations lead (Operations role only).");
+        return;
+      }
+    }
     setSaving(true);
     setErr("");
     try {
@@ -499,7 +547,7 @@ function CreateUserModal({
         method: "POST",
         body: JSON.stringify({
           ...form,
-          reportsTo: form.reportsTo || null,
+          reportsTo: reportsTo || null,
         }),
       });
       onCreated();
@@ -542,7 +590,16 @@ function CreateUserModal({
               ...form,
               role: r,
               executorKind: r === "executor" ? form.executorKind : "",
-              reportsTo: r === "executor" && form.executorKind === "therapist" ? form.reportsTo : "",
+              reportsTo:
+                r === "executor" && form.executorKind === "therapist"
+                  ? form.reportsTo
+                  : r === "user"
+                    ? isOperationsActor && me?._id
+                      ? me._id
+                      : operationsLeads.some((o) => o._id === form.reportsTo)
+                        ? form.reportsTo
+                        : ""
+                    : "",
             });
           }}
         >
@@ -577,6 +634,22 @@ function CreateUserModal({
             {supervisors.map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {form.role === "user" && isOperationsActor && me && (
+          <div className="flex items-center rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/60 md:col-span-2">
+            <span className="text-zinc-500">Operations lead:</span>
+            <span className="ml-2 font-semibold text-zinc-800 dark:text-zinc-100">{me.name}</span>
+          </div>
+        )}
+        {form.role === "user" && !isOperationsActor && (
+          <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
+            <option value="">Select operations lead…</option>
+            {operationsLeads.map((o) => (
+              <option key={o._id} value={o._id}>
+                {o.name}
               </option>
             ))}
           </Select>
@@ -630,6 +703,7 @@ function EditUserModal({
   const canSetPassword = me?.role === "ceo" || me?.role === "centre_head" || limitedSelfProfile;
   const assignable = rolesAssignableBy((me?.role || "executor") as Role);
   const roleOptions = Array.from(new Set([...assignable, user.role]));
+  const isOperationsActor = me?.role === "operations";
 
   const [form, setForm] = useState({
     name: user.name,
@@ -651,16 +725,33 @@ function EditUserModal({
   const [err, setErr] = useState("");
   const [saving, setSaving] = useState(false);
   const [supervisors, setSupervisors] = useState<Member[]>([]);
+  const [operationsLeads, setOperationsLeads] = useState<Member[]>([]);
 
   useEffect(() => {
     if (!form.centerId) {
       setSupervisors([]);
+      setOperationsLeads([]);
       return;
     }
     api<{ users: Member[] }>(`/users?role=supervisor&centerId=${form.centerId}`)
       .then((d) => setSupervisors(d.users))
       .catch(() => setSupervisors([]));
-  }, [form.centerId]);
+    if (isOperationsActor && me?._id) {
+      setOperationsLeads([{ _id: me._id, name: me.name, email: me.email, role: "operations" } as Member]);
+      return;
+    }
+    api<{ users: Member[] }>(`/users?role=operations&centerId=${form.centerId}&status=active`)
+      .then((d) => setOperationsLeads(operationsLeadOptions(d.users)))
+      .catch(() => setOperationsLeads([]));
+  }, [form.centerId, isOperationsActor, me?._id, me?.name, me?.email]);
+
+  useEffect(() => {
+    if (form.role !== "user" || isOperationsActor || !operationsLeads.length) return;
+    const valid = new Set(operationsLeads.map((o) => o._id));
+    if (form.reportsTo && !valid.has(form.reportsTo)) {
+      setForm((f) => ({ ...f, reportsTo: "" }));
+    }
+  }, [form.role, form.reportsTo, operationsLeads, isOperationsActor]);
 
   const togglePerm = (p: string) =>
     setForm((f) => ({
@@ -708,6 +799,21 @@ function EditUserModal({
         setSaving(false);
         return;
       }
+      const reportsTo =
+        form.role === "user" && isOperationsActor && me?._id ? me._id : form.reportsTo;
+      if (form.role === "user" && !reportsTo) {
+        setErr("Operations lead is required for user role.");
+        setSaving(false);
+        return;
+      }
+      if (form.role === "user" && reportsTo && !isOperationsActor) {
+        const lead = operationsLeads.find((o) => o._id === reportsTo);
+        if (!lead) {
+          setErr("Select a valid Operations lead (Operations role only).");
+          setSaving(false);
+          return;
+        }
+      }
       await api(`/users/${user._id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -721,7 +827,7 @@ function EditUserModal({
           role: form.role,
           executorKind: form.role === "executor" ? form.executorKind : "",
           centerId: form.centerId,
-          reportsTo: form.reportsTo || null,
+          reportsTo: reportsTo || null,
           permissions: form.permissions,
           active: form.active,
         }),
@@ -809,7 +915,16 @@ function EditUserModal({
               ...form,
               role: r,
               executorKind: r === "executor" ? form.executorKind : "",
-              reportsTo: r === "executor" && form.executorKind === "therapist" ? form.reportsTo : "",
+              reportsTo:
+                r === "executor" && form.executorKind === "therapist"
+                  ? form.reportsTo
+                  : r === "user"
+                    ? isOperationsActor && me?._id
+                      ? me._id
+                      : operationsLeads.some((o) => o._id === form.reportsTo)
+                        ? form.reportsTo
+                        : ""
+                    : "",
             });
           }}
         >
@@ -844,6 +959,22 @@ function EditUserModal({
             {supervisors.map((s) => (
               <option key={s._id} value={s._id}>
                 {s.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        {form.role === "user" && isOperationsActor && me && (
+          <div className="flex items-center rounded-xl border border-zinc-200 bg-zinc-50/80 px-3 py-2.5 text-sm dark:border-zinc-700 dark:bg-zinc-900/60 md:col-span-2">
+            <span className="text-zinc-500">Operations lead:</span>
+            <span className="ml-2 font-semibold text-zinc-800 dark:text-zinc-100">{me.name}</span>
+          </div>
+        )}
+        {form.role === "user" && !isOperationsActor && (
+          <Select value={form.reportsTo} onChange={(e) => setForm({ ...form, reportsTo: e.target.value })}>
+            <option value="">Select operations lead…</option>
+            {operationsLeads.map((o) => (
+              <option key={o._id} value={o._id}>
+                {o.name}
               </option>
             ))}
           </Select>
@@ -898,3 +1029,4 @@ function EditUserModal({
     </Modal>
   );
 }
+

@@ -71,6 +71,8 @@ export function SupervisorDashboard({
   activity,
   plannedTotal,
   completedTotal,
+  teamMemberLabel = "Team members",
+  teamMemberHint = "Direct reports",
 }: {
   supervisor: SupervisorReport | null;
   summary: Summary | null;
@@ -78,11 +80,13 @@ export function SupervisorDashboard({
   activity: ActivityItem[];
   plannedTotal: number;
   completedTotal: number;
+  teamMemberLabel?: string;
+  teamMemberHint?: string;
 }) {
   return (
     <>
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <KpiCard label="Team members" value={supervisor?.teamCount ?? "—"} icon={Users} tone="brand" hint="Direct reports" />
+        <KpiCard label={teamMemberLabel} value={supervisor?.teamCount ?? "—"} icon={Users} tone="brand" hint={teamMemberHint} />
         <KpiCard label="Team task status" value={supervisor?.total ?? "—"} icon={ListChecks} tone="violet" hint="Total team tasks" />
         <KpiCard label="Pending approvals" value={summary?.cards.pending ?? "—"} icon={Timer} tone="amber" hint="Awaiting progression" />
         <KpiCard label="Delayed tasks" value={supervisor?.overdue ?? "—"} icon={TriangleAlert} tone="rose" hint="Team overdue count" />

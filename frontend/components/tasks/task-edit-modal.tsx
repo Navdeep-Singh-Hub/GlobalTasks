@@ -5,6 +5,7 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
 import { formatCenterName } from "@/lib/utils";
+import { useAuth } from "@/contexts/auth-context";
 import { useCallback, useEffect, useState } from "react";
 
 type TaskPayload = {
@@ -25,7 +26,7 @@ type TaskPayload = {
   project?: { _id: string; name?: string } | string | null;
 };
 
-type UserOpt = { _id: string; name: string };
+type UserOpt = { _id: string; name: string; role?: string };
 type ProjectOpt = { _id: string; name: string };
 type CenterOpt = { _id: string; name: string };
 type DepartmentOpt = { _id: string; name: string };
@@ -49,6 +50,7 @@ export function TaskEditModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { user } = useAuth();
   const [meta, setMeta] = useState<{ types: string[]; statuses: string[]; priorities: string[] } | null>(null);
   const [users, setUsers] = useState<UserOpt[]>([]);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
@@ -81,9 +83,10 @@ export function TaskEditModal({
     setLoading(true);
     setErr("");
     try {
+      const userQs = user?.role === "operations" ? "?assignable=true&status=active" : "";
       const [taskRes, usersRes, projectsRes, metaRes, centersRes, departmentsRes] = await Promise.all([
         api<{ task: TaskPayload }>(`/tasks/${taskId}`),
-        api<{ users: UserOpt[] }>("/users").catch(() => ({ users: [] as UserOpt[] })),
+        api<{ users: UserOpt[] }>(`/users${userQs}`).catch(() => ({ users: [] as UserOpt[] })),
         api<{ projects: ProjectOpt[] }>("/projects").catch(() => ({ projects: [] as ProjectOpt[] })),
         api<{ types: string[]; statuses: string[]; priorities: string[] }>("/tasks/meta"),
         api<{ centers: CenterOpt[] }>("/centers").catch(() => ({ centers: [] as CenterOpt[] })),
@@ -121,7 +124,7 @@ export function TaskEditModal({
     } finally {
       setLoading(false);
     }
-  }, [taskId, open]);
+  }, [taskId, open, user?.role]);
 
   useEffect(() => {
     if (open && taskId) void load();

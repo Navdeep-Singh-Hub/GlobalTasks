@@ -21,6 +21,17 @@ async function getDirectChildrenMap(parentIds, centerId) {
   return rows;
 }
 
+/** Users an operations lead may assign tasks to (same center). */
+export async function getOperationsAssignableIds(actorId, centerId) {
+  if (!centerId) return [];
+  const [mappedUsers, supervisors, therapists] = await Promise.all([
+    User.find({ centerId, role: "user", active: true, reportsTo: actorId }).distinct("_id"),
+    User.find({ centerId, role: "supervisor", active: true }).distinct("_id"),
+    User.find({ centerId, role: "executor", executorKind: "therapist", active: true }).distinct("_id"),
+  ]);
+  return [...new Set([...mappedUsers, ...supervisors, ...therapists].map((id) => String(id)))];
+}
+
 export async function getDescendantUsers(rootUserId, centerId) {
   const root = oid(rootUserId);
   if (!root) return [];
@@ -51,7 +62,7 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
   if (actorRole === "coordinator") {
     const ids = await User.find({
       centerId,
-      role: { $in: ["supervisor", "executor"] },
+      role: { $in: ["supervisor", "executor", "operations", "user"] },
       active: true,
     }).distinct("_id");
     return [String(actorId), ...ids.map(String)];
@@ -60,11 +71,15 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
     const descendants = await getDescendantUsers(actorId, centerId);
     return [String(actorId), ...descendants.map((u) => String(u._id))];
   }
+  if (actorRole === "operations") {
+    const ids = await getOperationsAssignableIds(actorId, centerId);
+    return [String(actorId), ...ids];
+  }
   return [String(actorId)];
 }
 
 export async function getAssignableAssigneeIds({ actorId, actorRole, centerId }) {
-  if (actorRole === "executor") return [];
+  if (actorRole === "executor" || actorRole === "user") return [];
   if (actorRole === "ceo") {
     const ids = await User.find({ role: { $ne: "ceo" }, active: true }).distinct("_id");
     return ids.map(String);
@@ -72,7 +87,7 @@ export async function getAssignableAssigneeIds({ actorId, actorRole, centerId })
   if (actorRole === "centre_head") {
     const ids = await User.find({
       centerId,
-      role: { $in: ["coordinator", "supervisor", "executor"] },
+      role: { $in: ["coordinator", "supervisor", "operations", "user", "executor"] },
       active: true,
     }).distinct("_id");
     return ids.map(String);
@@ -80,10 +95,13 @@ export async function getAssignableAssigneeIds({ actorId, actorRole, centerId })
   if (actorRole === "coordinator") {
     const ids = await User.find({
       centerId,
-      role: { $in: ["supervisor", "executor"] },
+      role: { $in: ["supervisor", "operations", "user", "executor"] },
       active: true,
     }).distinct("_id");
     return ids.map(String);
+  }
+  if (actorRole === "operations") {
+    return getOperationsAssignableIds(actorId, centerId);
   }
 
   const descendants = await getDescendantUsers(actorId, centerId);

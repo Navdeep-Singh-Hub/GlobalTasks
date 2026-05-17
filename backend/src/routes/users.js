@@ -13,7 +13,7 @@ import { TaskTemplate } from "../models/TaskTemplate.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
-import { getVisibleUserIds } from "../services/hierarchy.js";
+import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -46,8 +46,36 @@ router.get("/", async (req, res) => {
   if (status === "active") q.active = true;
   if (status === "inactive") q.active = false;
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds) q._id = { $in: visibleIds };
+  const operationsAssigneePicker =
+    req.userRole === "operations" && String(req.query.assignable || "").toLowerCase() === "true";
+  const operationsUserListing =
+    req.userRole === "operations" && !operationsAssigneePicker && (!role || role === "all" || role === "user");
+  const operationsLeadPicker = role === "operations";
+  const operationsAdminRoleLookup =
+    req.userRole === "operations" && role && role !== "all" && role !== "user" && !operationsAssigneePicker;
+  if (operationsAssigneePicker) {
+    const ids = await getAssignableAssigneeIds({
+      actorId: req.userId,
+      actorRole: req.userRole,
+      centerId: me?.centerId || null,
+    });
+    q._id = { $in: ids };
+  } else if (operationsUserListing) {
+    // Admin user list: mapped user-role staff only.
+    q.role = "user";
+    q.reportsTo = req.userId;
+  } else if (operationsLeadPicker) {
+    // Admin "Operations lead" dropdown — strictly operations role in scope.
+    q.role = "operations";
+    q.active = true;
+    if (req.userRole === "operations") q._id = req.userId;
+  } else if (operationsAdminRoleLookup) {
+    // Admin form: e.g. supervisor list for therapist mapping in same center.
+    q.role = role;
+  } else {
+    const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+    if (visibleIds) q._id = { $in: visibleIds };
+  }
 
   const users = await User.find(q)
     .populate("centerId", "name code")
@@ -109,6 +137,21 @@ router.post("/", requireManagement, async (req, res, next) => {
       }
       if (String(supervisor.centerId || "") !== String(centerId)) {
         return res.status(400).json({ message: "Therapist supervisor must belong to the same center" });
+      }
+    }
+    if (role === "user") {
+      if (req.userRole === "operations") {
+        reportsToId = req.userId;
+      }
+      if (!reportsToId) {
+        return res.status(400).json({ message: "Operations lead is required for user role" });
+      }
+      const operationsLead = await User.findById(reportsToId).select("_id role centerId").lean();
+      if (!operationsLead || operationsLead.role !== "operations") {
+        return res.status(400).json({ message: "User must be mapped to an operations lead" });
+      }
+      if (String(operationsLead.centerId || "") !== String(centerId)) {
+        return res.status(400).json({ message: "Operations lead must belong to the same center" });
       }
     }
     const existing = await User.findOne({ email: email.toLowerCase() });
@@ -225,6 +268,21 @@ router.patch("/:id", async (req, res, next) => {
       if (existingCentreHead) return res.status(409).json({ message: "This center already has a Centre Head" });
     }
     if (reportsTo !== undefined) user.reportsTo = reportsTo || null;
+    if ((role ?? user.role) === "user" && req.userRole === "operations") {
+      user.reportsTo = req.userId;
+    }
+    if (user.role === "user") {
+      if (!user.reportsTo) {
+        return res.status(400).json({ message: "Operations lead is required for user role" });
+      }
+      const operationsLead = await User.findById(user.reportsTo).select("_id role centerId").lean();
+      if (!operationsLead || operationsLead.role !== "operations") {
+        return res.status(400).json({ message: "User must be mapped to an operations lead" });
+      }
+      if (String(operationsLead.centerId || "") !== String(user.centerId || "")) {
+        return res.status(400).json({ message: "Operations lead must belong to the same center" });
+      }
+    }
     if (user.role === "executor" && user.executorKind === "therapist") {
       if (!user.reportsTo) {
         return res.status(400).json({ message: "Supervisor is required for therapist executor" });

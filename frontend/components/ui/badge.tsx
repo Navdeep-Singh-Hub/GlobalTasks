@@ -85,6 +85,8 @@ export function roleTone(r?: string): Tone {
       return "violet";
     case "supervisor":
       return "sky";
+    case "operations":
+      return "brand";
     case "executor":
     case "user":
       return "emerald";

@@ -1,11 +1,10 @@
 /** Organisation hierarchy (1 = highest). */
-export const USER_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "executor"];
+export const USER_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "operations", "user", "executor"];
 
 /** Maps legacy DB / JWT values to current roles. */
 export const LEGACY_ROLE_MAP = {
   admin: "ceo",
   manager: "centre_head",
-  user: "executor",
 };
 
 export const ROLE_RANK = {
@@ -13,11 +12,19 @@ export const ROLE_RANK = {
   centre_head: 2,
   coordinator: 3,
   supervisor: 4,
-  executor: 5,
+  operations: 5,
+  user: 6,
+  executor: 7,
 };
 
-/** Everyone except executors: can use team task views, assign work, masters, recycle, etc. */
-export const MANAGEMENT_ROLES = ["ceo", "centre_head", "coordinator", "supervisor"];
+/** Field staff: only their own assigned tasks (no team assign / management nav). */
+export const ASSIGNEE_ONLY_ROLES = ["user", "executor"];
+
+/** Everyone except field staff: team task views, assign work, masters, recycle, etc. */
+export const MANAGEMENT_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
+
+/** Therapist / supervisor / coordinator sheet performance (operations excluded). */
+export const CLINICAL_PERFORMANCE_ROLES = ["ceo", "centre_head", "coordinator", "supervisor"];
 
 export const EXECUTOR_KINDS = ["", "therapist", "doctor", "reception", "marketing", "support", "security"];
 
@@ -30,6 +37,14 @@ export function normalizeRole(role) {
 
 export function isManagement(role) {
   return MANAGEMENT_ROLES.includes(normalizeRole(role));
+}
+
+export function canViewClinicalPerformance(role) {
+  return CLINICAL_PERFORMANCE_ROLES.includes(normalizeRole(role));
+}
+
+export function isAssigneeOnly(role) {
+  return ASSIGNEE_ONLY_ROLES.includes(normalizeRole(role));
 }
 
 export function isCeo(role) {

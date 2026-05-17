@@ -7,7 +7,7 @@ import { TherapistSession } from "../models/TherapistSession.js";
 import { SupervisorSheet } from "../models/SupervisorSheet.js";
 import { CoordinatorSheet } from "../models/CoordinatorSheet.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
-import { isCeo, isManagement } from "../constants/roles.js";
+import { canViewClinicalPerformance, isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
@@ -29,6 +29,55 @@ function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
   const page = Math.max(1, Number(query.page) || 1);
   const limit = Math.min(maxLimit, Math.max(1, Number(query.limit) || defaultLimit));
   return { page, limit, skip: (page - 1) * limit };
+}
+
+/** Shared filter for therapist session list / count (patient session log + performance). */
+async function buildTherapistSessionsFilter(req, me) {
+  const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
+  const isSupervisor = req.userRole === "supervisor" && me?.role === "supervisor";
+  const selfScope =
+    isTherapist || (isSupervisor && String(req.query.scope || "").toLowerCase() === "self");
+
+  const q = {};
+  if (req.query.from || req.query.to) {
+    q.sessionDate = {};
+    if (req.query.from) q.sessionDate.$gte = String(req.query.from);
+    if (req.query.to) q.sessionDate.$lte = String(req.query.to);
+  }
+  if (req.query.therapistId) q.therapistId = req.query.therapistId;
+  if (isTherapist) q.therapistId = req.userId;
+  if (isSupervisor && selfScope) q.therapistId = req.userId;
+
+  const selectedCenterId = String(req.query.centerId || "").trim();
+  // Own session log: therapistId is enough; do not exclude legacy/mismatched center rows.
+  if (!selfScope && !isCeo(req.userRole)) q.centerId = me?.centerId || null;
+  else if (isCeo(req.userRole) && selectedCenterId) {
+    const centerTherapistIds = await User.find({
+      active: true,
+      centerId: selectedCenterId,
+      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+    }).distinct("_id");
+    if (q.therapistId && typeof q.therapistId === "string") {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else if (q.therapistId && q.therapistId.$in) {
+      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
+      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else {
+      q.therapistId = { $in: centerTherapistIds };
+    }
+  }
+
+  if (req.userRole === "supervisor" && !q.therapistId) {
+    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
+    if (!therapistIds.length) q.therapistId = { $in: [] };
+    else if (q.therapistId) {
+      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else {
+      q.therapistId = { $in: therapistIds };
+    }
+  }
+
+  return { q, selfScope, isTherapist, isSupervisor };
 }
 
 function perfCacheKey(req, me) {
@@ -329,6 +378,35 @@ router.get("/supervisor", async (req, res) => {
   res.json({ supervisorId, teamCount: team.length, total, completed, pending, overdue, team });
 });
 
+router.get("/operations", async (req, res) => {
+  const me = await actor(req);
+  const operationsId = req.userRole === "operations" ? req.userId : req.query.operationsId || req.userId;
+  const taskRange = taskDueDateRangeFromQuery(req.query);
+  const team = await User.find({
+    role: "user",
+    active: true,
+    reportsTo: operationsId,
+    ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
+  })
+    .select("_id name role")
+    .lean();
+  const ids = team.map((u) => u._id);
+  const centerScope = isCeo(req.userRole) ? {} : { centerId: me?.centerId || null };
+  const [total, completed, pending, overdue] = await Promise.all([
+    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, ...centerScope }),
+    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, status: "completed", ...centerScope }),
+    Task.countDocuments({
+      assignees: { $in: ids },
+      deletedAt: null,
+      ...taskRange,
+      status: { $in: ["pending", "in_progress", "awaiting_approval"] },
+      ...centerScope,
+    }),
+    Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, status: "overdue", ...centerScope }),
+  ]);
+  res.json({ operationsId, teamCount: team.length, total, completed, pending, overdue, team });
+});
+
 router.get("/coordinator", async (req, res) => {
   const me = await actor(req);
   const coordinatorId = req.query.coordinatorId || req.userId;
@@ -523,59 +601,25 @@ router.get("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
   const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
   const isSupervisor = req.userRole === "supervisor" && me?.role === "supervisor";
-  if (!isManagement(req.userRole) && !isTherapist && !isSupervisor) {
+  const isMgmtViewer = isManagement(req.userRole) && canViewClinicalPerformance(req.userRole);
+  if (!isMgmtViewer && !isTherapist && !isSupervisor) {
     return res.status(403).json({ message: "Only therapists or supervisors can view sessions" });
   }
-  const { page, limit, skip } = parsePageLimit(req.query, 30, 100);
 
-  const q = {};
-  const selectedCenterId = String(req.query.centerId || "").trim();
-  if (req.query.from || req.query.to) {
-    q.sessionDate = {};
-    if (req.query.from) q.sessionDate.$gte = String(req.query.from);
-    if (req.query.to) q.sessionDate.$lte = String(req.query.to);
-  }
-  if (req.query.therapistId) q.therapistId = req.query.therapistId;
-  if (isTherapist) q.therapistId = req.userId;
-  if (isSupervisor && String(req.query.scope || "").toLowerCase() === "self") q.therapistId = req.userId;
-  if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (selectedCenterId) {
-    // CEO center filter should work even for legacy sessions that may have missing centerId.
-    const centerTherapistIds = await User.find({
-      active: true,
-      centerId: selectedCenterId,
-      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
-    }).distinct("_id");
-    if (q.therapistId && typeof q.therapistId === "string") {
-      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else if (q.therapistId && q.therapistId.$in) {
-      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
-      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
-    } else {
-      q.therapistId = { $in: centerTherapistIds };
-    }
-  }
-  if (req.userRole === "supervisor" && !q.therapistId) {
-    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
-    if (!therapistIds.length) q.therapistId = { $in: [] };
-    else if (q.therapistId) {
-      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else {
-      q.therapistId = { $in: therapistIds };
-    }
-  }
+  const { q } = await buildTherapistSessionsFilter(req, me);
+  const countOnly = ["1", "true", "yes"].includes(String(req.query.countOnly || "").toLowerCase());
+  const total = await TherapistSession.countDocuments(q);
+  if (countOnly) return res.json({ total });
 
-  const [sessions, total] = await Promise.all([
-    TherapistSession.find(q)
-      .populate("therapistId", "name email role executorKind")
-      .populate("centerId", "name code")
-      .populate("markedBy", "name role")
-      .sort({ sessionDate: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    TherapistSession.countDocuments(q),
-  ]);
+  const { page, limit, skip } = parsePageLimit(req.query, 100, 10000);
+  const sessions = await TherapistSession.find(q)
+    .populate("therapistId", "name email role executorKind")
+    .populate("centerId", "name code")
+    .populate("markedBy", "name role")
+    .sort({ sessionDate: -1, createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
   res.json({ sessions, total, page, limit });
 });
 
@@ -695,7 +739,7 @@ router.delete("/therapist-sessions/:id", async (req, res) => {
 
 router.get("/therapist-performance", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) {
+  if (!canViewClinicalPerformance(req.userRole)) {
     return res.status(403).json({ message: "Insufficient permissions" });
   }
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
@@ -1030,7 +1074,7 @@ router.put("/coordinator-sheet", async (req, res) => {
 
 router.get("/coordinator-performance", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
   const requestedCenterId = String(req.query.centerId || "").trim();
   const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
@@ -1119,7 +1163,7 @@ router.get("/coordinator-performance", async (req, res) => {
 
 router.get("/coordinator-performance/details", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const coordinatorId = String(req.query.coordinatorId || "");
   if (!coordinatorId) return res.status(400).json({ message: "coordinatorId is required" });
   const gate = await assertCoordinatorPerformanceAccess(req, me, coordinatorId);
@@ -1142,7 +1186,7 @@ router.get("/coordinator-performance/details", async (req, res) => {
 
 router.get("/supervisor-performance", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
   const requestedCenterId = String(req.query.centerId || "").trim();
   const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
@@ -1216,7 +1260,7 @@ router.get("/supervisor-performance", async (req, res) => {
 
 router.get("/supervisor-performance/details", async (req, res) => {
   const me = await actor(req);
-  if (!isManagement(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
+  if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const supervisorId = String(req.query.supervisorId || "");
   if (!supervisorId) return res.status(400).json({ message: "supervisorId is required" });
   const { page, limit, skip } = parsePageLimit(req.query, 20, 100);

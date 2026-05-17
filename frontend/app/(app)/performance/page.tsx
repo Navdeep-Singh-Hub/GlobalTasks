@@ -1,8 +1,9 @@
 "use client";
 
 import { TeamThroughputChart } from "@/components/performance/team-throughput-chart";
+import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
-import { formatRoleLine } from "@/lib/roles";
+import { canViewUserTeamPerformance, formatRoleLine } from "@/lib/roles";
 import { Zap } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
@@ -22,10 +23,24 @@ type Member = {
 };
 
 export default function PerformancePage() {
+  const { user } = useAuth();
   const [data, setData] = useState<Member[]>([]);
+  const isOperationsView = user?.role === "operations";
+  const canView = canViewUserTeamPerformance(user?.role);
+
   useEffect(() => {
+    if (!canView) return;
     api<{ members: Member[] }>("/dashboard/team-performance").then((d) => setData(d.members)).catch(() => setData([]));
-  }, []);
+  }, [canView]);
+
+  if (user && !canView) {
+    return (
+      <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+        <h1 className="text-xl font-bold">Performance</h1>
+        <p className="mt-2 text-sm text-zinc-500">You do not have access to team performance views.</p>
+      </div>
+    );
+  }
 
   const chartData = data.map((m) => ({
     name: m.user.name.split(" ")[0],
@@ -40,8 +55,14 @@ export default function PerformancePage() {
         <div className="chip border border-zinc-200 bg-white text-zinc-500">
           <Zap className="h-3 w-3" /> Analytics
         </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Performance</h1>
-        <p className="mt-1 text-sm text-zinc-500">Throughput and reliability of each team member.</p>
+        <h1 className="mt-3 text-2xl font-bold tracking-tight">
+          {isOperationsView ? "User team performance" : "Performance"}
+        </h1>
+        <p className="mt-1 text-sm text-zinc-500">
+          {isOperationsView
+            ? "Task completion for users mapped to you as operations lead."
+            : "Throughput and reliability of each team member."}
+        </p>
       </div>
 
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">

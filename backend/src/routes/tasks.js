@@ -2,12 +2,17 @@ import { Router } from "express";
 import { Task, TASK_TYPES, TASK_STATUSES, TASK_PRIORITIES } from "../models/Task.js";
 import { User } from "../models/User.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
-import { isManagement, isCeo } from "../constants/roles.js";
+import { isManagement, isCeo, isAssigneeOnly } from "../constants/roles.js";
 import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
 import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
+import {
+  canApproveTaskForUser,
+  resolveOperationsLeadApproverId,
+  userAssigneeIdsForOperationsLead,
+} from "../services/taskApprovalRouting.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
 
@@ -115,23 +120,15 @@ function buildFilter(query, userId, role) {
     }
   }
 
-  if (approval === "true" && role !== "ceo") {
-    // Non-CEO users should only review approvals for tasks they assigned.
+  if (approval === "true" && role !== "ceo" && role !== "operations") {
+    // Non-CEO users review approvals for tasks they assigned (user-role tasks route to operations lead).
     filter.createdBy = userId;
   }
 
   if (myTasks === "true") filter.assignees = userId;
-  else if (role === "executor") filter.assignees = userId;
+  else if (isAssigneeOnly(role)) filter.assignees = userId;
 
   return filter;
-}
-
-function canApproveTask({ userId, userRole, task }) {
-  if (!task) return false;
-  if (String(task.createdBy || "") === String(userId || "")) return true;
-  // Safety fallback for top-level oversight.
-  if (userRole === "ceo") return true;
-  return false;
 }
 
 router.get("/meta", (_req, res) => {
@@ -142,6 +139,10 @@ router.get("/", async (req, res) => {
   const me = await actor(req);
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
+  if (req.query.approval === "true" && req.userRole === "operations") {
+    const teamIds = await userAssigneeIdsForOperationsLead(req.userId, me?.centerId || null);
+    filter.assignees = { $in: teamIds };
+  }
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   if (visibleIds) {
     if (filter.assignees && typeof filter.assignees === "string") {
@@ -198,7 +199,7 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res, next) => {
   try {
     const me = await actor(req);
-    const payload = { ...req.body, createdBy: req.userId };
+    const payload = { ...req.body };
     if (!payload.title || !payload.dueDate) return res.status(400).json({ message: "Title and due date required" });
     if (!payload.departmentId) return res.status(400).json({ message: "Department is required" });
     const deptOk = await assertAllowedDepartmentId(payload.departmentId);
@@ -226,6 +227,8 @@ router.post("/", async (req, res, next) => {
     if (!payload.requiredInputsSchema) payload.requiredInputsSchema = { type: "object", properties: {}, required: [] };
     if (!payload.inputPayload) payload.inputPayload = {};
     if (payload.requiresApproval) payload.approvalStatus = "none";
+    const opsApprover = await resolveOperationsLeadApproverId(payload.assignees, payload.centerId);
+    payload.createdBy = opsApprover || req.userId;
     const task = await Task.create(payload);
     await TaskEvent.create({
       taskId: task._id,
@@ -361,6 +364,8 @@ router.patch("/:id", async (req, res, next) => {
       task.approvalStatus = "pending";
       task.requiresApproval = true;
       task.completedAt = null;
+      const opsApprover = await resolveOperationsLeadApproverId(task.assignees, task.centerId);
+      if (opsApprover) task.createdBy = opsApprover;
     } else if (task.status === "completed" && !task.completedAt) {
       task.completedAt = new Date();
     }
@@ -426,7 +431,7 @@ router.post("/bulk", async (req, res) => {
   }
 
   if (status === "completed") {
-    if (req.userRole === "executor") {
+    if (isAssigneeOnly(req.userRole)) {
       const meUser = await User.findById(req.userId).select("_id weekOffDays").lean();
       if (isWeekOffToday(meUser?.weekOffDays || [])) {
         return res.status(400).json({ message: "You cannot mark tasks on your week off day." });
@@ -440,6 +445,8 @@ router.post("/bulk", async (req, res) => {
         t.approvalStatus = "pending";
         t.requiresApproval = true;
         t.completedAt = null;
+        const opsApprover = await resolveOperationsLeadApproverId(t.assignees, t.centerId);
+        if (opsApprover) t.createdBy = opsApprover;
       } else {
         t.status = "completed";
         if (!t.completedAt) t.completedAt = new Date();
@@ -480,7 +487,7 @@ router.post("/:id/approve", async (req, res) => {
   if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can approve tasks from your center only" });
   }
-  if (!canApproveTask({ userId: req.userId, userRole: req.userRole, task })) {
+  if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
     return res.status(403).json({ message: "Only the assigner can approve this task" });
   }
   task.approvalStatus = "approved";
@@ -518,7 +525,7 @@ router.post("/:id/reject", async (req, res) => {
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can reject tasks from your center only" });
     }
-    if (!canApproveTask({ userId: req.userId, userRole: req.userRole, task })) {
+    if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
       return res.status(403).json({ message: "Only the assigner can reject this task" });
     }
 

@@ -3,11 +3,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { formatRoleLine } from "@/lib/roles";
+import { formatRoleLine, isAssigneeOnly } from "@/lib/roles";
 import { CalendarDays, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { Input } from "@/components/ui/input";
 import type { CioSummary, CoordinatorReport, CentreHeadReport, IndividualReport, Summary, SupervisorReport, TeamMember, ActivityItem } from "@/components/dashboard/types";
+
+type OperationsReport = SupervisorReport;
 import { CioDashboard, CoordinatorDashboard, CentreHeadDashboard, ExecutorDashboard, SupervisorDashboard } from "@/components/dashboard/role-sections";
 
 export default function DashboardPage() {
@@ -25,6 +27,7 @@ export default function DashboardPage() {
   const [activity, setActivity] = useState<ActivityItem[]>([]);
   const [individual, setIndividual] = useState<IndividualReport | null>(null);
   const [supervisor, setSupervisor] = useState<SupervisorReport | null>(null);
+  const [operations, setOperations] = useState<OperationsReport | null>(null);
   const [coordinator, setCoordinator] = useState<CoordinatorReport | null>(null);
   const [centreHead, setCentreHead] = useState<CentreHeadReport | null>(null);
   const [ceo, setCeo] = useState<CioSummary | null>(null);
@@ -41,13 +44,14 @@ export default function DashboardPage() {
     api<{ members: TeamMember[] }>(`/dashboard/team-performance?${query}`).then((d) => setTeam(d.members)).catch(() => setTeam([]));
     api<{ items: ActivityItem[] }>(`/dashboard/activity?limit=10&${query}`).then((d) => setActivity(d.items)).catch(() => setActivity([]));
     if (!user) return;
-    if (user.role === "executor") api<IndividualReport>(`/reports/individual?${query}`).then(setIndividual).catch(() => setIndividual(null));
+    if (isAssigneeOnly(user.role)) api<IndividualReport>(`/reports/individual?${query}`).then(setIndividual).catch(() => setIndividual(null));
     if (user.role === "supervisor") api<SupervisorReport>(`/reports/supervisor?${query}`).then(setSupervisor).catch(() => setSupervisor(null));
+    if (user.role === "operations") api<OperationsReport>(`/reports/operations?${query}`).then(setOperations).catch(() => setOperations(null));
     if (user.role === "coordinator") api<CoordinatorReport>(`/reports/coordinator?${query}`).then(setCoordinator).catch(() => setCoordinator(null));
     if (user.role === "centre_head") api<CentreHeadReport>(`/reports/centre-head?${query}`).then(setCentreHead).catch(() => setCentreHead(null));
     if (user.role === "ceo") api<CioSummary>(`/reports/ceo-summary?${query}`).then(setCeo).catch(() => setCeo(null));
 
-    const showMyPending = user.role === "executor" || user.role === "coordinator" || user.role === "centre_head";
+    const showMyPending = isAssigneeOnly(user.role) || user.role === "coordinator" || user.role === "centre_head";
     if (!showMyPending) return;
     void Promise.all([
       api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=false&page=1&limit=1"),
@@ -156,7 +160,7 @@ export default function DashboardPage() {
         </div>
       </section>
 
-      {(user?.role === "executor" || user?.role === "coordinator" || user?.role === "centre_head") && (
+      {(isAssigneeOnly(user?.role) || user?.role === "coordinator" || user?.role === "centre_head") && (
         <section className="grid gap-3 sm:grid-cols-2">
           <Link
             href="/pending-single"
@@ -177,7 +181,19 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {user?.role === "executor" && <ExecutorDashboard individual={individual} summary={summary} activity={activity} />}
+      {isAssigneeOnly(user?.role) && <ExecutorDashboard individual={individual} summary={summary} activity={activity} />}
+      {user?.role === "operations" && (
+        <SupervisorDashboard
+          supervisor={operations}
+          summary={summary}
+          team={team}
+          activity={activity}
+          plannedTotal={plannedTotal}
+          completedTotal={completedTotal}
+          teamMemberLabel="Mapped users"
+          teamMemberHint="User-role staff reporting to you"
+        />
+      )}
       {user?.role === "supervisor" && (
         <SupervisorDashboard
           supervisor={supervisor}

@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-remarks-display";
 import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
 import { cn, formatCenterName } from "@/lib/utils";
-import { formatRoleLine, isManagement } from "@/lib/roles";
+import { canViewClinicalPerformance, formatRoleLine } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
@@ -81,7 +81,7 @@ function taskLabel(taskKey: string, kind: SheetKind) {
 
 export default function SupervisorPerformancePage() {
   const { user } = useAuth();
-  const canManage = isManagement(user?.role);
+  const canManage = canViewClinicalPerformance(user?.role);
   const isCeoUser = user?.role === "ceo";
   const viewerIsSupervisor = user?.role === "supervisor";
   const viewerIsCoordinator = user?.role === "coordinator";

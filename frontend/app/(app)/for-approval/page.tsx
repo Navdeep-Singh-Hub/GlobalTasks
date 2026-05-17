@@ -5,7 +5,7 @@ export default function ForApprovalPage() {
   return (
     <TasksView
       title="For Approval"
-      subtitle="Tasks that require assigner approval before being marked completed."
+      subtitle="Tasks submitted by your team for completion approval (user-role tasks go to their operations lead)."
       preset={{ approval: true }}
     />
   );

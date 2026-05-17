@@ -15,6 +15,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 import { useEffect, useMemo, useState } from "react";
 
 type UserLite = { _id: string; name: string; email: string; role: string };
@@ -141,6 +142,7 @@ async function uploadVoice(blob: Blob): Promise<string> {
 }
 
 export function AssignTaskForm() {
+  const { user } = useAuth();
   const [drafts, setDrafts] = useState<Draft[]>([emptyDraft(1)]);
   const [users, setUsers] = useState<UserLite[]>([]);
   const [centers, setCenters] = useState<CenterLite[]>([]);
@@ -149,10 +151,13 @@ export function AssignTaskForm() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
-    api<{ users: UserLite[] }>("/users").then((d) => setUsers(d.users)).catch(() => setUsers([]));
+    const qs = user?.role === "operations" ? "?assignable=true&status=active" : "";
+    api<{ users: UserLite[] }>(`/users${qs}`)
+      .then((d) => setUsers(d.users || []))
+      .catch(() => setUsers([]));
     api<{ centers: CenterLite[] }>("/centers").then((d) => setCenters(d.centers)).catch(() => setCenters([]));
     api<{ departments: DepartmentLite[] }>("/departments").then((d) => setDepartments(d.departments)).catch(() => setDepartments([]));
-  }, []);
+  }, [user?.role]);
 
   const createdCount = drafts.length;
 

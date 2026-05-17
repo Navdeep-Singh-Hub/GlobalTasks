@@ -3,7 +3,7 @@
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import type { Role } from "@/lib/roles";
-import { NAV_ALL, NAV_MANAGEMENT, formatRoleLine } from "@/lib/roles";
+import { NAV_ALL, NAV_CLINICAL_PERFORMANCE, NAV_GENERAL_PERFORMANCE, NAV_MANAGEMENT, NAV_USER_TEAM_PERFORMANCE, formatRoleLine } from "@/lib/roles";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -45,9 +45,10 @@ const NAV: NavItem[] = [
   { href: "/for-approval", label: "For Approval", icon: ClipboardCheck, roles: NAV_MANAGEMENT },
   { href: "/task-shift", label: "Task Shift", icon: Shuffle, roles: NAV_MANAGEMENT },
   { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },
-  { href: "/performance", label: "Performance", icon: Zap, roles: NAV_MANAGEMENT },
-  { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_MANAGEMENT },
-  { href: "/supervisor-performance", label: "Supervisor & coordinator sheets", icon: Activity, roles: NAV_MANAGEMENT },
+  { href: "/performance", label: "Performance", icon: Zap, roles: NAV_GENERAL_PERFORMANCE },
+  { href: "/performance", label: "User team performance", icon: Zap, roles: NAV_USER_TEAM_PERFORMANCE },
+  { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_CLINICAL_PERFORMANCE },
+  { href: "/supervisor-performance", label: "Supervisor & coordinator sheets", icon: Activity, roles: NAV_CLINICAL_PERFORMANCE },
   { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: NAV_MANAGEMENT },
   { href: "/settings", label: "Settings", icon: Settings, roles: NAV_ALL },
 ];

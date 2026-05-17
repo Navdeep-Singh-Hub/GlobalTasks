@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
-import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
+import { canViewClinicalPerformance, formatRoleLine, isCeo } from "@/lib/roles";
 import { formatCenterName } from "@/lib/utils";
 import { Activity, ChevronDown, ChevronRight, Star } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -75,7 +75,7 @@ export default function TherapistPerformancePage() {
   const [expandedSessionTherapists, setExpandedSessionTherapists] = useState<Record<string, boolean>>({});
   const [sessionByTherapist, setSessionByTherapist] = useState<Record<string, TherapistSessionState>>({});
 
-  const canManage = isManagement(user?.role);
+  const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
   const canFilterCenter = isCeo(user?.role);
 

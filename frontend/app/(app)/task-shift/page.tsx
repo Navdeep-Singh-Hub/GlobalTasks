@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Badge, cadenceTone, priorityTone } from "@/components/ui/badge";
+import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import { Shuffle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -11,6 +12,7 @@ type Task = { _id: string; title: string; taskType: string; priority: string; as
 type User = { _id: string; name: string };
 
 export default function TaskShiftPage() {
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -22,8 +24,9 @@ export default function TaskShiftPage() {
 
   useEffect(() => {
     load();
-    api<{ users: User[] }>("/users").then((d) => setUsers(d.users)).catch(() => setUsers([]));
-  }, [load]);
+    const qs = user?.role === "operations" ? "?assignable=true&status=active" : "";
+    api<{ users: User[] }>(`/users${qs}`).then((d) => setUsers(d.users)).catch(() => setUsers([]));
+  }, [load, user?.role]);
 
   const shift = async () => {
     if (!target || !selected.length) return;

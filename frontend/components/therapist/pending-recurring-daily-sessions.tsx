@@ -166,7 +166,9 @@ export function PendingRecurringDailySessions() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [uploadedSessions, setUploadedSessions] = useState<UploadedSession[]>([]);
+  const [uploadedSessionsTotal, setUploadedSessionsTotal] = useState(0);
   const [loadingUploaded, setLoadingUploaded] = useState(false);
+  const UPLOADED_LIST_LIMIT = 10000;
   const [refreshToken, setRefreshToken] = useState(0);
   const [viewFrom, setViewFrom] = useState(todayIsoDate);
   const [viewTo, setViewTo] = useState(todayIsoDate);
@@ -197,17 +199,48 @@ export function PendingRecurringDailySessions() {
 
   useEffect(() => {
     if (!user) return;
+    let cancelled = false;
     const qs = new URLSearchParams();
-    qs.set("limit", "100");
+    qs.set("page", "1");
+    qs.set("limit", String(UPLOADED_LIST_LIMIT));
     if (viewFrom) qs.set("from", viewFrom);
     if (viewTo) qs.set("to", viewTo);
     if (isSupervisor) qs.set("scope", "self");
+    // Cache buster so the browser / any intermediary never serves a stale response.
+    qs.set("_", String(Date.now()));
+    const base = qs.toString();
     setLoadingUploaded(true);
-    api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${qs.toString()}`)
-      .then((d) => setUploadedSessions(Array.isArray(d.sessions) ? d.sessions : []))
-      .catch(() => setUploadedSessions([]))
-      .finally(() => setLoadingUploaded(false));
+    Promise.all([
+      api<{ total: number }>(`/reports/therapist-sessions?${base}&countOnly=1`, { cache: "no-store" }),
+      api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, { cache: "no-store" }),
+    ])
+      .then(([countRes, listRes]) => {
+        if (cancelled) return;
+        const batch = Array.isArray(listRes.sessions) ? listRes.sessions : [];
+        const total =
+          typeof countRes.total === "number" && !Number.isNaN(countRes.total)
+            ? countRes.total
+            : typeof listRes.total === "number" && !Number.isNaN(listRes.total)
+              ? listRes.total
+              : batch.length;
+        setUploadedSessionsTotal(total);
+        setUploadedSessions(batch);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setUploadedSessions([]);
+          setUploadedSessionsTotal(0);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingUploaded(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [user, isSupervisor, viewFrom, viewTo, refreshToken]);
+
+  const hasMoreUploaded = uploadedSessionsTotal > uploadedSessions.length;
 
   const addRow = useCallback(() => setRows((r) => [...r, newRow()]), []);
   const removeRow = useCallback((id: string) => {
@@ -1155,7 +1188,9 @@ export function PendingRecurringDailySessions() {
             <p className="mt-1 text-[11px] text-zinc-500">
               {loadingUploaded
                 ? "Loading session count..."
-                : `${uploadedSessions.length} session${uploadedSessions.length === 1 ? "" : "s"} in selected range`}
+                : hasMoreUploaded
+                  ? `Showing ${uploadedSessions.length} of ${uploadedSessionsTotal} sessions in selected range (reload with a narrower date range to see all rows)`
+                  : `${uploadedSessionsTotal} session${uploadedSessionsTotal === 1 ? "" : "s"} in selected range`}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -1414,6 +1449,12 @@ export function PendingRecurringDailySessions() {
               );
             })}
           </div>
+          {hasMoreUploaded ? (
+            <p className="mt-3 text-center text-xs text-amber-700 dark:text-amber-400">
+              {uploadedSessionsTotal - uploadedSessions.length} more session
+              {uploadedSessionsTotal - uploadedSessions.length === 1 ? "" : "s"} in this range are not shown. Narrow the date range to view them all.
+            </p>
+          ) : null}
           </>
         ) : (
           <p className="mt-3 text-xs text-zinc-500">
@@ -1424,3 +1465,4 @@ export function PendingRecurringDailySessions() {
     </section>
   );
 }
+
