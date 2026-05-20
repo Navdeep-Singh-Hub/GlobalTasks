@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
+import { normalizeLegacySupervisorSheetEntries } from "@/lib/supervisor-sheet-remarks";
 import { isCeo } from "@/lib/roles";
 import { ClipboardCheck, Eye, Pencil, Plus, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
@@ -50,7 +51,8 @@ type SupervisorSheetTask = {
 
 const OBSERVE_THERAPY_TASK_KEY = "observe-therapy-sessions";
 const ALTERNATIVE_SESSION_TASK_KEY = "alternative-session";
-const THERAPY_PLAN_CHECK_TASK_KEY = "therapy-plan-check";
+/** Therapy plan detail rows belong on “Supervisor round notes complete”. */
+const THERAPY_PLAN_ROWS_TASK_KEY = "supervisor-round-notes";
 
 type TherapyPlanRow = {
   id: string;
@@ -63,8 +65,8 @@ type TherapyPlanRow = {
 
 const SUPERVISOR_SHEET_TASKS: SupervisorSheetTask[] = [
   { key: "observe-therapy-sessions", task: "Observe therapy sessions" },
-  { key: "supervisor-round-notes", task: "Therapy plan check" },
-  { key: "therapy-plan-check", task: "Supervisor round notes complete" },
+  { key: "therapy-plan-check", task: "Therapy plan check" },
+  { key: "supervisor-round-notes", task: "Supervisor round notes complete" },
   { key: "ensure-therapy-notes-complete", task: "Ensure therapy notes are complete" },
   { key: "team-utilized-free-session", task: "How team utilized free session of therapist" },
   { key: "alternative-session", task: "Alternative session" },
@@ -129,7 +131,7 @@ function supportsSessionNames(taskKey: string) {
 }
 
 function supportsTherapyPlanRows(taskKey: string) {
-  return taskKey === THERAPY_PLAN_CHECK_TASK_KEY;
+  return taskKey === THERAPY_PLAN_ROWS_TASK_KEY;
 }
 
 function supportsDateRange() {
@@ -347,7 +349,9 @@ export function PendingRecurringDailySessions() {
       `/reports/supervisor-sheet?${qs.toString()}`
     )
       .then((d) => {
-        const entries = Array.isArray(d.entries) ? d.entries : [];
+        const entries = normalizeLegacySupervisorSheetEntries(
+          Array.isArray(d.entries) ? d.entries : []
+        );
         setSupervisorSheetLabelDraft(typeof d.label === "string" ? d.label : "");
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};

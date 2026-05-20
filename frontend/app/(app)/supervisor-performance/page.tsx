@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-remarks-display";
 import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
+import { normalizeLegacySupervisorSheetEntries } from "@/lib/supervisor-sheet-remarks";
 import { cn, formatCenterName } from "@/lib/utils";
 import { canViewClinicalPerformance, formatRoleLine } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight } from "lucide-react";
@@ -219,7 +220,11 @@ export default function SupervisorPerformancePage() {
       qs.set("page", "1");
       qs.set("limit", "200");
       const d = await api<{ sheets: DetailSheet[] }>(`/reports/supervisor-performance/details?${qs.toString()}`);
-      setDetailsById((prev) => ({ ...prev, [id]: { loading: false, loaded: true, error: "", sheets: d.sheets || [] } }));
+      const sheets = (d.sheets || []).map((s) => ({
+        ...s,
+        entries: normalizeLegacySupervisorSheetEntries(s.entries || []),
+      }));
+      setDetailsById((prev) => ({ ...prev, [id]: { loading: false, loaded: true, error: "", sheets } }));
     } catch (e) {
       setDetailsById((prev) => ({
         ...prev,

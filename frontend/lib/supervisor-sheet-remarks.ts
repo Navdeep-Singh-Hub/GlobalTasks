@@ -70,3 +70,55 @@ export function structuredSupervisorRemarksIsEmpty(p: StructuredSupervisorRemark
 export function filterFilledTherapyRows(rows: SupervisorTherapyPlanRow[] | undefined): SupervisorTherapyPlanRow[] {
   return (rows || []).filter(rowHasTherapyData);
 }
+
+export type SupervisorSheetEntry = {
+  taskKey: string;
+  status?: "yes" | "no" | string;
+  remarks?: string;
+};
+
+const THERAPY_PLAN_CHECK_KEY = "therapy-plan-check";
+const SUPERVISOR_ROUND_NOTES_KEY = "supervisor-round-notes";
+
+function entryHasTherapyPlanRows(remarks: string): boolean {
+  const parsed = parseStructuredSupervisorRemarks(remarks);
+  if (!parsed) return false;
+  return filterFilledTherapyRows(parsed.therapyPlanRows).length > 0;
+}
+
+/**
+ * Older supervisor fill UI swapped labels for therapy-plan-check vs supervisor-round-notes,
+ * so therapy plan rows were stored on the wrong taskKey. Swap those two entries when detected.
+ */
+export function normalizeLegacySupervisorSheetEntries(entries: SupervisorSheetEntry[]): SupervisorSheetEntry[] {
+  if (!entries.length) return entries;
+
+  const list = entries.map((e) => ({
+    taskKey: String(e.taskKey || "").trim(),
+    status: String(e.status || "").toLowerCase() === "yes" ? ("yes" as const) : ("no" as const),
+    remarks: String(e.remarks ?? ""),
+  }));
+
+  const iTpc = list.findIndex((e) => e.taskKey === THERAPY_PLAN_CHECK_KEY);
+  if (iTpc < 0) return list;
+
+  const tpc = list[iTpc];
+  const iSrn = list.findIndex((e) => e.taskKey === SUPERVISOR_ROUND_NOTES_KEY);
+  const srn =
+    iSrn >= 0
+      ? list[iSrn]
+      : { taskKey: SUPERVISOR_ROUND_NOTES_KEY, status: "no" as const, remarks: "" };
+
+  const therapyOnTpc = entryHasTherapyPlanRows(tpc.remarks);
+  const therapyOnSrn = entryHasTherapyPlanRows(srn.remarks);
+  if (!therapyOnTpc || therapyOnSrn) return list;
+
+  list[iTpc] = { taskKey: THERAPY_PLAN_CHECK_KEY, status: srn.status, remarks: srn.remarks };
+  if (iSrn >= 0) {
+    list[iSrn] = { taskKey: SUPERVISOR_ROUND_NOTES_KEY, status: tpc.status, remarks: tpc.remarks };
+  } else {
+    list.push({ taskKey: SUPERVISOR_ROUND_NOTES_KEY, status: tpc.status, remarks: tpc.remarks });
+  }
+
+  return list;
+}
