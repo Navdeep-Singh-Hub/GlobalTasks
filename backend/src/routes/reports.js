@@ -11,7 +11,6 @@ import { canViewClinicalPerformance, isCeo, isManagement } from "../constants/ro
 import { getDescendantUsers } from "../services/hierarchy.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
-import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetEntries.js";
 
 const router = Router();
 router.use(authRequired);
@@ -916,8 +915,7 @@ router.get("/supervisor-sheet", async (req, res) => {
   const instanceKey = String(req.query.instanceKey || "default");
   const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
   const sheet = await SupervisorSheet.findOne(where).lean();
-  const entries = normalizeLegacySupervisorSheetEntries(sheet?.entries || []);
-  res.json({ sheetDate, instanceKey, entries, label: sheet?.label || "" });
+  res.json({ sheetDate, instanceKey, entries: sheet?.entries || [], label: sheet?.label || "" });
 });
 
 router.put("/supervisor-sheet", async (req, res) => {
@@ -1286,11 +1284,7 @@ router.get("/supervisor-performance/details", async (req, res) => {
     SupervisorSheet.find(q).sort({ sheetDate: -1, instanceKey: 1, updatedAt: -1 }).skip(skip).limit(limit).lean(),
     SupervisorSheet.countDocuments(q),
   ]);
-  const normalizedSheets = sheets.map((s) => ({
-    ...s,
-    entries: normalizeLegacySupervisorSheetEntries(s.entries || []),
-  }));
-  res.json({ sheets: normalizedSheets, total, page, limit });
+  res.json({ sheets, total, page, limit });
 });
 
 export default router;
