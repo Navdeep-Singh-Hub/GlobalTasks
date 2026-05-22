@@ -576,22 +576,7 @@ export function CoordinatorDailySheet() {
                           <tr className="border-t border-zinc-100 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/30">
                             <td colSpan={4} className="px-2 py-2">
                               <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-950">
-                                <div className="mb-2 flex items-center justify-between">
-                                  <div className="text-xs font-semibold text-zinc-600 dark:text-zinc-300">Rounds details</div>
-                                  {!ro && (
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        setRoundsPlanRows((prev) => [...prev, newRoundsPlanRow()])
-                                      }
-                                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
-                                      aria-label="Add row"
-                                      title="Add row"
-                                    >
-                                      <Plus className="h-4 w-4" />
-                                    </button>
-                                  )}
-                                </div>
+                                <div className="mb-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">Rounds details</div>
                                 <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_120px_minmax(0,1fr)_minmax(0,1fr)]">
                                   <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Name</div>
                                   <div className="text-[10px] font-bold uppercase tracking-wide text-zinc-500">Time</div>
@@ -658,6 +643,16 @@ export function CoordinatorDailySheet() {
                                     </Fragment>
                                   ))}
                                 </div>
+                                {!ro && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setRoundsPlanRows((prev) => [...prev, newRoundsPlanRow()])}
+                                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-brand-300 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                                  >
+                                    <Plus className="h-3.5 w-3.5" />
+                                    Add row
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -720,18 +715,6 @@ export function CoordinatorDailySheet() {
                     </div>
                     {isRoundsExpandable && expandedRoundsCentre && (
                       <div className="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
-                        {!ro && (
-                          <div className="mb-2 flex justify-end">
-                            <button
-                              type="button"
-                              onClick={() => setRoundsPlanRows((prev) => [...prev, newRoundsPlanRow()])}
-                              className="inline-flex items-center gap-1 rounded-lg border border-brand-300 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                              Add row
-                            </button>
-                          </div>
-                        )}
                         <div className="space-y-2">
                           {roundsPlanRows.map((plan) => (
                             <div key={`m-r-${plan.id}`} className="space-y-1.5 rounded-md border border-zinc-200/80 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950/70">
@@ -785,6 +768,16 @@ export function CoordinatorDailySheet() {
                             </div>
                           ))}
                         </div>
+                        {!ro && (
+                          <button
+                            type="button"
+                            onClick={() => setRoundsPlanRows((prev) => [...prev, newRoundsPlanRow()])}
+                            className="mt-2 inline-flex items-center gap-1 rounded-lg border border-brand-300 px-2 py-1 text-[11px] font-semibold text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add row
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
