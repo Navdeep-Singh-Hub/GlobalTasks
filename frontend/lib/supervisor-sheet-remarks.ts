@@ -73,6 +73,12 @@ export function filterFilledTherapyRows(rows: SupervisorTherapyPlanRow[] | undef
 
 export type SupervisorSheetEntry = {
   taskKey: string;
+  status: "yes" | "no";
+  remarks: string;
+};
+
+export type SupervisorSheetEntryInput = {
+  taskKey: string;
   status?: "yes" | "no" | string;
   remarks?: string;
 };
@@ -87,8 +93,8 @@ function entryHasTherapyPlanRows(remarks: string): boolean {
 }
 
 /** Fix rows saved while fill-form labels for therapy-plan-check / supervisor-round-notes were swapped. */
-export function normalizeLegacySupervisorSheetEntries(entries: SupervisorSheetEntry[]): SupervisorSheetEntry[] {
-  if (!entries.length) return entries;
+export function normalizeLegacySupervisorSheetEntries(entries: SupervisorSheetEntryInput[]): SupervisorSheetEntry[] {
+  if (!entries.length) return [];
 
   const list = entries.map((e) => ({
     taskKey: String(e.taskKey || "").trim(),
