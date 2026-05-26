@@ -18,8 +18,8 @@ const MAX_MESSAGE_CHARS = 4000;
 const MAX_TEMPLATE_DETAILS_CHARS = 900;
 const ENABLED = String(process.env.WHATSAPP_TASK_ASSIGN_ENABLED ?? "true").toLowerCase() === "true";
 const TASK_TEMPLATE = String(process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "").trim();
-const MORNING_TEMPLATE = String(process.env.WHATSAPP_TEMPLATE_MORNING || "globaltasks_morning_digest_v1").trim();
 const TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en").trim();
+const TEMPLATE_PARAM_MAX = 350;
 
 function appBaseUrl() {
   const raw = (process.env.CLIENT_ORIGIN || process.env.CLIENT_ORIGINS || "http://localhost:3000")
@@ -155,18 +155,31 @@ function buildTaskDetailLines(task, assignedByName) {
   return lines;
 }
 
-/** {{2}} for globaltasks_task_assigned_v1 — one detail per line. */
+/** Legacy 2-variable template: all details in {{2}} with line breaks. */
 function buildMultilineTaskSummary(task, assignedByName) {
   return sanitizeTemplateParam(buildTaskDetailLines(task, assignedByName).join("\n"), MAX_TEMPLATE_DETAILS_CHARS);
 }
 
-/** Morning digest fallback: approved template only allows single-line {{2}}. */
-function buildSingleLineTaskSummary(task, assignedByName) {
-  return sanitizeTemplateParam(buildTaskDetailLines(task, assignedByName).join(" · "), MAX_TEMPLATE_DETAILS_CHARS);
-}
-
-function buildTaskAssignedTemplateParams({ task, assigneeName, assignedByName }) {
-  return [assigneeName || "there", buildMultilineTaskSummary(task, assignedByName)];
+/**
+ * Preferred Meta template: one variable per line (globaltasks_task_assigned_v1).
+ * {{1}} name, {{2}} assigner, {{3}} title, {{4}} description, … {{10}} link
+ */
+function buildSplitTaskTemplateParams({ task, assigneeName, assignedByName }) {
+  const desc = String(task.description || "").trim() || "-";
+  const dept = task.departmentId?.name || task.departmentId?.code || "-";
+  const center = task.centerId?.name || task.centerId?.code || "-";
+  return [
+    assigneeName || "there",
+    assignedByName || "Admin",
+    task.title,
+    desc,
+    formatLabel(task.taskType),
+    formatLabel(task.priority),
+    formatDueDate(task.dueDate),
+    dept,
+    center,
+    `${appBaseUrl()}/pending-single`,
+  ].map((p) => sanitizeTemplateParam(p, TEMPLATE_PARAM_MAX));
 }
 
 async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
@@ -180,30 +193,26 @@ async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
     assigneeName: user.name,
     assignedByName,
   });
-  const templateParams = buildTaskAssignedTemplateParams({
+  const splitParams = buildSplitTaskTemplateParams({
     task,
     assigneeName: user.name,
     assignedByName,
   });
+  const legacyParams = [
+    user.name || "there",
+    buildMultilineTaskSummary(task, assignedByName),
+  ];
 
   if (!isWhatsAppConfigured()) {
     console.log(`[whatsapp:stub] task assign to=${phone} title=${task.title}`);
     return { userId: user._id, sent: true, stub: true };
   }
 
+  /** Do not use morning digest for tasks — it only supports one-line {{2}} and breaks formatting. */
   const templateAttempts = [];
   if (TASK_TEMPLATE) {
-    templateAttempts.push({ name: TASK_TEMPLATE, params: templateParams, label: "task" });
-  }
-  if (MORNING_TEMPLATE && MORNING_TEMPLATE !== TASK_TEMPLATE) {
-    templateAttempts.push({
-      name: MORNING_TEMPLATE,
-      params: [
-        templateParams[0],
-        sanitizeTemplateParam(`NEW TASK: ${buildSingleLineTaskSummary(task, assignedByName)}`),
-      ],
-      label: "morning_fallback",
-    });
+    templateAttempts.push({ name: TASK_TEMPLATE, params: splitParams, label: "task_split" });
+    templateAttempts.push({ name: TASK_TEMPLATE, params: legacyParams, label: "task_legacy" });
   }
 
   for (const attempt of templateAttempts) {
