@@ -15,6 +15,7 @@ import {
 } from "../services/taskApprovalRouting.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
+import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
 
 const router = Router();
 router.use(authRequired);
@@ -284,11 +285,17 @@ router.post("/", async (req, res, next) => {
 
     const creator = await User.findById(req.userId).lean();
     if (task.assignees?.length) {
-      await notifyMany(task.assignees.filter((id) => String(id) !== req.userId), {
+      const notifyIds = task.assignees.filter((id) => String(id) !== req.userId);
+      await notifyMany(notifyIds, {
         type: "task_assigned",
         title: "New task assigned",
         message: `${creator?.name || "Admin"} assigned: ${task.title}`,
         link: "/pending-single",
+      });
+      queueTaskAssignedWhatsApp({
+        taskId: task._id,
+        assigneeIds: notifyIds,
+        assignedByUserId: req.userId,
       });
     }
     await logActivity({
@@ -339,6 +346,7 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     const prevStatus = task.status;
+    const prevAssigneeIds = (task.assignees || []).map((id) => String(id));
     const allowedFields = [
       "title",
       "description",
@@ -452,6 +460,18 @@ router.patch("/:id", async (req, res, next) => {
         message: `${task.title} → ${task.status.replace("_", " ")}`,
         link: "/pending-single",
       });
+    }
+
+    if ("assignees" in req.body) {
+      const newAssigneeIds = (task.assignees || []).map((id) => String(id));
+      const addedAssignees = newAssigneeIds.filter((id) => !prevAssigneeIds.includes(id) && id !== String(req.userId));
+      if (addedAssignees.length) {
+        queueTaskAssignedWhatsApp({
+          taskId: task._id,
+          assigneeIds: addedAssignees,
+          assignedByUserId: req.userId,
+        });
+      }
     }
 
     res.json({ task });
