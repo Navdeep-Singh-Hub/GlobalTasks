@@ -31,3 +31,17 @@ services:
         value: "09:45"
       - key: WHATSAPP_EVENING_AT
         value: "17:59"
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_TEMPLATE_MORNING
+        sync: false
+      - key: WHATSAPP_TEMPLATE_EVENING
+        sync: false
+      - key: WHATSAPP_TEMPLATE_TASK_ASSIGNED
+        sync: false
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: en
+      - key: WHATSAPP_TASK_ASSIGN_ENABLED
+        value: "true"

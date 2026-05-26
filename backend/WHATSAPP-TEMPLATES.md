@@ -1,23 +1,80 @@
-# WhatsApp templates (Meta Business Manager)
+# WhatsApp templates — Meta Business Manager
 
-Create these in **WhatsApp Manager → Message templates**.  
-Template **name** must match `.env` exactly. Language: **English** (`en`).
+Create in: **Meta Business Suite → WhatsApp Manager → Message templates → Create template**
 
-After approval, set in `backend/.env`:
-
-```env
-WHATSAPP_TEMPLATE_MORNING=globaltasks_morning_digest_v1
-WHATSAPP_TEMPLATE_LANGUAGE=en
-```
+Names must match `.env` **exactly** (lowercase, underscores). Language: **English**.
 
 ---
 
-## 1. Morning digest — `globaltasks_morning_digest_v1`
+## 1. Task assigned — `globaltasks_task_assigned_v1` (ADD THIS)
 
-**Category:** `UTILITY`  
-**Language:** English  
+Required for instant task WhatsApp when the user has not chatted in the last 24 hours.
 
-### Body (copy into Meta; keep `{{1}}` and `{{2}}` as variables)
+| Field | Value |
+|--------|--------|
+| **Template name** | `globaltasks_task_assigned_v1` |
+| **Category** | `UTILITY` |
+| **Language** | English |
+
+### Body (copy exactly — 2 variables)
+
+```
+Hi {{1}}, new task assigned in GlobalTasks:
+
+{{2}}
+```
+
+### Footer (optional)
+
+```
+Global Wellness — Task app
+```
+
+### Sample values (Meta review form)
+
+| Variable | Sample |
+|----------|--------|
+| **{{1}}** | `Manjot` |
+| **{{2}}** | Paste as multiple lines (one detail per line): |
+
+```
+From Sandeep Singh
+Title: Stock audit ward 2
+Description: Count all SKUs and update sheet by 5 PM
+Type: One Time
+Priority: High
+Due: Mon, 26 May 2026, 5:00 pm
+Center: Ludhiana
+Open: https://tasks.globalsofts.in/pending-single
+```
+
+### `.env`
+
+```env
+WHATSAPP_TEMPLATE_TASK_ASSIGNED=globaltasks_task_assigned_v1
+WHATSAPP_TEMPLATE_LANGUAGE=en
+```
+
+### App mapping
+
+| Variable | Sent by backend |
+|----------|-----------------|
+| `{{1}}` | Assignee name |
+| `{{2}}` | Multiple lines — one field per line: From…, Title…, Description…, Type…, Priority…, Due…, Center…, Open… |
+
+**Until this template is approved**, the app uses **`globaltasks_morning_digest_v1`** with a single-line summary (that template does not support multi-line `{{2}}`), then plain text with full multi-line details.
+
+**Important:** Create `globaltasks_task_assigned_v1` with the body below so `{{2}}` can show each field on its own line. Do not reuse the morning template for task details.
+
+---
+
+## 2. Morning digest — `globaltasks_morning_digest_v1` (already live)
+
+| Field | Value |
+|--------|--------|
+| **Category** | `UTILITY` |
+
+### Body
 
 ```
 Good morning {{1}}. Daily checklist for today:
@@ -25,36 +82,14 @@ Good morning {{1}}. Daily checklist for today:
 {{2}}
 ```
 
-### Variable mapping (what the app sends)
-
-| Variable | Content | Example |
-|----------|---------|---------|
-| `{{1}}` | User name | `Priya` |
-| `{{2}}` | Numbered daily sheet lines | `1. Fill Daily Supervisor Sheet (daily)` |
-
-### Sample values for Meta review (optional)
-
-- **{{1}}:** `Rahul`
-- **{{2}}:**
-  ```
-  1. Fill Daily Supervisor Sheet (daily)
-  ```
-
-### Plain-text preview (if template not approved yet, app sends this automatically)
-
-```
-Good morning Rahul. Daily checklist for today:
-1. Fill Daily Supervisor Sheet (daily)
-```
-
-**Who receives it:** active users with role `supervisor` or `coordinator` and valid phone.  
-**Who does not:** other roles (they get task WhatsApp on assign, not this morning list).
+| Variable | Example |
+|----------|---------|
+| `{{1}}` | `Rahul` |
+| `{{2}}** | `1. Fill Daily Supervisor Sheet (daily)` |
 
 ---
 
-## 2. Evening summary — `globaltasks_evening_summary_v1` (for later)
-
-**Category:** `UTILITY`  
+## 3. Evening summary — `globaltasks_evening_summary_v1` (already live)
 
 ### Body
 
@@ -70,32 +105,45 @@ Pending now: {{3}}
 | `{{2}}` | `3` |
 | `{{3}}` | `5` |
 
-`.env`: `WHATSAPP_TEMPLATE_EVENING=globaltasks_evening_summary_v1`
+---
+
+## Render / production checklist
+
+Set in Render → Environment (same as local `.env`):
+
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_TEMPLATE_TASK_ASSIGNED=globaltasks_task_assigned_v1`
+- `WHATSAPP_TEMPLATE_MORNING=globaltasks_morning_digest_v1`
+- `WHATSAPP_TEMPLATE_EVENING=globaltasks_evening_summary_v1`
+- `CLIENT_ORIGIN=https://tasks.globalsofts.in`
+
+Startup log must show: `mode=live` (not `stub`).
 
 ---
 
-## 3. Task assigned (optional — app uses plain text today)
+## Test from terminal
 
-Meta templates are short; full task description is sent as **session text** after assign, not as this template.  
-If you later want a short template + link, use a separate name and we can wire `WHATSAPP_TEMPLATE_TASK_ASSIGNED`.
-
-Suggested short template name: `globaltasks_task_assigned_v1`
-
-```
-Hi {{1}}, new task from {{2}}: {{3}}. Open GlobalTasks to view full details.
+```bash
+cd backend
+node scripts/whatsapp-full-test.mjs manjot
 ```
 
-| Variable | Example |
-|----------|---------|
-| `{{1}}` | Assignee name |
-| `{{2}}` | Assigner name |
-| `{{3}}` | Task title (max ~100 chars in practice) |
+Or API (CEO login):
+
+```http
+POST /api/integrations/whatsapp/test-task-assigned
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{ "phone": "8569049090" }
+```
 
 ---
 
-## Meta tips
+## If user still does not see the message
 
-1. Avoid promotional language in `UTILITY` templates.
-2. Variable `{{2}}` in morning template can be multiple lines — keep under ~900 characters.
-3. Template name in Meta must be **lowercase with underscores**, same as `.env`.
-4. Until approved, set `WHATSAPP_TEMPLATE_MORNING=` empty to force plain-text fallback for testing.
+1. Confirm number is on WhatsApp: `8569049090` → `91 85690 49090`
+2. Check **Updates** tab in WhatsApp (business messages often land there)
+3. Ask them to save **+91 81465 77145** (Global Wellness) and send `Hi` once
+4. Confirm Render logs show `sent (task|morning_fallback|text)` not `stub`
