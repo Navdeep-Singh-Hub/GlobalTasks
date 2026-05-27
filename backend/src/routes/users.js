@@ -13,7 +13,7 @@ import { TaskTemplate } from "../models/TaskTemplate.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
-import { getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
+import { ACTIVE_USER_FILTER, getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -47,22 +47,32 @@ router.get("/", async (req, res) => {
   if (department && department !== "all") q.department = department;
   if (centerId && centerId !== "all") q.centerId = centerId;
   if (reportsTo && reportsTo !== "all") q.reportsTo = reportsTo;
-  if (status === "active") q.active = true;
+  if (status === "active") q.active = ACTIVE_USER_FILTER;
   if (status === "inactive") q.active = false;
+  const assigneePicker =
+    String(req.query.assignable || "").toLowerCase() === "true" && (isManagement(req.userRole) || isCeo(req.userRole));
+  const pickerCenterId =
+    req.query.centerId && String(req.query.centerId) !== "all"
+      ? String(req.query.centerId)
+      : isCeo(req.userRole)
+        ? ""
+        : String(me?.centerId || "");
   if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  const operationsAssigneePicker =
-    req.userRole === "operations" && String(req.query.assignable || "").toLowerCase() === "true";
+  if (assigneePicker && pickerCenterId && isCeo(req.userRole)) {
+    q.centerId = pickerCenterId;
+  }
   const operationsUserListing =
-    req.userRole === "operations" && !operationsAssigneePicker && (!role || role === "all" || role === "user");
+    req.userRole === "operations" && !assigneePicker && (!role || role === "all" || role === "user");
   const operationsLeadPicker = role === "operations";
   const operationsAdminRoleLookup =
-    req.userRole === "operations" && role && role !== "all" && role !== "user" && !operationsAssigneePicker;
-  if (operationsAssigneePicker) {
+    req.userRole === "operations" && role && role !== "all" && role !== "user" && !assigneePicker;
+  if (assigneePicker) {
     const ids = await getAssignableAssigneeIds({
       actorId: req.userId,
       actorRole: req.userRole,
-      centerId: me?.centerId || null,
+      centerId: pickerCenterId || me?.centerId || null,
     });
+    if (!ids.length) return res.json({ users: [] });
     q._id = { $in: ids };
   } else if (operationsUserListing) {
     // Admin user list: mapped user-role staff only.
@@ -71,7 +81,7 @@ router.get("/", async (req, res) => {
   } else if (operationsLeadPicker) {
     // Admin "Operations lead" dropdown — strictly operations role in scope.
     q.role = "operations";
-    q.active = true;
+    q.active = ACTIVE_USER_FILTER;
     if (req.userRole === "operations") q._id = req.userId;
   } else if (operationsAdminRoleLookup) {
     // Admin form: e.g. supervisor list for therapist mapping in same center.

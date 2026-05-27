@@ -1,6 +1,18 @@
 import mongoose from "mongoose";
 import { User } from "../models/User.js";
 
+/** Treat missing `active` as active (legacy users created before the field existed). */
+export const ACTIVE_USER_FILTER = { $ne: false };
+
+function centerScopeFilter(centerId) {
+  if (!centerId) return {};
+  const cid = oid(centerId);
+  if (!cid) return {};
+  return {
+    $or: [{ centerId: cid }, { centerId: null }, { centerId: { $exists: false } }],
+  };
+}
+
 function oid(v) {
   if (!v) return null;
   try {
@@ -21,15 +33,18 @@ async function getDirectChildrenMap(parentIds, centerId) {
   return rows;
 }
 
+/** Roles that can receive tasks within a center (excludes ceo / centre_head). */
+const CENTER_ASSIGNEE_ROLES = ["coordinator", "supervisor", "operations", "user", "executor"];
+
 /** Users an operations lead may assign tasks to (same center). */
-export async function getOperationsAssignableIds(actorId, centerId) {
+export async function getOperationsAssignableIds(_actorId, centerId) {
   if (!centerId) return [];
-  const [mappedUsers, supervisors, therapists] = await Promise.all([
-    User.find({ centerId, role: "user", active: true, reportsTo: actorId }).distinct("_id"),
-    User.find({ centerId, role: "supervisor", active: true }).distinct("_id"),
-    User.find({ centerId, role: "executor", executorKind: "therapist", active: true }).distinct("_id"),
-  ]);
-  return [...new Set([...mappedUsers, ...supervisors, ...therapists].map((id) => String(id)))];
+  const ids = await User.find({
+    ...centerScopeFilter(centerId),
+    role: { $in: CENTER_ASSIGNEE_ROLES },
+    active: ACTIVE_USER_FILTER,
+  }).distinct("_id");
+  return ids.map(String);
 }
 
 export async function getDescendantUsers(rootUserId, centerId) {
@@ -61,9 +76,9 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
   }
   if (actorRole === "coordinator") {
     const ids = await User.find({
-      centerId,
-      role: { $in: ["supervisor", "executor", "operations", "user"] },
-      active: true,
+      ...centerScopeFilter(centerId),
+      role: { $in: ["coordinator", "supervisor", "executor", "operations", "user"] },
+      active: ACTIVE_USER_FILTER,
     }).distinct("_id");
     return [String(actorId), ...ids.map(String)];
   }
@@ -81,22 +96,24 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
 export async function getAssignableAssigneeIds({ actorId, actorRole, centerId }) {
   if (actorRole === "executor" || actorRole === "user") return [];
   if (actorRole === "ceo") {
-    const ids = await User.find({ role: { $ne: "ceo" }, active: true }).distinct("_id");
+    const filter = { role: { $ne: "ceo" }, active: ACTIVE_USER_FILTER };
+    if (centerId) Object.assign(filter, centerScopeFilter(centerId));
+    const ids = await User.find(filter).distinct("_id");
     return ids.map(String);
   }
   if (actorRole === "centre_head") {
     const ids = await User.find({
-      centerId,
-      role: { $in: ["coordinator", "supervisor", "operations", "user", "executor"] },
-      active: true,
+      ...centerScopeFilter(centerId),
+      role: { $in: CENTER_ASSIGNEE_ROLES },
+      active: ACTIVE_USER_FILTER,
     }).distinct("_id");
     return ids.map(String);
   }
   if (actorRole === "coordinator") {
     const ids = await User.find({
-      centerId,
-      role: { $in: ["supervisor", "operations", "user", "executor"] },
-      active: true,
+      ...centerScopeFilter(centerId),
+      role: { $in: CENTER_ASSIGNEE_ROLES },
+      active: ACTIVE_USER_FILTER,
     }).distinct("_id");
     return ids.map(String);
   }

@@ -60,11 +60,13 @@ export function TasksView({
   subtitle: string;
   preset?: Preset;
   showCadenceFilter?: boolean;
-  /** When true and the signed-in user is CEO, show Edit / Delete on Master Single & Master Recurring. */
+  /** Master Single / Recurring: Edit & Delete only on tasks the signed-in user created. */
   masterAdminActions?: boolean;
 }) {
   const { user } = useAuth();
-  const showMasterAdmin = masterAdminActions && isCeo(user?.role);
+  const myId = user?._id ? String(user._id) : "";
+  const canManageOwnMasterTask = (t: Task) =>
+    Boolean(masterAdminActions && myId && String(t.createdBy?._id || "") === myId);
   const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -86,16 +88,35 @@ export function TasksView({
   const [rejectFor, setRejectFor] = useState<{ id: string; title: string } | null>(null);
 
   const openDeleteSingle = (id: string) => {
-    if (!showMasterAdmin) return;
+    const t = tasks.find((x) => x._id === id);
+    if (masterAdminActions) {
+      if (!t || !canManageOwnMasterTask(t)) return;
+    }
     setDeleteErr("");
     setDeleteChoice({ mode: "single", id });
   };
 
   const openDeleteBulk = () => {
     if (!selected.length) return;
+    const ids =
+      masterAdminActions
+        ? selected.filter((id) => {
+            const t = tasks.find((x) => x._id === id);
+            return t && canManageOwnMasterTask(t);
+          })
+        : [...selected];
+    if (!ids.length) return;
     setDeleteErr("");
-    setDeleteChoice({ mode: "bulk", ids: [...selected] });
+    setDeleteChoice({ mode: "bulk", ids });
   };
+
+  const canBulkDelete =
+    selected.length > 0 &&
+    (!masterAdminActions ||
+      selected.every((id) => {
+        const t = tasks.find((x) => x._id === id);
+        return t ? canManageOwnMasterTask(t) : false;
+      }));
 
   const runSoftDelete = async () => {
     if (!deleteChoice) return;
@@ -287,9 +308,11 @@ export function TasksView({
                 <>
                   <span className="text-xs font-semibold text-zinc-500">{selected.length} selected</span>
                   <Button size="sm" variant="soft" onClick={bulkMarkDone}>Mark completed</Button>
-                  <Button size="sm" variant="danger" onClick={openDeleteBulk}>
-                    Delete…
-                  </Button>
+                  {canBulkDelete && (
+                    <Button size="sm" variant="danger" onClick={openDeleteBulk}>
+                      Delete…
+                    </Button>
+                  )}
                 </>
               )}
             </div>
@@ -305,7 +328,7 @@ export function TasksView({
             <table
               className={cn(
                 "w-full text-[12.5px]",
-                showMasterAdmin || showApprovalQuickActions ? "min-w-[1080px]" : "min-w-[980px]"
+                masterAdminActions || showApprovalQuickActions ? "min-w-[1080px]" : "min-w-[980px]"
               )}
             >
               <thead>
@@ -441,7 +464,7 @@ export function TasksView({
                               </button>
                             </>
                           )}
-                          {showMasterAdmin && (
+                          {canManageOwnMasterTask(t) && (
                             <>
                               <button
                                 type="button"
@@ -505,7 +528,7 @@ export function TasksView({
                   <span>{t.assignees?.[0]?.name || "Unassigned"}</span>
                 </div>
               </button>
-              {(showApprovalQuickActions && rowNeedsApproval(t)) || showMasterAdmin ? (
+              {(showApprovalQuickActions && rowNeedsApproval(t)) || canManageOwnMasterTask(t) ? (
                 <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-zinc-50/50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
                   {showApprovalQuickActions && rowNeedsApproval(t) && (
                     <>
@@ -533,7 +556,7 @@ export function TasksView({
                       </Button>
                     </>
                   )}
-                  {showMasterAdmin && (
+                  {canManageOwnMasterTask(t) && (
                     <>
                       <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); setEditId(t._id); }}>
                         Edit

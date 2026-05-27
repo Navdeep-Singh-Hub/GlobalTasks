@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { isCeo, isManagement } from "@/lib/roles";
 import { useEffect, useMemo, useState } from "react";
 
 type UserLite = {
@@ -181,14 +182,27 @@ export function AssignTaskForm() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const pickerCenterId = drafts[0]?.centerId || "";
+
   useEffect(() => {
-    const qs = user?.role === "operations" ? "?assignable=true&status=active" : "";
-    api<{ users: UserLite[] }>(`/users${qs}`)
-      .then((d) => setUsers(d.users || []))
-      .catch(() => setUsers([]));
     api<{ centers: CenterLite[] }>("/centers").then((d) => setCenters(d.centers)).catch(() => setCenters([]));
     api<{ departments: DepartmentLite[] }>("/departments").then((d) => setDepartments(d.departments)).catch(() => setDepartments([]));
-  }, [user?.role]);
+  }, []);
+
+  useEffect(() => {
+    const canPickAssignees = user?.role && (isManagement(user.role) || isCeo(user.role));
+    if (!canPickAssignees) {
+      setUsers([]);
+      return;
+    }
+    const qs = new URLSearchParams();
+    qs.set("assignable", "true");
+    qs.set("status", "active");
+    if (pickerCenterId) qs.set("centerId", pickerCenterId);
+    api<{ users: UserLite[] }>(`/users?${qs.toString()}`)
+      .then((d) => setUsers(d.users || []))
+      .catch(() => setUsers([]));
+  }, [user?.role, pickerCenterId]);
 
   const createdCount = drafts.length;
 
@@ -348,7 +362,11 @@ function DraftCard({
 
   const usersInSelectedCenter = useMemo(() => {
     if (!draft.centerId) return [];
-    return users.filter((u) => userCenterIdRef(u) === String(draft.centerId));
+    const center = String(draft.centerId);
+    return users.filter((u) => {
+      const uid = userCenterIdRef(u);
+      return uid === center || !uid;
+    });
   }, [users, draft.centerId]);
 
   const selectedNames = useMemo(
@@ -422,7 +440,10 @@ function DraftCard({
               }
               const allowedIds = new Set(
                 users
-                  .filter((u) => userCenterIdRef(u) === String(nextCenter))
+                  .filter((u) => {
+                    const uid = userCenterIdRef(u);
+                    return uid === String(nextCenter) || !uid;
+                  })
                   .map((u) => u._id)
               );
               onChange({

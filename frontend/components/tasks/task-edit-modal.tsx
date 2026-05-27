@@ -6,6 +6,7 @@ import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
 import { formatCenterName } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { isCeo, isManagement } from "@/lib/roles";
 import { useCallback, useEffect, useState } from "react";
 
 type TaskPayload = {
@@ -83,7 +84,8 @@ export function TaskEditModal({
     setLoading(true);
     setErr("");
     try {
-      const userQs = user?.role === "operations" ? "?assignable=true&status=active" : "";
+      const canPickAssignees = user?.role && (isManagement(user.role) || isCeo(user.role));
+      const userQs = canPickAssignees ? "?assignable=true&status=active" : "";
       const [taskRes, usersRes, projectsRes, metaRes, centersRes, departmentsRes] = await Promise.all([
         api<{ task: TaskPayload }>(`/tasks/${taskId}`),
         api<{ users: UserOpt[] }>(`/users${userQs}`).catch(() => ({ users: [] as UserOpt[] })),

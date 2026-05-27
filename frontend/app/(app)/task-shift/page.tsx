@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Badge, cadenceTone, priorityTone } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/auth-context";
+import { isCeo, isManagement } from "@/lib/roles";
 import { api } from "@/lib/api";
 import { Shuffle } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -24,7 +25,8 @@ export default function TaskShiftPage() {
 
   useEffect(() => {
     load();
-    const qs = user?.role === "operations" ? "?assignable=true&status=active" : "";
+    const canPickAssignees = user?.role && (isManagement(user.role) || isCeo(user.role));
+    const qs = canPickAssignees ? "?assignable=true&status=active" : "";
     api<{ users: User[] }>(`/users${qs}`).then((d) => setUsers(d.users)).catch(() => setUsers([]));
   }, [load, user?.role]);
 

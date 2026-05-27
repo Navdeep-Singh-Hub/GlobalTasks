@@ -45,10 +45,20 @@ const ADMIN_TASK_FIELDS = new Set([
   "inputPayload",
 ]);
 
-function assertTaskPatchPermission(req, body) {
+function taskCreatedByUser(task, userId) {
+  return String(task?.createdBy?._id || task?.createdBy || "") === String(userId || "");
+}
+
+function managementCreatorOwnsTask(req, task) {
+  return isManagement(req.userRole) && taskCreatedByUser(task, req.userId);
+}
+
+function assertTaskPatchPermission(req, body, task = null) {
   const isAdminLike = req.userRole === "ceo" || req.userRole === "centre_head";
+  const creatorCanEditMaster = task && managementCreatorOwnsTask(req, task);
+  const canEditAdminFields = isAdminLike || creatorCanEditMaster;
   for (const k of Object.keys(body)) {
-    if (ADMIN_TASK_FIELDS.has(k) && !isAdminLike) {
+    if (ADMIN_TASK_FIELDS.has(k) && !canEditAdminFields) {
       return "Only admin roles can edit these task fields";
     }
     if (k === "assignees" && !isManagement(req.userRole)) {
@@ -319,18 +329,20 @@ router.patch("/:id", async (req, res, next) => {
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
-    if (req.userRole === "coordinator") {
-      if (!coordinatorCanAccessTask(task, req.userId)) {
-        return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
-      }
-    } else if (visibleIds && req.userRole !== "centre_head") {
-      const assignees = (task.assignees || []).map((a) => String(a));
-      if (!assignees.some((id) => visibleIds.includes(id))) {
-        return res.status(403).json({ message: "You can edit tasks for your hierarchy only" });
+    if (!managementCreatorOwnsTask(req, task)) {
+      if (req.userRole === "coordinator") {
+        if (!coordinatorCanAccessTask(task, req.userId)) {
+          return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
+        }
+      } else if (visibleIds && req.userRole !== "centre_head") {
+        const assignees = (task.assignees || []).map((a) => String(a));
+        if (!assignees.some((id) => visibleIds.includes(id))) {
+          return res.status(403).json({ message: "You can edit tasks for your hierarchy only" });
+        }
       }
     }
 
-    const denied = assertTaskPatchPermission(req, req.body);
+    const denied = assertTaskPatchPermission(req, req.body, task);
     if (denied) return res.status(403).json({ message: denied });
 
     if ("departmentId" in req.body) {
@@ -634,15 +646,29 @@ router.post("/:id/reject", async (req, res) => {
 
 router.delete("/:id", requireManagement, async (req, res) => {
   const me = await actor(req);
-  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  const visibleIds =
-    req.userRole === "coordinator"
-      ? null
-      : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (req.userRole === "coordinator") Object.assign(where, coordinatorTaskScopeClause(req.userId));
-  else if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
+  const existing = await Task.findById(req.params.id);
+  if (!existing || existing.deletedAt) return res.status(404).json({ message: "Task not found" });
+  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can delete tasks from your center only" });
+  }
+
+  let where;
+  if (managementCreatorOwnsTask(req, existing)) {
+    where = { _id: req.params.id };
+    if (!isCeo(req.userRole)) where.centerId = me?.centerId || null;
+  } else {
+    where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+    const visibleIds =
+      req.userRole === "coordinator"
+        ? null
+        : await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
+    if (req.userRole === "coordinator") Object.assign(where, coordinatorTaskScopeClause(req.userId));
+    else if (visibleIds && req.userRole !== "centre_head") where.assignees = { $in: visibleIds };
+  }
+
   const task = await Task.findOneAndUpdate(where, { deletedAt: new Date() });
-  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: true } });
+  if (!task) return res.status(404).json({ message: "Task not found" });
+  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: true } });
   res.json({ ok: true });
 });
 
