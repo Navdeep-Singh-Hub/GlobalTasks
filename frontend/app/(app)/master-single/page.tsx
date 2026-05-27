@@ -5,7 +5,7 @@ export default function MasterSinglePage() {
   return (
     <TasksView
       title="Master Tasks"
-      subtitle="Single one-time tasks across the entire workspace."
+      subtitle="One-time master tasks you assigned or that are assigned to you."
       preset={{ recurring: false }}
       showCadenceFilter={false}
       masterAdminActions

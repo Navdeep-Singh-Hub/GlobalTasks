@@ -4,7 +4,7 @@ import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/ba
 import { Button } from "@/components/ui/button";
 import { api, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { isCeo } from "@/lib/roles";
+import { isCeo, isManagement } from "@/lib/roles";
 import {
   CalendarDays,
   Download,
@@ -22,6 +22,7 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { RejectTaskModal } from "./reject-task-modal";
+import { SubmitForApprovalModal } from "./submit-for-approval-modal";
 
 type Attachment = { name: string; url: string; size?: number; mimeType?: string };
 type TaskDetail = {
@@ -42,6 +43,7 @@ type TaskDetail = {
   approvalStatus?: string;
   rejectionRemarks?: string;
   rejectionMode?: string;
+  submissionRemarks?: string;
   createdAt?: string;
   completedAt?: string | null;
 };
@@ -75,12 +77,24 @@ export function TaskDetailDrawer({
   onUpdated?: () => void;
 }) {
   const { user: me } = useAuth();
-  const isAdmin = isCeo(me?.role);
+  const myId = me?._id ? String(me._id) : "";
+  const isCeoUser = isCeo(me?.role);
 
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
+
+  const canApprove = Boolean(task && myId && (isCeoUser || String(task.createdBy?._id || "") === myId));
+  const canSubmitForApproval = Boolean(
+    task &&
+      myId &&
+      !isCeoUser &&
+      task.assignees?.some((a) => String(a._id) === myId) &&
+      task.status !== "awaiting_approval" &&
+      task.approvalStatus !== "pending"
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -320,9 +334,18 @@ export function TaskDetailDrawer({
             ) : (
               <>
                 {(task.status === "awaiting_approval" || task.approvalStatus === "pending") && (
-                  <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
-                    <strong>Waiting for CEO approval.</strong> The CEO must approve before this task is marked completed
-                    {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
+                  <div className="space-y-2">
+                    <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
+                      <strong>Waiting for approval.</strong> The person who assigned this task must approve before it is
+                      marked completed
+                      {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
+                    </div>
+                    {task.submissionRemarks ? (
+                      <div className="rounded-xl border border-brand-200 bg-brand-50/80 px-3 py-2.5 text-xs text-brand-950 dark:border-brand-900/50 dark:bg-brand-950/40 dark:text-brand-100">
+                        <span className="font-semibold">Submission remarks: </span>
+                        <span className="whitespace-pre-wrap">{task.submissionRemarks}</span>
+                      </div>
+                    ) : null}
                   </div>
                 )}
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -331,7 +354,7 @@ export function TaskDetailDrawer({
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
                     {task.status === "awaiting_approval" || task.approvalStatus === "pending" ? (
-                      isAdmin ? (
+                      canApprove ? (
                         <>
                           <Button size="sm" variant="outline" onClick={() => setRejectOpen(true)}>
                             Reject
@@ -351,28 +374,36 @@ export function TaskDetailDrawer({
                       ) : null
                     ) : (
                       <>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={async () => {
-                            await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) });
-                            onUpdated?.();
-                            load();
-                          }}
-                        >
-                          Not done
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="gradient"
-                          onClick={async () => {
-                            await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
-                            onUpdated?.();
-                            load();
-                          }}
-                        >
-                          {isAdmin ? "Mark completed" : "Submit for approval"}
-                        </Button>
+                        {(canSubmitForApproval || isManagement(me?.role)) && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={async () => {
+                              await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) });
+                              onUpdated?.();
+                              load();
+                            }}
+                          >
+                            Not done
+                          </Button>
+                        )}
+                        {isCeoUser ? (
+                          <Button
+                            size="sm"
+                            variant="gradient"
+                            onClick={async () => {
+                              await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
+                              onUpdated?.();
+                              load();
+                            }}
+                          >
+                            Mark completed
+                          </Button>
+                        ) : canSubmitForApproval ? (
+                          <Button size="sm" variant="gradient" onClick={() => setSubmitOpen(true)}>
+                            Submit for approval
+                          </Button>
+                        ) : null}
                       </>
                     )}
                   </div>
@@ -395,6 +426,17 @@ export function TaskDetailDrawer({
         onClose={() => setRejectOpen(false)}
         onSuccess={() => {
           setRejectOpen(false);
+          onUpdated?.();
+          load();
+        }}
+      />
+      <SubmitForApprovalModal
+        open={submitOpen && !!task}
+        taskId={task?._id ?? null}
+        taskTitle={task?.title ?? ""}
+        onClose={() => setSubmitOpen(false)}
+        onSuccess={() => {
+          setSubmitOpen(false);
           onUpdated?.();
           load();
         }}

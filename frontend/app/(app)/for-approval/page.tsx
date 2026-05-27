@@ -5,7 +5,7 @@ export default function ForApprovalPage() {
   return (
     <TasksView
       title="For Approval"
-      subtitle="Tasks submitted by your team for completion approval (user-role tasks go to their operations lead)."
+      subtitle="Tasks your team submitted for completion — open a task to read submission remarks, then approve or reject."
       preset={{ approval: true }}
     />
   );

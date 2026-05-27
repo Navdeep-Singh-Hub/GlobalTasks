@@ -48,6 +48,8 @@ const taskSchema = new mongoose.Schema(
     approvalStatus: { type: String, enum: ["none", "pending", "approved", "rejected"], default: "none" },
     rejectionRemarks: { type: String, default: "" },
     rejectionMode: { type: String, default: "" },
+    /** Assignee notes when submitting completion for approval (visible to task assigner). */
+    submissionRemarks: { type: String, default: "" },
 
     attachments: { type: [attachmentSchema], default: [] },
     voiceNoteUrl: { type: String, default: "" },

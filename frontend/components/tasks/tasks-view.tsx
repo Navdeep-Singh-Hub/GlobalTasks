@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { TaskDetailDrawer } from "./task-detail-drawer";
 import { TaskEditModal } from "./task-edit-modal";
 import { RejectTaskModal } from "./reject-task-modal";
+import { SubmitForApprovalModal } from "./submit-for-approval-modal";
 
 type Task = {
   _id: string;
@@ -28,6 +29,7 @@ type Task = {
   project?: { name: string };
   assignees?: { _id: string; name: string; email: string }[];
   createdBy?: { _id: string; name: string };
+  submissionRemarks?: string;
   attachments?: { name: string; url?: string }[];
   voiceNoteUrl?: string;
 };
@@ -86,6 +88,8 @@ export function TasksView({
   const [deleteWorking, setDeleteWorking] = useState(false);
   const [deleteErr, setDeleteErr] = useState("");
   const [rejectFor, setRejectFor] = useState<{ id: string; title: string } | null>(null);
+  const [submitBulkOpen, setSubmitBulkOpen] = useState(false);
+  const [masterRelation, setMasterRelation] = useState<"created" | "assigned">("created");
 
   const openDeleteSingle = (id: string) => {
     const t = tasks.find((x) => x._id === id);
@@ -180,6 +184,10 @@ export function TasksView({
     if (preset.recurring === false) qs.set("recurring", "false");
     if (preset.statusGroup) qs.set("statusGroup", preset.statusGroup);
     if (preset.approval) qs.set("approval", "true");
+    if (masterAdminActions) {
+      qs.set("masterScope", "true");
+      qs.set("masterRelation", masterRelation);
+    }
     qs.set("limit", "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
       .then((d) => {
@@ -188,7 +196,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval]);
+  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, masterAdminActions, masterRelation]);
 
   useEffect(() => {
     load();
@@ -226,11 +234,17 @@ export function TasksView({
   const toggle = (id: string, on: boolean) =>
     setSelected((prev) => (on ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((x) => x !== id)));
 
-  const bulkMarkDone = async () => {
+  const bulkMarkDone = () => {
     if (!selected.length) return;
-    await api("/tasks/bulk", { method: "POST", body: JSON.stringify({ ids: selected, status: "completed" }) });
-    setSelected([]);
-    load();
+    if (isCeo(user?.role)) {
+      void (async () => {
+        await api("/tasks/bulk", { method: "POST", body: JSON.stringify({ ids: selected, status: "completed" }) });
+        setSelected([]);
+        load();
+      })();
+      return;
+    }
+    setSubmitBulkOpen(true);
   };
 
   const rowNeedsApproval = (t: Task) => t.status === "awaiting_approval" || t.approvalStatus === "pending";
@@ -248,15 +262,46 @@ export function TasksView({
         <div className="min-w-0">
           <div className="chip border border-zinc-200 bg-white text-zinc-500">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            {preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"} · Admin view
+            {preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"}
+            {masterAdminActions ? " · Your tasks" : preset.approval ? " · Approval" : ""}
           </div>
-          <h1 className="mt-3 text-xl font-bold tracking-tight sm:text-2xl">
-            {title}{" "}
-            <span className="hidden font-normal text-brand-600 sm:inline sm:text-sm">(Admin View - All Team)</span>
-          </h1>
+          <h1 className="mt-3 text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
           <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
-          <p className="mt-1 text-[12px] text-zinc-500">
-            {loading ? "Loading…" : `${tasks.length} of ${total} task${total === 1 ? "" : "s"} found`} (All team members)
+          {masterAdminActions && (
+            <div className="mt-3 inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
+              <button
+                type="button"
+                onClick={() => setMasterRelation("created")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                  masterRelation === "created"
+                    ? "bg-brand-gradient text-white shadow-brand"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
+                )}
+              >
+                Assigned by me
+              </button>
+              <button
+                type="button"
+                onClick={() => setMasterRelation("assigned")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                  masterRelation === "assigned"
+                    ? "bg-brand-gradient text-white shadow-brand"
+                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
+                )}
+              >
+                Assigned to me
+              </button>
+            </div>
+          )}
+          <p className="mt-2 text-[12px] text-zinc-500">
+            {loading ? "Loading…" : `${tasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
+            {masterAdminActions
+              ? masterRelation === "created"
+                ? " · tasks you assigned"
+                : " · tasks assigned to you"
+              : ""}
           </p>
         </div>
 
@@ -307,7 +352,9 @@ export function TasksView({
               {selected.length > 0 && (
                 <>
                   <span className="text-xs font-semibold text-zinc-500">{selected.length} selected</span>
-                  <Button size="sm" variant="soft" onClick={bulkMarkDone}>Mark completed</Button>
+                  <Button size="sm" variant="soft" onClick={bulkMarkDone}>
+                    {isCeo(user?.role) ? "Mark completed" : "Submit for approval"}
+                  </Button>
                   {canBulkDelete && (
                     <Button size="sm" variant="danger" onClick={openDeleteBulk}>
                       Delete…
@@ -507,6 +554,27 @@ export function TasksView({
                 </div>
                 <div className="mt-2 text-sm font-bold">{t.title}</div>
                 <div className="mt-1 line-clamp-2 text-[11.5px] text-zinc-500">{t.description || "No description"}</div>
+                {preset.approval && t.submissionRemarks ? (
+                  <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50/80 px-2 py-1.5 text-[11px] text-brand-950 dark:border-brand-800 dark:bg-brand-950/50 dark:text-brand-100">
+                    <span className="font-semibold">Submission remarks: </span>
+                    <span className="whitespace-pre-wrap">{t.submissionRemarks}</span>
+                  </div>
+                ) : null}
+                {masterAdminActions ? (
+                  <div className="mt-2 text-[11px] text-zinc-500">
+                    {masterRelation === "created" ? (
+                      <>
+                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned to: </span>
+                        {t.assignees?.map((a) => a.name).join(", ") || "—"}
+                      </>
+                    ) : (
+                      <>
+                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned by: </span>
+                        {t.createdBy?.name || "—"}
+                      </>
+                    )}
+                  </div>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   <Badge tone={statusTone(t.status)}>{t.status.replace("_", " ")}</Badge>
                   <Badge tone={priorityTone(t.priority)}>{t.priority}</Badge>
@@ -628,6 +696,17 @@ export function TasksView({
         onClose={() => setRejectFor(null)}
         onSuccess={() => {
           setRejectFor(null);
+          load();
+        }}
+      />
+
+      <SubmitForApprovalModal
+        open={submitBulkOpen}
+        taskIds={selected}
+        onClose={() => setSubmitBulkOpen(false)}
+        onSuccess={() => {
+          setSubmitBulkOpen(false);
+          setSelected([]);
           load();
         }}
       />

@@ -5,7 +5,7 @@ export default function MasterRecurringPage() {
   return (
     <TasksView
       title="Master Recurring Tasks"
-      subtitle="Daily, weekly, fortnightly, monthly, quarterly and yearly recurring work."
+      subtitle="Recurring master tasks you assigned or that are assigned to you."
       preset={{ recurring: true }}
       masterAdminActions
     />
