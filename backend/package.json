@@ -7,7 +7,8 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "seed": "node src/seed.js",
-    "cleanup:therapist-targets": "node scripts/remove-therapist-target-fields.js"
+    "cleanup:therapist-targets": "node scripts/remove-therapist-target-fields.js",
+    "whatsapp:test": "node scripts/whatsapp-full-test.mjs"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

@@ -23,6 +23,7 @@ import { setSocket } from "./services/notificationService.js";
 import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
 import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
 import { runWhatsAppDigestTick, startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
+import { isWhatsAppConfigured } from "./services/whatsappService.js";
 import { SupervisorSheet } from "./models/SupervisorSheet.js";
 
 const app = express();
@@ -37,6 +38,7 @@ const defaultOrigins = [
   "http://localhost:3001",
   "http://127.0.0.1:3001",
   "https://global-tasks.vercel.app",
+  "https://tasks.globalsofts.in",
 ];
 const envOrigins = [
   ...(process.env.CLIENT_ORIGINS || "")
@@ -137,6 +139,8 @@ connectDatabase(uri)
     startEscalationScheduler();
     const digestEnabled = String(process.env.WHATSAPP_DIGEST_SCHEDULER_ENABLED || "true").toLowerCase() === "true";
     if (digestEnabled) startWhatsAppTaskDigestScheduler();
+    const waMode = isWhatsAppConfigured() ? "live" : "stub (set WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN)";
+    console.log(`[whatsapp] task assign on create/patch: enabled, mode=${waMode}`);
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   })
   .catch((e) => {

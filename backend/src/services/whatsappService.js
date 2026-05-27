@@ -6,11 +6,51 @@ const API_URL = PHONE_NUMBER_ID ? `https://graph.facebook.com/v20.0/${PHONE_NUMB
 export function normalizePhone(phone) {
   const raw = String(phone || "").replace(/[^\d+]/g, "");
   if (!raw) return "";
-  return raw.startsWith("+") ? raw.slice(1) : raw;
+  let digits = raw.startsWith("+") ? raw.slice(1) : raw;
+  // India mobile stored as 10 digits without country code
+  if (digits.length === 10 && /^[6-9]/.test(digits)) digits = `91${digits}`;
+  return digits;
+}
+
+function parseMetaErrorBody(errText) {
+  try {
+    const j = JSON.parse(errText);
+    const err = j?.error || {};
+    return {
+      message: err.message || errText,
+      code: err.code,
+      subcode: err.error_subcode,
+      type: err.type,
+    };
+  } catch {
+    return { message: errText || "unknown error" };
+  }
 }
 
 export function isWhatsAppConfigured() {
   return Boolean(API_URL && ACCESS_TOKEN);
+}
+
+/** Normalize template variable text; keeps line breaks (one detail per line). */
+export function sanitizeTemplateParam(value, maxLen = 1024) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim()
+    .slice(0, maxLen);
+}
+
+export function isTemplateMissingError(err) {
+  const code = err?.meta?.code;
+  return code === 132001 || String(err?.message || "").includes("132001");
+}
+
+export function isTemplateParamError(err) {
+  const code = err?.meta?.code;
+  return code === 132018 || String(err?.message || "").includes("132018");
 }
 
 async function sendPayload(phone, payload, stubLogText) {
@@ -30,9 +70,23 @@ async function sendPayload(phone, payload, stubLogText) {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
-    throw new Error(`WhatsApp send failed (${res.status}): ${errText || "unknown error"}`);
+    const meta = parseMetaErrorBody(errText);
+    const hint =
+      meta.code === 131047 || String(meta.message || "").toLowerCase().includes("re-engagement")
+        ? " Use an approved WhatsApp template (24h session window closed)."
+        : "";
+    const err = new Error(`WhatsApp send failed (${res.status}): ${meta.message || "unknown error"}${hint}`);
+    err.meta = meta;
+    throw err;
   }
-  return { ok: true };
+  let data = {};
+  try {
+    data = await res.json();
+  } catch {
+    /* ignore */
+  }
+  const messageId = data?.messages?.[0]?.id;
+  return { ok: true, messageId, waId: data?.contacts?.[0]?.wa_id };
 }
 
 export async function sendWhatsAppText({ to, text, fallbackToAdmin = false }) {
@@ -69,7 +123,10 @@ export async function sendWhatsAppTemplate({ to, name, languageCode = "en", para
         components: [
           {
             type: "body",
-            parameters: parameters.map((p) => ({ type: "text", text: String(p ?? "") })),
+            parameters: parameters.map((p) => ({
+              type: "text",
+              text: sanitizeTemplateParam(p),
+            })),
           },
         ],
       },

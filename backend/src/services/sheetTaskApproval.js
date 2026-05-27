@@ -6,6 +6,7 @@ import { notifyMany } from "./notificationService.js";
 import { logActivity } from "./activityService.js";
 import { isCeo } from "../constants/roles.js";
 import { isRecurring, computeNextDueDate } from "../utils/recurrence.js";
+import { queueTaskAssignedWhatsApp } from "./whatsappTaskAssignment.js";
 
 export const SUPERVISOR_SHEET_TASK_TITLE_REGEX = /fill\s+daily\s+supervisor\s+sheet/i;
 export const COORDINATOR_SHEET_TASK_TITLE_REGEX = /fill\s+daily\s+coordinator\s+sheet/i;
@@ -105,7 +106,7 @@ async function createDailySheetTask({ kind, assigneeUser, approverId, sheetDate 
     ? "Complete and submit the daily supervisor sheet."
     : "Complete and submit the daily coordinator sheet.";
 
-  return Task.create({
+  const task = await Task.create({
     title,
     description,
     taskType: "daily",
@@ -122,6 +123,12 @@ async function createDailySheetTask({ kind, assigneeUser, approverId, sheetDate 
     approvalStatus: "none",
     tags: [tag, "recurring"],
   });
+  queueTaskAssignedWhatsApp({
+    taskId: task._id,
+    assigneeIds: [assigneeUser._id],
+    assignedByUserId: approverId,
+  });
+  return task;
 }
 
 async function advanceIfRecurring(task, actorId, actorName) {

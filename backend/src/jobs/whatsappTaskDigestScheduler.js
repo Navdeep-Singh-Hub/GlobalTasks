@@ -30,9 +30,29 @@ function zonedParts(d = new Date()) {
   return map;
 }
 
-function dateKeyInTz(d = new Date()) {
+export function dateKeyInTz(d = new Date()) {
   const p = zonedParts(d);
   return `${p.year}-${p.month}-${p.day}`;
+}
+
+export async function clearDigestRunLock(runType, dateKey) {
+  await JobRunLock.deleteMany({ job: JOB, runType, dateKey });
+}
+
+function buildMorningDigestContent(user) {
+  const role = normalizeRole(user.role);
+  const dailySheetLabels = [];
+  if (role === "supervisor") dailySheetLabels.push("Fill Daily Supervisor Sheet");
+  if (role === "coordinator") dailySheetLabels.push("Fill Daily Coordinator Sheet");
+  if (!dailySheetLabels.length) return null;
+
+  const body = dailySheetLabels.map((label, idx) => `${idx + 1}. ${label} (daily)`).join("\n");
+  const text = `Good morning ${user.name}. Daily checklist for today:\n${body}`;
+  return {
+    text,
+    templateName: MORNING_TEMPLATE,
+    templateParams: [user.name, body],
+  };
 }
 
 function hhmmInTz(d = new Date()) {
@@ -99,58 +119,42 @@ async function safeSendTemplateDigestMessage({ user, runType, templateName, para
   }
 }
 
-async function runMorningDigest(now = new Date()) {
-  const users = await loadDigestUsers();
+export async function runMorningDigest(now = new Date(), options = {}) {
+  const { onlyUserId, onlyPhone, dryRun = false } = options;
+  let users = await loadDigestUsers();
+  if (onlyUserId) users = users.filter((u) => String(u._id) === String(onlyUserId));
+  if (onlyPhone) {
+    const want = normalizePhone(onlyPhone);
+    users = users.filter((u) => normalizePhone(u.phone) === want);
+  }
+
   const stats = { recipients: users.length, considered: 0, sent: 0, skipped: 0, failed: 0 };
+  const previews = [];
   for (const u of users) {
-    const tasks = await Task.find({
-      assignees: u._id,
-      deletedAt: null,
-      status: { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] },
-    })
-      .select("title dueDate status")
-      .sort({ dueDate: 1 })
-      .limit(8)
-      .lean();
-
-    const taskLines = tasks.map((t, idx) => `${idx + 1}. ${t.title} (${String(t.status || "").replace("_", " ")})`);
-
-    /** Same idea as assigned daily tasks: remind every morning via WhatsApp. */
-    const role = normalizeRole(u.role);
-    const dailySheetLabels = [];
-    if (role === "supervisor") dailySheetLabels.push("Fill Daily Supervisor Sheet");
-    if (role === "coordinator") dailySheetLabels.push("Fill Daily Coordinator Sheet");
-
-    const allLines = [...taskLines];
-    let n = taskLines.length;
-    for (const label of dailySheetLabels) {
-      n += 1;
-      allLines.push(`${n}. ${label} (daily)`);
-    }
-
-    if (!allLines.length) {
-      allLines.push("1. No open assigned tasks — open GlobalTasks for updates.");
-    }
+    const content = buildMorningDigestContent(u);
+    if (!content) continue;
 
     stats.considered += 1;
-
-    const body = allLines.join("\n");
-    const hasTasks = taskLines.length > 0;
-    const hasSheets = dailySheetLabels.length > 0;
-    let intro;
-    if (hasTasks && hasSheets) intro = `Good morning ${u.name}. Your tasks and daily sheets for today:`;
-    else if (hasTasks) intro = `Good morning ${u.name}. Assigned tasks for today:`;
-    else if (hasSheets) intro = `Good morning ${u.name}. Daily checklist for today:`;
-    else intro = `Good morning ${u.name}. Quick update from GlobalTasks:`;
-    const text = `${intro}\n${body}`;
+    if (dryRun) {
+      previews.push({
+        userId: u._id,
+        name: u.name,
+        role: u.role,
+        phone: u.phone,
+        text: content.text,
+        templateName: content.templateName || null,
+        templateParams: content.templateParams,
+      });
+      continue;
+    }
 
     // eslint-disable-next-line no-await-in-loop
     const res = await safeSendTemplateDigestMessage({
       user: u,
       runType: "morning",
-      templateName: MORNING_TEMPLATE,
-      parameters: [u.name, body],
-      fallbackText: text,
+      templateName: content.templateName,
+      parameters: content.templateParams,
+      fallbackText: content.text,
     });
     stats.sent += res.sent;
     stats.skipped += res.skipped;
@@ -160,6 +164,7 @@ async function runMorningDigest(now = new Date()) {
       await sleep(SEND_GAP_MS);
     }
   }
+  if (dryRun) return { ...stats, dryRun: true, previews };
   return stats;
 }
 
