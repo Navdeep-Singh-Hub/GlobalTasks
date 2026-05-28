@@ -8,7 +8,7 @@ import { logActivity } from "../services/activityService.js";
 import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
-import { canApproveTaskForUser, resolveOperationsLeadApproverId } from "../services/taskApprovalRouting.js";
+import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
 import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
@@ -274,8 +274,7 @@ router.post("/", async (req, res, next) => {
     if (!payload.requiredInputsSchema) payload.requiredInputsSchema = { type: "object", properties: {}, required: [] };
     if (!payload.inputPayload) payload.inputPayload = {};
     if (payload.requiresApproval) payload.approvalStatus = "none";
-    const opsApprover = await resolveOperationsLeadApproverId(payload.assignees, payload.centerId);
-    payload.createdBy = opsApprover || req.userId;
+    payload.createdBy = req.userId;
     const task = await Task.create(payload);
     await TaskEvent.create({
       taskId: task._id,
@@ -420,8 +419,6 @@ router.patch("/:id", async (req, res, next) => {
       task.approvalStatus = "pending";
       task.requiresApproval = true;
       task.completedAt = null;
-      const opsApprover = await resolveOperationsLeadApproverId(task.assignees, task.centerId);
-      if (opsApprover) task.createdBy = opsApprover;
     } else if (task.status === "in_progress" || task.status === "pending") {
       if ("submissionRemarks" in req.body) task.submissionRemarks = "";
     } else if (task.status === "completed" && !task.completedAt) {
@@ -521,8 +518,6 @@ router.post("/bulk", async (req, res) => {
         t.approvalStatus = "pending";
         t.requiresApproval = true;
         t.completedAt = null;
-        const opsApprover = await resolveOperationsLeadApproverId(t.assignees, t.centerId);
-        if (opsApprover) t.createdBy = opsApprover;
       } else {
         t.status = "completed";
         if (!t.completedAt) t.completedAt = new Date();
