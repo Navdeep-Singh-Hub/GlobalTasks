@@ -2,7 +2,8 @@
 
 import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api, assetUrl } from "@/lib/api";
+import { Textarea } from "@/components/ui/input";
+import { api, ApiError, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { isCeo, isManagement } from "@/lib/roles";
 import {
@@ -22,7 +23,6 @@ import {
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { RejectTaskModal } from "./reject-task-modal";
-import { SubmitForApprovalModal } from "./submit-for-approval-modal";
 
 type Attachment = { name: string; url: string; size?: number; mimeType?: string };
 type TaskDetail = {
@@ -84,7 +84,9 @@ export function TaskDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [submitOpen, setSubmitOpen] = useState(false);
+  const [submissionRemarksDraft, setSubmissionRemarksDraft] = useState("");
+  const [submitErr, setSubmitErr] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const canApprove = Boolean(task && myId && (isCeoUser || String(task.createdBy?._id || "") === myId));
   const canSubmitForApproval = Boolean(
@@ -112,8 +114,35 @@ export function TaskDetailDrawer({
     if (!open) {
       setTask(null);
       setRejectOpen(false);
+      setSubmissionRemarksDraft("");
+      setSubmitErr("");
+      setSubmitting(false);
     }
   }, [open, taskId, load]);
+
+  const submitForApproval = async () => {
+    if (!task) return;
+    const text = submissionRemarksDraft.trim();
+    if (!text) {
+      setSubmitErr("Please add remarks before submitting for approval.");
+      return;
+    }
+    setSubmitErr("");
+    setSubmitting(true);
+    try {
+      await api(`/tasks/${task._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "completed", submissionRemarks: text }),
+      });
+      onUpdated?.();
+      load();
+      setSubmissionRemarksDraft("");
+    } catch (e) {
+      setSubmitErr(e instanceof ApiError ? e.message : "Could not submit for approval.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -348,6 +377,25 @@ export function TaskDetailDrawer({
                     ) : null}
                   </div>
                 )}
+                {canSubmitForApproval ? (
+                  <label className="block">
+                    <span className="text-xs font-semibold text-zinc-500">Submission remarks *</span>
+                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                      Tell the person who assigned this task what you completed. They will see this in For Approval.
+                    </p>
+                    <Textarea
+                      value={submissionRemarksDraft}
+                      onChange={(e) => {
+                        setSubmissionRemarksDraft(e.target.value);
+                        if (submitErr) setSubmitErr("");
+                      }}
+                      rows={3}
+                      placeholder="What was completed, notes for reviewer…"
+                      className="mt-2"
+                    />
+                    {submitErr ? <p className="mt-1.5 text-xs font-semibold text-rose-600">{submitErr}</p> : null}
+                  </label>
+                ) : null}
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="text-[11px] text-zinc-500">
                     Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
@@ -400,8 +448,8 @@ export function TaskDetailDrawer({
                             Mark completed
                           </Button>
                         ) : canSubmitForApproval ? (
-                          <Button size="sm" variant="gradient" onClick={() => setSubmitOpen(true)}>
-                            Submit for approval
+                          <Button size="sm" variant="gradient" disabled={submitting} onClick={() => void submitForApproval()}>
+                            {submitting ? "Submitting…" : "Submit for approval"}
                           </Button>
                         ) : null}
                       </>
@@ -426,17 +474,6 @@ export function TaskDetailDrawer({
         onClose={() => setRejectOpen(false)}
         onSuccess={() => {
           setRejectOpen(false);
-          onUpdated?.();
-          load();
-        }}
-      />
-      <SubmitForApprovalModal
-        open={submitOpen && !!task}
-        taskId={task?._id ?? null}
-        taskTitle={task?.title ?? ""}
-        onClose={() => setSubmitOpen(false)}
-        onSuccess={() => {
-          setSubmitOpen(false);
           onUpdated?.();
           load();
         }}

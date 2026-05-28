@@ -137,8 +137,17 @@ export function TaskEditModal({
   };
 
   const save = async () => {
-    if (!taskId || !title.trim() || !dueLocal || !departmentId || !centerId || !functionTag.trim()) {
-      setErr("Title, center, department, function tag and due date are required.");
+    const missing: string[] = [];
+    if (!title.trim()) missing.push("Title");
+    if (!dueLocal) missing.push("Due date");
+    if (!centerId) missing.push("Center");
+    if (!departmentId) missing.push("Department");
+    if (!taskId || missing.length) {
+      setErr(
+        missing.length
+          ? `Please fill in: ${missing.join(", ")}.`
+          : "Could not save — try closing and opening the editor again."
+      );
       return;
     }
     setSaving(true);
@@ -155,7 +164,7 @@ export function TaskEditModal({
         project: projectId || null,
         centerId,
         departmentId,
-        functionTag: functionTag.trim(),
+        functionTag: functionTag.trim() || "general",
         requiredInputsSchema: {
           type: "object",
           properties: Object.fromEntries(
@@ -203,8 +212,14 @@ export function TaskEditModal({
       ) : (
         <>
           <div className="grid gap-3 md:grid-cols-2">
-            <Input placeholder="Title" value={title} onChange={(e) => setTitle(e.target.value)} className="md:col-span-2" />
-            <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} className="md:col-span-2 min-h-[80px]" />
+            <label className="md:col-span-2 block">
+              <span className="text-xs font-semibold text-zinc-500">Title *</span>
+              <Input placeholder="Task title" value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
+            </label>
+            <label className="md:col-span-2 block">
+              <span className="text-xs font-semibold text-zinc-500">Description</span>
+              <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 min-h-[80px]" />
+            </label>
             <Select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
               {types.map((tp) => (
                 <option key={tp} value={tp}>
@@ -226,7 +241,10 @@ export function TaskEditModal({
                 </option>
               ))}
             </Select>
-            <Input type="datetime-local" value={dueLocal} onChange={(e) => setDueLocal(e.target.value)} />
+            <label className="block">
+              <span className="text-xs font-semibold text-zinc-500">Due date *</span>
+              <Input type="datetime-local" value={dueLocal} onChange={(e) => setDueLocal(e.target.value)} className="mt-1" />
+            </label>
             <Select value={projectId} onChange={(e) => setProjectId(e.target.value)} className="md:col-span-2">
               <option value="">No project</option>
               {projects.map((p) => (
@@ -235,7 +253,9 @@ export function TaskEditModal({
                 </option>
               ))}
             </Select>
-            <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
+            <label className="block">
+              <span className="text-xs font-semibold text-zinc-500">Center *</span>
+              <Select value={centerId} onChange={(e) => setCenterId(e.target.value)} className="mt-1">
               <option value="">Select center</option>
               {centers.map((c) => (
                 <option key={c._id} value={c._id}>
@@ -243,7 +263,10 @@ export function TaskEditModal({
                 </option>
               ))}
             </Select>
-            <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+            </label>
+            <label className="block">
+              <span className="text-xs font-semibold text-zinc-500">Department *</span>
+              <Select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} className="mt-1">
               <option value="">Select department</option>
               {departments.map((d) => (
                 <option key={d._id} value={d._id}>
@@ -251,7 +274,11 @@ export function TaskEditModal({
                 </option>
               ))}
             </Select>
-            <Input placeholder="Function tag" value={functionTag} onChange={(e) => setFunctionTag(e.target.value)} />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Function tag</span>
+              <Input placeholder="e.g. daily_followup (optional)" value={functionTag} onChange={(e) => setFunctionTag(e.target.value)} className="mt-1" />
+            </label>
             <Input
               placeholder="Required inputs (comma separated)"
               value={requiredFieldsCsv}
