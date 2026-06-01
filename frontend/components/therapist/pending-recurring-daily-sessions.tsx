@@ -1015,10 +1015,28 @@ export function PendingRecurringDailySessions() {
                       </div>
                       {isTherapyPlan && (
                         <div className="mt-2 rounded-md bg-zinc-50 p-2 dark:bg-zinc-900">
-                          <div className="mb-1 text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Therapy Plan Details</div>
-                          <div className="space-y-2">
+                          <div className="mb-2 flex items-center justify-between">
+                            <div className="text-[11px] font-semibold text-zinc-600 dark:text-zinc-300">Therapy Plan Details</div>
+                            {!svRo && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setSheetTherapyPlanRowsByTask((prev) => ({
+                                    ...prev,
+                                    [row.key]: [...(prev[row.key] || [newTherapyPlanRow()]), newTherapyPlanRow()],
+                                  }))
+                                }
+                                className="flex h-8 w-8 items-center justify-center rounded-lg border border-brand-300 text-brand-700 hover:bg-brand-50 dark:border-brand-700 dark:text-brand-300 dark:hover:bg-brand-950/40"
+                                aria-label="Add therapy plan row"
+                                title="Add row"
+                              >
+                                <Plus className="h-4 w-4" />
+                              </button>
+                            )}
+                          </div>
+                          <div className="space-y-3">
                             {therapyPlanRows.map((plan) => (
-                              <div key={`m-${plan.id}`} className="grid gap-1">
+                              <div key={`m-${plan.id}`} className="grid gap-2 rounded-lg border border-zinc-200/80 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-950">
                                 <Input
                                   placeholder="Name"
                                   value={plan.name}
@@ -1032,6 +1050,30 @@ export function PendingRecurringDailySessions() {
                                   className="h-8 text-xs"
                                 />
                                 <Input
+                                  type="time"
+                                  value={plan.time}
+                                  readOnly={svRo}
+                                  onChange={(e) =>
+                                    setSheetTherapyPlanRowsByTask((prev) => ({
+                                      ...prev,
+                                      [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, time: e.target.value } : p)),
+                                    }))
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="Room no."
+                                  value={plan.roomNo}
+                                  readOnly={svRo}
+                                  onChange={(e) =>
+                                    setSheetTherapyPlanRowsByTask((prev) => ({
+                                      ...prev,
+                                      [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, roomNo: e.target.value } : p)),
+                                    }))
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                                <Input
                                   placeholder="Child"
                                   value={plan.child}
                                   readOnly={svRo}
@@ -1039,6 +1081,18 @@ export function PendingRecurringDailySessions() {
                                     setSheetTherapyPlanRowsByTask((prev) => ({
                                       ...prev,
                                       [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, child: e.target.value } : p)),
+                                    }))
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                                <Input
+                                  placeholder="Activity"
+                                  value={plan.activity}
+                                  readOnly={svRo}
+                                  onChange={(e) =>
+                                    setSheetTherapyPlanRowsByTask((prev) => ({
+                                      ...prev,
+                                      [row.key]: (prev[row.key] || []).map((p) => (p.id === plan.id ? { ...p, activity: e.target.value } : p)),
                                     }))
                                   }
                                   className="h-8 text-xs"
