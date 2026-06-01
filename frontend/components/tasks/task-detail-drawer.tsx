@@ -20,7 +20,7 @@ import {
   User2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { RejectTaskModal } from "./reject-task-modal";
 
@@ -87,6 +87,16 @@ export function TaskDetailDrawer({
   const [submissionRemarksDraft, setSubmissionRemarksDraft] = useState("");
   const [submitErr, setSubmitErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const remarksRef = useRef<HTMLTextAreaElement>(null);
+  const [keyboardInset, setKeyboardInset] = useState(0);
+
+  const scrollToSubmitSection = useCallback(() => {
+    const run = () => actionsRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    run();
+    window.setTimeout(run, 350);
+  }, []);
 
   const canApprove = Boolean(task && myId && (isCeoUser || String(task.createdBy?._id || "") === myId));
   const canSubmitForApproval = Boolean(
@@ -125,6 +135,7 @@ export function TaskDetailDrawer({
     const text = submissionRemarksDraft.trim();
     if (!text) {
       setSubmitErr("Please add remarks before submitting for approval.");
+      scrollToSubmitSection();
       return;
     }
     setSubmitErr("");
@@ -158,6 +169,27 @@ export function TaskDetailDrawer({
     };
   }, [open, onClose]);
 
+  useEffect(() => {
+    if (!open || typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const syncKeyboardInset = () => {
+      const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+      setKeyboardInset(inset > 80 ? inset : 0);
+    };
+    syncKeyboardInset();
+    vv.addEventListener("resize", syncKeyboardInset);
+    vv.addEventListener("scroll", syncKeyboardInset);
+    return () => {
+      vv.removeEventListener("resize", syncKeyboardInset);
+      vv.removeEventListener("scroll", syncKeyboardInset);
+      setKeyboardInset(0);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (submitErr) scrollToSubmitSection();
+  }, [submitErr, scrollToSubmitSection]);
+
   if (!open || !mounted) return null;
 
   const content = (
@@ -169,8 +201,7 @@ export function TaskDetailDrawer({
         onClick={onClose}
       />
       <aside
-        style={{ height: "100vh" }}
-        className="ml-auto flex w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl animate-pop-in dark:bg-zinc-950"
+        className="ml-auto flex h-[100dvh] max-h-[100dvh] w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl animate-pop-in dark:bg-zinc-950"
       >
         <div className="flex items-start justify-between gap-3 border-b border-zinc-100 p-5 dark:border-zinc-800">
           <div className="min-w-0 flex-1">
@@ -201,7 +232,12 @@ export function TaskDetailDrawer({
           </button>
         </div>
 
-        <div className="flex-1 space-y-5 overflow-y-auto p-5">
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+          style={{ paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined }}
+        >
+          <div className="space-y-5 p-5">
           {task?.description && (
             <section>
               <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-zinc-400">Description</div>
@@ -346,10 +382,10 @@ export function TaskDetailDrawer({
               </div>
             )}
           </section>
-        </div>
+          </div>
 
         {task && task.status !== "completed" && (
-          <div className="space-y-3 border-t border-zinc-100 p-4 dark:border-zinc-800">
+          <div className="space-y-3 border-t border-zinc-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:border-zinc-800 dark:bg-zinc-950">
             {task.status === "cancelled" ? (
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
                 <strong className="text-zinc-900 dark:text-zinc-100">This task was permanently closed.</strong>
@@ -384,11 +420,13 @@ export function TaskDetailDrawer({
                       Tell the person who assigned this task what you completed. They will see this in For Approval.
                     </p>
                     <Textarea
+                      ref={remarksRef}
                       value={submissionRemarksDraft}
                       onChange={(e) => {
                         setSubmissionRemarksDraft(e.target.value);
                         if (submitErr) setSubmitErr("");
                       }}
+                      onFocus={scrollToSubmitSection}
                       rows={3}
                       placeholder="What was completed, notes for reviewer…"
                       className="mt-2"
@@ -396,11 +434,11 @@ export function TaskDetailDrawer({
                     {submitErr ? <p className="mt-1.5 text-xs font-semibold text-rose-600">{submitErr}</p> : null}
                   </label>
                 ) : null}
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div ref={actionsRef} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div className="text-[11px] text-zinc-500">
                     Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
                   </div>
-                  <div className="flex flex-wrap justify-end gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                     {task.status === "awaiting_approval" || task.approvalStatus === "pending" ? (
                       canApprove ? (
                         <>
@@ -426,6 +464,7 @@ export function TaskDetailDrawer({
                           <Button
                             size="sm"
                             variant="outline"
+                            className="w-full sm:w-auto"
                             onClick={async () => {
                               await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) });
                               onUpdated?.();
@@ -439,6 +478,7 @@ export function TaskDetailDrawer({
                           <Button
                             size="sm"
                             variant="gradient"
+                            className="w-full sm:w-auto"
                             onClick={async () => {
                               await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
                               onUpdated?.();
@@ -448,7 +488,13 @@ export function TaskDetailDrawer({
                             Mark completed
                           </Button>
                         ) : canSubmitForApproval ? (
-                          <Button size="sm" variant="gradient" disabled={submitting} onClick={() => void submitForApproval()}>
+                          <Button
+                            size="sm"
+                            variant="gradient"
+                            className="w-full sm:w-auto"
+                            disabled={submitting}
+                            onClick={() => void submitForApproval()}
+                          >
                             {submitting ? "Submitting…" : "Submit for approval"}
                           </Button>
                         ) : null}
@@ -460,6 +506,7 @@ export function TaskDetailDrawer({
             )}
           </div>
         )}
+        </div>
       </aside>
     </div>
   );
