@@ -21,6 +21,7 @@ type SessionItem = {
   endedAt?: string;
   durationMinutes?: number;
   videoUrl?: string;
+  videoUploaded?: boolean;
   /** Therapist-entered session log notes */
   remarks?: string;
   planUpdated15d?: boolean;
