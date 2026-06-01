@@ -2,11 +2,12 @@
 
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
 import { canViewClinicalPerformance, formatRoleLine, isCeo } from "@/lib/roles";
 import { formatCenterName } from "@/lib/utils";
-import { Activity, ChevronDown, ChevronRight, Star } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Pencil, Star, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 type TherapistUser = { _id: string; name: string; email: string; role: string; executorKind?: string };
@@ -57,6 +58,17 @@ type TherapistSessionState = {
   items: SessionItem[];
 };
 
+type CeoSessionEditForm = {
+  sessionDate: string;
+  patientName: string;
+  startedAt: string;
+  durationMinutes: string;
+  videoUploaded: boolean;
+  remarks: string;
+  supervisorScore: string;
+  supervisorRemarks: string;
+};
+
 export default function TherapistPerformancePage() {
   const { user } = useAuth();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
@@ -74,10 +86,15 @@ export default function TherapistPerformancePage() {
   const [msg, setMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [expandedSessionTherapists, setExpandedSessionTherapists] = useState<Record<string, boolean>>({});
   const [sessionByTherapist, setSessionByTherapist] = useState<Record<string, TherapistSessionState>>({});
+  const [ceoEditSession, setCeoEditSession] = useState<SessionItem | null>(null);
+  const [ceoEditForm, setCeoEditForm] = useState<CeoSessionEditForm | null>(null);
+  const [ceoEditSaving, setCeoEditSaving] = useState(false);
+  const [ceoDeletingId, setCeoDeletingId] = useState<string | null>(null);
 
   const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
   const canFilterCenter = isCeo(user?.role);
+  const canCeoSessionAdmin = isCeo(user?.role);
 
   const load = useCallback(async () => {
     const qsPerf = new URLSearchParams();
@@ -175,10 +192,10 @@ export default function TherapistPerformancePage() {
     setSessionByTherapist({});
   }, [page, therapistId, from, to, centerId]);
 
-  async function loadTherapistSessions(therapist: TherapistUser) {
+  async function loadTherapistSessions(therapist: TherapistUser, force = false) {
     const therapistKey = String(therapist._id);
     const existing = sessionByTherapist[therapistKey];
-    if (existing?.loading || existing?.loaded) return;
+    if (!force && (existing?.loading || existing?.loaded)) return;
     setSessionByTherapist((prev) => ({
       ...prev,
       [therapistKey]: { loading: true, loaded: false, error: "", total: 0, items: [] },
@@ -218,6 +235,89 @@ export default function TherapistPerformancePage() {
           items: [],
         },
       }));
+    }
+  }
+
+  function openCeoEdit(s: SessionItem) {
+    setCeoEditSession(s);
+    setCeoEditForm({
+      sessionDate: s.sessionDate || "",
+      patientName: s.patientName || "",
+      startedAt: s.startedAt || "",
+      durationMinutes: String(s.durationMinutes ?? 0),
+      videoUploaded: Boolean(s.videoUploaded),
+      remarks: s.remarks || "",
+      supervisorScore: String(s.supervisorScore ?? 0),
+      supervisorRemarks: s.supervisorRemarks || "",
+    });
+  }
+
+  async function saveCeoEdit() {
+    if (!ceoEditSession || !ceoEditForm) return;
+    if (!ceoEditForm.patientName.trim()) {
+      setMsg({ type: "err", text: "Patient name is required." });
+      return;
+    }
+    setCeoEditSaving(true);
+    setMsg(null);
+    try {
+      await api(`/reports/therapist-sessions/${ceoEditSession._id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          sessionDate: ceoEditForm.sessionDate,
+          patientName: ceoEditForm.patientName.trim(),
+          startedAt: ceoEditForm.startedAt,
+          durationMinutes: Number(ceoEditForm.durationMinutes) || 0,
+          videoUploaded: ceoEditForm.videoUploaded,
+          remarks: ceoEditForm.remarks.trim(),
+          supervisorScore: Number(ceoEditForm.supervisorScore) || 0,
+          supervisorRemarks: ceoEditForm.supervisorRemarks.trim(),
+        }),
+      });
+      const therapistKey = String(ceoEditSession.therapistId?._id || "");
+      if (therapistKey) {
+        const therapist = therapists.find((t) => String(t._id) === therapistKey) || ceoEditSession.therapistId;
+        await loadTherapistSessions(therapist, true);
+      }
+      await load();
+      setCeoEditSession(null);
+      setCeoEditForm(null);
+      setMsg({ type: "ok", text: "Session updated." });
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof ApiError ? e.message : "Failed to update session." });
+    } finally {
+      setCeoEditSaving(false);
+    }
+  }
+
+  async function deleteCeoSession(s: SessionItem, therapist: TherapistUser) {
+    const ok = window.confirm(
+      `Delete session for "${s.patientName}" on ${s.sessionDate}? This removes it from all reports and cannot be undone.`
+    );
+    if (!ok) return;
+    setCeoDeletingId(s._id);
+    setMsg(null);
+    try {
+      await api(`/reports/therapist-sessions/${s._id}`, { method: "DELETE" });
+      const therapistKey = String(therapist._id);
+      setSessionByTherapist((prev) => {
+        const row = prev[therapistKey];
+        if (!row) return prev;
+        return {
+          ...prev,
+          [therapistKey]: {
+            ...row,
+            items: row.items.filter((x) => x._id !== s._id),
+            total: Math.max(0, row.total - 1),
+          },
+        };
+      });
+      await load();
+      setMsg({ type: "ok", text: "Session deleted." });
+    } catch (e) {
+      setMsg({ type: "err", text: e instanceof ApiError ? e.message : "Failed to delete session." });
+    } finally {
+      setCeoDeletingId(null);
     }
   }
 
@@ -400,6 +500,7 @@ export default function TherapistPerformancePage() {
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
           Same therapist list as measurements on this page. Click any therapist row to load and view that therapist&apos;s date-wise sessions.
+          {canCeoSessionAdmin ? " As CEO you can edit or delete any session." : ""}
         </p>
         <div className="mt-3 hidden overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] md:block">
           <table className="w-full min-w-[min(100%,360px)] text-sm">
@@ -474,6 +575,7 @@ export default function TherapistPerformancePage() {
                                     <th className="px-2 py-1.5">Video</th>
                                     <th className="px-2 py-1.5">Remarks</th>
                                     <th className="px-2 py-1.5">Marks</th>
+                                    {canCeoSessionAdmin ? <th className="px-2 py-1.5 text-right">Actions</th> : null}
                                   </tr>
                                 </thead>
                                 <tbody>
@@ -512,25 +614,48 @@ export default function TherapistPerformancePage() {
                                         )}
                                       </td>
                                       <td className="px-2 py-1.5">{s.supervisorScore || 0}/5</td>
+                                      {canCeoSessionAdmin ? (
+                                        <td className="px-2 py-1.5 text-right">
+                                          <div className="flex justify-end gap-1">
+                                            <button
+                                              type="button"
+                                              title="Edit session"
+                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-brand-600 dark:hover:bg-zinc-800"
+                                              onClick={() => openCeoEdit(s)}
+                                            >
+                                              <Pencil className="h-3.5 w-3.5" />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              title="Delete session"
+                                              disabled={ceoDeletingId === s._id}
+                                              className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-500 hover:bg-zinc-100 hover:text-rose-600 disabled:opacity-50 dark:hover:bg-zinc-800"
+                                              onClick={() => void deleteCeoSession(s, g.therapist)}
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      ) : null}
                                     </tr>
                                   ))}
                                   {detail?.error ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={7} className="px-2 py-3 text-xs text-rose-600">
+                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-rose-600">
                                         {detail.error}
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loading ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={7} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-zinc-500">
                                         Loading session details…
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loaded && !detail.items.length && (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={7} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-zinc-500">
                                         No uploaded sessions for selected date range.
                                       </td>
                                     </tr>
@@ -602,6 +727,23 @@ export default function TherapistPerformancePage() {
                             <span className="text-zinc-500">No video</span>
                           )}
                         </div>
+                        {canCeoSessionAdmin ? (
+                          <div className="mt-2 flex gap-2">
+                            <Button type="button" size="sm" variant="outline" className="h-8 gap-1 text-xs" onClick={() => openCeoEdit(s)}>
+                              <Pencil className="h-3 w-3" /> Edit
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-1 text-xs text-rose-600"
+                              disabled={ceoDeletingId === s._id}
+                              onClick={() => void deleteCeoSession(s, g.therapist)}
+                            >
+                              <Trash2 className="h-3 w-3" /> Delete
+                            </Button>
+                          </div>
+                        ) : null}
                       </div>
                     ))}
                   </div>
@@ -612,6 +754,84 @@ export default function TherapistPerformancePage() {
           {!sessionGroups.length && <div className="py-6 text-center text-sm text-zinc-500">No therapist records for selected filters.</div>}
         </div>
       </div>
+
+      <Modal
+        open={Boolean(ceoEditSession && ceoEditForm)}
+        title={ceoEditSession ? `Edit session — ${ceoEditSession.patientName}` : "Edit session"}
+        onClose={() => {
+          if (!ceoEditSaving) {
+            setCeoEditSession(null);
+            setCeoEditForm(null);
+          }
+        }}
+        className="max-w-lg max-h-[90vh] overflow-y-auto"
+      >
+        {ceoEditForm && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Date</span>
+              <Input type="date" value={ceoEditForm.sessionDate} onChange={(e) => setCeoEditForm((f) => (f ? { ...f, sessionDate: e.target.value } : f))} />
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Patient</span>
+              <Input value={ceoEditForm.patientName} onChange={(e) => setCeoEditForm((f) => (f ? { ...f, patientName: e.target.value } : f))} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-zinc-500">Start time</span>
+              <Input type="time" value={ceoEditForm.startedAt} onChange={(e) => setCeoEditForm((f) => (f ? { ...f, startedAt: e.target.value } : f))} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-zinc-500">Duration (min)</span>
+              <Input
+                type="number"
+                min={0}
+                value={ceoEditForm.durationMinutes}
+                onChange={(e) => setCeoEditForm((f) => (f ? { ...f, durationMinutes: e.target.value } : f))}
+              />
+            </label>
+            <label className="flex items-center gap-2 sm:col-span-2">
+              <input
+                type="checkbox"
+                checked={ceoEditForm.videoUploaded}
+                onChange={(e) => setCeoEditForm((f) => (f ? { ...f, videoUploaded: e.target.checked } : f))}
+                className="h-4 w-4 rounded border-zinc-300"
+              />
+              <span className="text-xs font-semibold text-zinc-600">Video uploaded</span>
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Therapist remarks</span>
+              <Textarea rows={2} value={ceoEditForm.remarks} onChange={(e) => setCeoEditForm((f) => (f ? { ...f, remarks: e.target.value } : f))} />
+            </label>
+            <label className="space-y-1">
+              <span className="text-xs font-semibold text-zinc-500">Supervisor marks /5</span>
+              <Input
+                type="number"
+                min={0}
+                max={5}
+                step="0.5"
+                value={ceoEditForm.supervisorScore}
+                onChange={(e) => setCeoEditForm((f) => (f ? { ...f, supervisorScore: e.target.value } : f))}
+              />
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Supervisor remarks</span>
+              <Textarea
+                rows={2}
+                value={ceoEditForm.supervisorRemarks}
+                onChange={(e) => setCeoEditForm((f) => (f ? { ...f, supervisorRemarks: e.target.value } : f))}
+              />
+            </label>
+            <div className="flex justify-end gap-2 sm:col-span-2">
+              <Button variant="outline" disabled={ceoEditSaving} onClick={() => { setCeoEditSession(null); setCeoEditForm(null); }}>
+                Cancel
+              </Button>
+              <Button variant="gradient" disabled={ceoEditSaving} onClick={() => void saveCeoEdit()}>
+                {ceoEditSaving ? "Saving…" : "Save changes"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {canMark && (
         <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">

@@ -109,6 +109,54 @@ function setCachedPerf(key, value) {
   perfCache.set(key, { ts: Date.now(), value });
 }
 
+function clearPerfCache() {
+  perfCache.clear();
+}
+
+function applyTherapistSessionFields(session, body) {
+  if (body.sessionDate !== undefined) {
+    const next = String(body.sessionDate || "").trim();
+    if (next) session.sessionDate = next;
+  }
+  if (body.patientName !== undefined) {
+    const name = String(body.patientName || "").trim();
+    if (name) session.patientName = name;
+  }
+  if (body.patientCode !== undefined) session.patientCode = String(body.patientCode || "");
+  if (body.startedAt !== undefined) session.startedAt = String(body.startedAt || "");
+  if (body.endedAt !== undefined) session.endedAt = String(body.endedAt || "");
+  if (body.durationMinutes !== undefined) {
+    const requestedDuration = Number(body.durationMinutes);
+    const startedAt = body.startedAt !== undefined ? String(body.startedAt || "") : session.startedAt;
+    const endedAt = body.endedAt !== undefined ? String(body.endedAt || "") : session.endedAt;
+    session.durationMinutes =
+      requestedDuration > 0 ? requestedDuration : Number(startedAt && endedAt ? 30 : session.durationMinutes || 0);
+  }
+  if (body.videoUploaded !== undefined) session.videoUploaded = Boolean(body.videoUploaded);
+  if (body.videoUrl !== undefined) session.videoUrl = String(body.videoUrl || "");
+  if (body.attendanceMarked !== undefined) session.attendanceMarked = Boolean(body.attendanceMarked);
+  if (body.planUpdated15d !== undefined) session.planUpdated15d = Boolean(body.planUpdated15d);
+  if (body.newActivity15d !== undefined) session.newActivity15d = Boolean(body.newActivity15d);
+  if (body.newActivityText !== undefined) session.newActivityText = String(body.newActivityText || "");
+  if (body.monthlyTestDone !== undefined) session.monthlyTestDone = Boolean(body.monthlyTestDone);
+  if (body.monthlyTestNotes !== undefined) session.monthlyTestNotes = String(body.monthlyTestNotes || "");
+  if (body.remarks !== undefined) session.remarks = String(body.remarks || "").trim().slice(0, 2000);
+  if (body.supervisorScore !== undefined) {
+    session.supervisorScore = Math.max(0, Math.min(5, Number(body.supervisorScore) || 0));
+  }
+  if (body.supervisorRemarks !== undefined) {
+    session.supervisorRemarks = String(body.supervisorRemarks || "").trim();
+  }
+}
+
+async function populatedTherapistSession(id) {
+  return TherapistSession.findById(id)
+    .populate("therapistId", "name email role executorKind")
+    .populate("centerId", "name code")
+    .populate("markedBy", "name role")
+    .lean();
+}
+
 function dateInTz(value, timeZone = "Asia/Kolkata") {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
@@ -626,7 +674,9 @@ router.get("/therapist-sessions", async (req, res) => {
 
 router.patch("/therapist-sessions/:id/marks", async (req, res) => {
   const me = await actor(req);
-  if (req.userRole !== "supervisor") return res.status(403).json({ message: "Only supervisors can rate therapists" });
+  if (req.userRole !== "supervisor" && !isCeo(req.userRole)) {
+    return res.status(403).json({ message: "Only supervisors or the CEO can rate therapists" });
+  }
 
   const session = await TherapistSession.findById(req.params.id);
   if (!session) return res.status(404).json({ message: "Session not found" });
@@ -640,17 +690,30 @@ router.patch("/therapist-sessions/:id/marks", async (req, res) => {
   session.markedBy = req.userId;
   session.markedAt = new Date();
   await session.save();
+  clearPerfCache();
 
-  const populated = await TherapistSession.findById(session._id)
-    .populate("therapistId", "name email role executorKind")
-    .populate("centerId", "name code")
-    .populate("markedBy", "name role")
-    .lean();
+  const populated = await populatedTherapistSession(session._id);
   res.json({ session: populated });
 });
 
 router.patch("/therapist-sessions/:id", async (req, res) => {
   const me = await actor(req);
+  const session = await TherapistSession.findById(req.params.id);
+  if (!session) return res.status(404).json({ message: "Session not found" });
+
+  if (isCeo(req.userRole)) {
+    applyTherapistSessionFields(session, req.body);
+    if (!session.patientName) return res.status(400).json({ message: "Patient name is required" });
+    if (req.body.supervisorScore !== undefined || req.body.supervisorRemarks !== undefined) {
+      session.markedBy = req.userId;
+      session.markedAt = new Date();
+    }
+    await session.save();
+    clearPerfCache();
+    const populated = await populatedTherapistSession(session._id);
+    return res.json({ session: populated });
+  }
+
   const meUser = await User.findById(req.userId).select("_id role executorKind centerId").lean();
   const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
   const isSupervisor = meUser?.role === "supervisor";
@@ -658,9 +721,7 @@ router.patch("/therapist-sessions/:id", async (req, res) => {
     return res.status(403).json({ message: "Only therapists or supervisors can edit sessions" });
   }
 
-  const session = await TherapistSession.findById(req.params.id);
-  if (!session) return res.status(404).json({ message: "Session not found" });
-  if (!isCeo(req.userRole) && String(session.centerId || "") !== String(me?.centerId || "")) {
+  if (String(session.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can edit sessions from your center only" });
   }
   if (String(session.createdBy || "") !== String(req.userId || "")) {
@@ -672,37 +733,13 @@ router.patch("/therapist-sessions/:id", async (req, res) => {
     return res.status(403).json({ message: "Session can be edited only on the upload day" });
   }
 
-  const nextSessionDate = req.body.sessionDate !== undefined ? String(req.body.sessionDate || "").trim() : session.sessionDate;
   const patientName = req.body.patientName !== undefined ? String(req.body.patientName || "").trim() : session.patientName;
   if (!patientName) return res.status(400).json({ message: "Patient name is required" });
 
-  const startedAt = req.body.startedAt !== undefined ? String(req.body.startedAt || "") : session.startedAt;
-  const endedAt = req.body.endedAt !== undefined ? String(req.body.endedAt || "") : session.endedAt;
-  const requestedDuration = req.body.durationMinutes !== undefined ? Number(req.body.durationMinutes) : Number(session.durationMinutes || 0);
-  const durationMinutes = requestedDuration > 0 ? requestedDuration : Number(startedAt && endedAt ? 30 : 0);
-
-  session.sessionDate = nextSessionDate || session.sessionDate;
-  session.patientName = patientName;
-  session.patientCode = req.body.patientCode !== undefined ? String(req.body.patientCode || "") : session.patientCode;
-  session.startedAt = startedAt;
-  session.endedAt = endedAt;
-  session.durationMinutes = durationMinutes;
-  if (req.body.videoUploaded !== undefined) session.videoUploaded = Boolean(req.body.videoUploaded);
-  if (req.body.videoUrl !== undefined) session.videoUrl = String(req.body.videoUrl || "");
-  if (req.body.attendanceMarked !== undefined) session.attendanceMarked = Boolean(req.body.attendanceMarked);
-  if (req.body.planUpdated15d !== undefined) session.planUpdated15d = Boolean(req.body.planUpdated15d);
-  if (req.body.newActivity15d !== undefined) session.newActivity15d = Boolean(req.body.newActivity15d);
-  if (req.body.newActivityText !== undefined) session.newActivityText = String(req.body.newActivityText || "");
-  if (req.body.monthlyTestDone !== undefined) session.monthlyTestDone = Boolean(req.body.monthlyTestDone);
-  if (req.body.monthlyTestNotes !== undefined) session.monthlyTestNotes = String(req.body.monthlyTestNotes || "");
-  if (req.body.remarks !== undefined) session.remarks = String(req.body.remarks || "").trim().slice(0, 2000);
-
+  applyTherapistSessionFields(session, req.body);
   await session.save();
-  const populated = await TherapistSession.findById(session._id)
-    .populate("therapistId", "name email role executorKind")
-    .populate("centerId", "name code")
-    .populate("markedBy", "name role")
-    .lean();
+  clearPerfCache();
+  const populated = await populatedTherapistSession(session._id);
   res.json({ session: populated });
 });
 
@@ -718,6 +755,7 @@ router.delete("/therapist-sessions/:id", async (req, res) => {
   const isElevated = isCeo(req.userRole) || role === "centre_head";
   if (isElevated) {
     await TherapistSession.deleteOne({ _id: session._id });
+    clearPerfCache();
     return res.status(204).end();
   }
 
@@ -735,6 +773,7 @@ router.delete("/therapist-sessions/:id", async (req, res) => {
   }
 
   await TherapistSession.deleteOne({ _id: session._id });
+  clearPerfCache();
   return res.status(204).end();
 });
 
