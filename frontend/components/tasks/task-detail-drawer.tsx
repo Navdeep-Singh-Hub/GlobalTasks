@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { api, ApiError, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { isCeo, isManagement } from "@/lib/roles";
+import { isCeo } from "@/lib/roles";
 import {
   CalendarDays,
   Download,
@@ -44,6 +44,11 @@ type TaskDetail = {
   rejectionRemarks?: string;
   rejectionMode?: string;
   submissionRemarks?: string;
+  notDoneApproval?: {
+    dueDate?: string;
+    remarks?: string;
+    status?: string;
+  };
   createdAt?: string;
   completedAt?: string | null;
 };
@@ -99,14 +104,27 @@ export function TaskDetailDrawer({
   }, []);
 
   const canApprove = Boolean(task && myId && (isCeoUser || String(task.createdBy?._id || "") === myId));
+  const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
+  const isRecurringTask = Boolean(task && task.taskType !== "one_time");
+  const assigneeBlockedByCompletionApproval =
+    task?.status === "awaiting_approval" || task?.approvalStatus === "pending";
   const canSubmitForApproval = Boolean(
     task &&
       myId &&
       !isCeoUser &&
       task.assignees?.some((a) => String(a._id) === myId) &&
-      task.status !== "awaiting_approval" &&
-      task.approvalStatus !== "pending"
+      !assigneeBlockedByCompletionApproval &&
+      (!hasPendingNotDone || isRecurringTask)
   );
+  const canMarkNotDone = Boolean(
+    task &&
+      myId &&
+      !isCeoUser &&
+      task.assignees?.some((a) => String(a._id) === myId) &&
+      !assigneeBlockedByCompletionApproval &&
+      !hasPendingNotDone
+  );
+  const canApproveNotDone = Boolean(canApprove && hasPendingNotDone);
 
   useEffect(() => setMounted(true), []);
 
@@ -129,6 +147,31 @@ export function TaskDetailDrawer({
       setSubmitting(false);
     }
   }, [open, taskId, load]);
+
+  const markNotDone = async () => {
+    if (!task) return;
+    const text = submissionRemarksDraft.trim();
+    if (!text) {
+      setSubmitErr("Please add remarks explaining why this was not done.");
+      scrollToSubmitSection();
+      return;
+    }
+    setSubmitErr("");
+    setSubmitting(true);
+    try {
+      await api(`/tasks/${task._id}/not-done`, {
+        method: "POST",
+        body: JSON.stringify({ submissionRemarks: text }),
+      });
+      onUpdated?.();
+      load();
+      setSubmissionRemarksDraft("");
+    } catch (e) {
+      setSubmitErr(e instanceof ApiError ? e.message : "Could not mark as not done.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   const submitForApproval = async () => {
     if (!task) return;
@@ -398,12 +441,25 @@ export function TaskDetailDrawer({
               </div>
             ) : (
               <>
-                {(task.status === "awaiting_approval" || task.approvalStatus === "pending") && (
+                {(task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone) && (
                   <div className="space-y-2">
                     <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
-                      <strong>Waiting for approval.</strong> The person who assigned this task must approve before it is
-                      marked completed
-                      {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
+                      {hasPendingNotDone ? (
+                        <>
+                          <strong>Not done — waiting for assigner.</strong> An assignee reported this occurrence as not done
+                          {task.notDoneApproval?.dueDate
+                            ? ` (due ${new Date(task.notDoneApproval.dueDate).toLocaleDateString()})`
+                            : ""}
+                          .
+                          {task.taskType !== "one_time" ? " The task has moved to the next due date for the assignee." : ""}
+                        </>
+                      ) : (
+                        <>
+                          <strong>Waiting for approval.</strong> The person who assigned this task must approve before it is
+                          marked completed
+                          {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
+                        </>
+                      )}
                     </div>
                     {task.submissionRemarks ? (
                       <div className="rounded-xl border border-brand-200 bg-brand-50/80 px-3 py-2.5 text-xs text-brand-950 dark:border-brand-900/50 dark:bg-brand-950/40 dark:text-brand-100">
@@ -413,11 +469,11 @@ export function TaskDetailDrawer({
                     ) : null}
                   </div>
                 )}
-                {canSubmitForApproval ? (
+                {(canSubmitForApproval || canMarkNotDone) ? (
                   <label className="block">
-                    <span className="text-xs font-semibold text-zinc-500">Submission remarks *</span>
+                    <span className="text-xs font-semibold text-zinc-500">Remarks *</span>
                     <p className="mt-0.5 text-[11px] text-zinc-500">
-                      Tell the person who assigned this task what you completed. They will see this in For Approval.
+                      Required for <strong>Submit for approval</strong> or <strong>Not done</strong>. Your assigner will see this in For Approval.
                     </p>
                     <Textarea
                       ref={remarksRef}
@@ -439,39 +495,39 @@ export function TaskDetailDrawer({
                     Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-                    {task.status === "awaiting_approval" || task.approvalStatus === "pending" ? (
-                      canApprove ? (
+                    {task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone ? (
+                      canApprove || canApproveNotDone ? (
                         <>
-                          <Button size="sm" variant="outline" onClick={() => setRejectOpen(true)}>
-                            Reject
-                          </Button>
+                          {!canApproveNotDone && (
+                            <Button size="sm" variant="outline" onClick={() => setRejectOpen(true)}>
+                              Reject
+                            </Button>
+                          )}
                           <Button
                             size="sm"
                             variant="gradient"
+                            className="w-full sm:w-auto"
                             onClick={async () => {
                               await api(`/tasks/${task._id}/approve`, { method: "POST" });
                               onUpdated?.();
                               load();
                             }}
                           >
-                            Approve & complete
+                            {canApproveNotDone ? "Acknowledge not done" : "Approve & complete"}
                           </Button>
                         </>
                       ) : null
                     ) : (
                       <>
-                        {(canSubmitForApproval || isManagement(me?.role)) && (
+                        {canMarkNotDone && (
                           <Button
                             size="sm"
                             variant="outline"
                             className="w-full sm:w-auto"
-                            onClick={async () => {
-                              await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "in_progress" }) });
-                              onUpdated?.();
-                              load();
-                            }}
+                            disabled={submitting}
+                            onClick={() => void markNotDone()}
                           >
-                            Not done
+                            {submitting ? "Saving…" : "Not done"}
                           </Button>
                         )}
                         {isCeoUser ? (

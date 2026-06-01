@@ -50,6 +50,14 @@ const taskSchema = new mongoose.Schema(
     rejectionMode: { type: String, default: "" },
     /** Assignee notes when submitting completion for approval (visible to task assigner). */
     submissionRemarks: { type: String, default: "" },
+    /** Assignee marked an occurrence as not done — assigner reviews in For Approval. */
+    notDoneApproval: {
+      dueDate: { type: Date, default: null },
+      remarks: { type: String, default: "" },
+      submittedAt: { type: Date, default: null },
+      submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      status: { type: String, enum: ["pending", "acknowledged"], default: null },
+    },
 
     attachments: { type: [attachmentSchema], default: [] },
     voiceNoteUrl: { type: String, default: "" },

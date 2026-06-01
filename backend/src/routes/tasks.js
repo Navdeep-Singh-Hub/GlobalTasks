@@ -117,7 +117,11 @@ function buildFilter(query, userId, role) {
   if (recurring === "false") filter.taskType = "one_time";
   if (approval === "true") {
     const approvalClause = {
-      $or: [{ status: "awaiting_approval" }, { requiresApproval: true, approvalStatus: "pending" }],
+      $or: [
+        { status: "awaiting_approval" },
+        { requiresApproval: true, approvalStatus: "pending" },
+        { "notDoneApproval.status": "pending" },
+      ],
     };
     if (search) {
       filter.$and = [{ $or: filter.$or }, approvalClause];
@@ -551,6 +555,85 @@ router.post("/bulk", async (req, res) => {
   res.json({ ok: true });
 });
 
+router.post("/:id/not-done", async (req, res) => {
+  try {
+    const me = await actor(req);
+    const task = await Task.findById(req.params.id);
+    if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can mark tasks from your center only" });
+    }
+    if (!userIsAssigneeOnTask(task, req.userId)) {
+      return res.status(403).json({ message: "Only assignees can mark a task as not done" });
+    }
+    if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
+      return res.status(400).json({ message: "This task is already waiting for approval" });
+    }
+    if (task.notDoneApproval?.status === "pending") {
+      return res.status(400).json({ message: "A not-done request is already pending approval" });
+    }
+
+    const remarks = String(req.body.submissionRemarks || req.body.remarks || "Not done for this occurrence").trim();
+    if (!remarks) {
+      return res.status(400).json({ message: "Remarks are required when marking a task as not done" });
+    }
+
+    const occurrenceDue = task.dueDate;
+    task.notDoneApproval = {
+      dueDate: occurrenceDue,
+      remarks,
+      submittedAt: new Date(),
+      submittedBy: req.userId,
+      status: "pending",
+    };
+    task.submissionRemarks = remarks;
+    task.completedAt = null;
+
+    const actorUser = await User.findById(req.userId).lean();
+    let advanced = false;
+    if (isRecurring(task.taskType)) {
+      advanced = await advanceIfRecurring(task, req.userId, actorUser?.name);
+      if (!advanced) {
+        task.status = "awaiting_approval";
+      }
+    } else {
+      task.status = "awaiting_approval";
+    }
+
+    await task.save();
+    await TaskEvent.create({
+      taskId: task._id,
+      actorId: req.userId,
+      eventType: "not_done",
+      meta: { dueDate: occurrenceDue, remarks },
+    });
+
+    const dueLabel = occurrenceDue ? new Date(occurrenceDue).toLocaleDateString() : "this occurrence";
+    const snippet = remarks.slice(0, 240) + (remarks.length > 240 ? "…" : "");
+    await notifyMany([task.createdBy], {
+      type: "task_approval_request",
+      title: "Assignee marked task as not done",
+      message: `"${task.title}" was marked not done for ${dueLabel}.${advanced ? " Next occurrence is scheduled." : ""} Remarks: ${snippet}`,
+      link: "/for-approval",
+    });
+
+    if (task.assignees?.length) {
+      await notifyMany(task.assignees, {
+        type: "task_status",
+        title: "Occurrence marked not done",
+        message: advanced
+          ? `${task.title} — not done for ${dueLabel}. Next due ${new Date(task.dueDate).toLocaleDateString()}.`
+          : `${task.title} — marked not done and sent to your assigner for review.`,
+        link: "/pending-recurring",
+      });
+    }
+
+    res.json({ task });
+  } catch (e) {
+    res.status(500).json({ message: e.message || "Could not mark task as not done" });
+  }
+});
+
 router.post("/:id/approve", async (req, res) => {
   const me = await actor(req);
   const task = await Task.findById(req.params.id);
@@ -561,6 +644,26 @@ router.post("/:id/approve", async (req, res) => {
   if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
     return res.status(403).json({ message: "Only the assigner can approve this task" });
   }
+
+  if (task.notDoneApproval?.status === "pending") {
+    task.notDoneApproval.status = "acknowledged";
+    task.submissionRemarks = "";
+    if (task.status === "awaiting_approval" && !isRecurring(task.taskType)) {
+      task.status = "pending";
+    }
+    await task.save();
+    await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "not_done_acknowledged", meta: {} });
+    if (task.assignees?.length) {
+      await notifyMany(task.assignees, {
+        type: "task_approved",
+        title: "Not done acknowledged",
+        message: `Your assigner acknowledged that "${task.title}" was not done for the reported occurrence.`,
+        link: isRecurring(task.taskType) ? "/pending-recurring" : "/pending-single",
+      });
+    }
+    return res.json({ task });
+  }
+
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
