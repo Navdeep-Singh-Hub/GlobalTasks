@@ -37,6 +37,7 @@ type TaskDetail = {
   attachments?: Attachment[];
   voiceNoteUrl?: string;
   assignees?: { _id: string; name: string; email: string }[];
+  assignedBy?: { _id: string; name: string; email?: string };
   createdBy?: { _id: string; name: string; email?: string };
   project?: { name?: string };
   requiresApproval?: boolean;
@@ -103,7 +104,8 @@ export function TaskDetailDrawer({
     window.setTimeout(run, 350);
   }, []);
 
-  const canApprove = Boolean(task && myId && (isCeoUser || String(task.createdBy?._id || "") === myId));
+  const assignerId = task ? String(task.assignedBy?._id || task.createdBy?._id || "") : "";
+  const canApprove = Boolean(task && myId && (isCeoUser || assignerId === myId));
   const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
   const assigneeBlockedByCompletionApproval =
@@ -298,8 +300,8 @@ export function TaskDetailDrawer({
             <InfoCard
               icon={User2}
               label="Assigned by"
-              value={task?.createdBy?.name || "—"}
-              sub={task?.createdBy?.email}
+              value={task?.assignedBy?.name || task?.createdBy?.name || "—"}
+              sub={task?.assignedBy?.email || task?.createdBy?.email}
             />
             <InfoCard
               icon={User2}

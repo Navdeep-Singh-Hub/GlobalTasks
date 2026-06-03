@@ -28,7 +28,8 @@ type Task = {
   approvalStatus?: string;
   project?: { name: string };
   assignees?: { _id: string; name: string; email: string }[];
-  createdBy?: { _id: string; name: string };
+  assignedBy?: { _id: string; name: string; email?: string };
+  createdBy?: { _id: string; name: string; email?: string };
   submissionRemarks?: string;
   notDoneApproval?: { dueDate?: string; remarks?: string; status?: string };
   attachments?: { name: string; url?: string }[];
@@ -41,6 +42,20 @@ type Preset = {
   statusGroup?: "open";
   approval?: boolean;
 };
+
+function taskAssigner(t: Task) {
+  return t.assignedBy || t.createdBy;
+}
+
+function UserNameEmail({ name, email }: { name?: string; email?: string }) {
+  if (!name && !email) return <span>—</span>;
+  return (
+    <span className="block">
+      {name ? <span className="text-zinc-700 dark:text-zinc-200">{name}</span> : null}
+      {email ? <span className="block text-[10px] font-normal text-zinc-500">{email}</span> : null}
+    </span>
+  );
+}
 
 const CADENCE_LABEL: Record<string, string> = {
   one_time: "One Time",
@@ -68,8 +83,8 @@ export function TasksView({
 }) {
   const { user } = useAuth();
   const myId = user?._id ? String(user._id) : "";
-  const canManageOwnMasterTask = (t: Task) =>
-    Boolean(masterAdminActions && myId && String(t.createdBy?._id || "") === myId);
+  const taskAssignerId = (t: Task) => String(t.assignedBy?._id || t.createdBy?._id || "");
+  const canManageOwnMasterTask = (t: Task) => Boolean(masterAdminActions && myId && taskAssignerId(t) === myId);
   const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -449,7 +464,9 @@ export function TasksView({
                           {t.priority.toUpperCase()}
                         </Badge>
                       </td>
-                      <td className="p-3 text-zinc-700 dark:text-zinc-200">{t.createdBy?.name || "—"}</td>
+                      <td className="p-3">
+                        <UserNameEmail name={taskAssigner(t)?.name} email={taskAssigner(t)?.email} />
+                      </td>
                       <td className="p-3">
                         <div className="flex flex-wrap gap-1">
                           {t.assignees?.length ? (
@@ -570,17 +587,29 @@ export function TasksView({
                   </div>
                 ) : null}
                 {masterAdminActions ? (
-                  <div className="mt-2 text-[11px] text-zinc-500">
+                  <div className="mt-2 space-y-1.5 text-[11px] text-zinc-500">
                     {masterRelation === "created" ? (
-                      <>
-                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned to: </span>
-                        {t.assignees?.map((a) => a.name).join(", ") || "—"}
-                      </>
+                      <div>
+                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned to</span>
+                        {t.assignees?.length ? (
+                          <ul className="mt-0.5 space-y-1">
+                            {t.assignees.map((a) => (
+                              <li key={a._id}>
+                                <UserNameEmail name={a.name} email={a.email} />
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <span className="mt-0.5 block">—</span>
+                        )}
+                      </div>
                     ) : (
-                      <>
-                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned by: </span>
-                        {t.createdBy?.name || "—"}
-                      </>
+                      <div>
+                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned by</span>
+                        <div className="mt-0.5">
+                          <UserNameEmail name={taskAssigner(t)?.name} email={taskAssigner(t)?.email} />
+                        </div>
+                      </div>
                     )}
                   </div>
                 ) : null}
@@ -600,9 +629,11 @@ export function TasksView({
                     </Badge>
                   )}
                 </div>
-                <div className="mt-3 flex items-center justify-between text-[11px] text-zinc-500">
+                <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-zinc-500">
                   <span>Due {new Date(t.dueDate).toLocaleDateString()}</span>
-                  <span>{t.assignees?.[0]?.name || "Unassigned"}</span>
+                  {!masterAdminActions && (
+                    <span className="truncate text-right">{t.assignees?.[0]?.name || "Unassigned"}</span>
+                  )}
                 </div>
               </button>
               {(showApprovalQuickActions && rowNeedsApproval(t)) || canManageOwnMasterTask(t) ? (
