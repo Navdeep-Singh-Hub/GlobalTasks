@@ -42,11 +42,16 @@ function fmt(dt?: string | null) {
 }
 
 function statusLabel(s: string) {
-  if (s === "pending") return "Awaiting approval";
+  if (s === "pending") return "Waiting for approval";
   if (s === "approved") return "Approved";
   if (s === "not_done_acknowledged") return "Not done acknowledged";
   if (s === "rejected") return "Rejected";
   return s;
+}
+
+function closedLabel(r: ApprovalRecord) {
+  if (r.status === "pending") return "—";
+  return fmt(r.approvedAt || r.rejectedAt);
 }
 
 export function AssigneeApprovalHistory() {
@@ -103,9 +108,8 @@ export function AssigneeApprovalHistory() {
     <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
       <h2 className="text-lg font-bold">Task approval history</h2>
       <p className="mt-1 text-sm text-zinc-500">
-        Select someone you assigned tasks to. See every submission, approval, due date, and remarks — including daily recurring
-        occurrences. Clear the date filters to see all time. Rows appear after tasks are submitted and approved; ask your admin to
-        run a one-time history backfill if older approvals are missing.
+        Select someone you assigned tasks to. See tasks waiting for approval, plus submitted, approved, and rejected history —
+        including daily recurring occurrences. Clear the date filters to see all time.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -144,7 +148,7 @@ export function AssigneeApprovalHistory() {
               <div className="text-lg font-bold">{summary.total}</div>
             </div>
             <div className="rounded-lg bg-amber-50 p-2 text-center text-xs dark:bg-amber-950/40">
-              <div className="font-semibold text-amber-700">Pending</div>
+              <div className="font-semibold text-amber-700">Waiting for approval</div>
               <div className="text-lg font-bold">{summary.pending}</div>
             </div>
             <div className="rounded-lg bg-emerald-50 p-2 text-center text-xs dark:bg-emerald-950/40">
@@ -175,7 +179,7 @@ export function AssigneeApprovalHistory() {
                   <th className="px-2 py-2">Type</th>
                   <th className="px-2 py-2">Due (occurrence)</th>
                   <th className="px-2 py-2">Submitted</th>
-                  <th className="px-2 py-2">Approved / closed</th>
+                  <th className="px-2 py-2">Approved / rejected</th>
                   <th className="px-2 py-2">Status</th>
                   <th className="px-2 py-2">Remarks</th>
                 </tr>
@@ -187,7 +191,7 @@ export function AssigneeApprovalHistory() {
                     <td className="px-2 py-2">{TASK_TYPE_LABELS[r.taskType] || r.taskType}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{fmt(r.occurrenceDueDate)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{fmt(r.submittedAt)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{fmt(r.approvedAt || r.rejectedAt)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{closedLabel(r)}</td>
                     <td className="px-2 py-2">
                       <span
                         className={
@@ -195,7 +199,7 @@ export function AssigneeApprovalHistory() {
                             ? "text-emerald-600"
                             : r.status === "rejected"
                               ? "text-rose-600"
-                              : "text-amber-600"
+                              : "font-medium text-amber-600"
                         }
                       >
                         {statusLabel(r.status)}
@@ -228,7 +232,7 @@ export function AssigneeApprovalHistory() {
                 <div className="mt-2 grid gap-1 text-zinc-600 dark:text-zinc-300">
                   <div>Due: {fmt(r.occurrenceDueDate)}</div>
                   <div>Submitted: {fmt(r.submittedAt)}</div>
-                  <div>Approved/closed: {fmt(r.approvedAt || r.rejectedAt)}</div>
+                  <div>Approved/rejected: {closedLabel(r)}</div>
                   {r.submissionRemarks ? <div>Remarks: {r.submissionRemarks}</div> : null}
                 </div>
               </div>

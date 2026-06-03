@@ -147,6 +147,76 @@ export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, 
   return q;
 }
 
+function occurrenceDayKey(d) {
+  if (!d) return "";
+  return new Date(d).toISOString().slice(0, 10);
+}
+
+/** Tasks currently waiting in For Approval (includes rows without a history record yet). */
+export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, isCeoRole, from, to }) {
+  const taskFilter = {
+    deletedAt: null,
+    assignees: assigneeId,
+    ...assignerScopeClause(userId),
+    $or: [
+      { status: "awaiting_approval", approvalStatus: "pending" },
+      { requiresApproval: true, approvalStatus: "pending", status: "awaiting_approval" },
+      { "notDoneApproval.status": "pending" },
+    ],
+  };
+  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
+
+  const tasks = await Task.find(taskFilter)
+    .select("_id title taskType dueDate submissionRemarks updatedAt notDoneApproval")
+    .lean();
+
+  const rows = [];
+  for (const t of tasks) {
+    const isNotDone = t.notDoneApproval?.status === "pending";
+    const submittedAt = isNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
+    const occurrenceDueDate = isNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
+    const remarks = isNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;
+
+    if (from || to) {
+      const sub = new Date(submittedAt);
+      if (from && sub < new Date(String(from))) continue;
+      if (to) {
+        const end = new Date(String(to));
+        end.setHours(23, 59, 59, 999);
+        if (sub > end) continue;
+      }
+    }
+
+    rows.push({
+      _id: `live-${t._id}-${occurrenceDayKey(occurrenceDueDate)}`,
+      taskId: t._id,
+      taskTitle: t.title,
+      taskType: t.taskType,
+      occurrenceDueDate,
+      submittedAt,
+      submissionRemarks: String(remarks || "").trim(),
+      status: "pending",
+      kind: isNotDone ? "not_done" : "completion",
+      approvedAt: null,
+      approvedBy: null,
+      rejectedAt: null,
+      rejectedBy: null,
+      live: true,
+    });
+  }
+  return rows;
+}
+
+export function mergeAssigneeApprovalRows(records, livePending) {
+  const covered = new Set(
+    records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
+  );
+  const extra = livePending.filter(
+    (p) => !covered.has(`${String(p.taskId)}-${occurrenceDayKey(p.occurrenceDueDate)}`)
+  );
+  return [...extra, ...records].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+}
+
 /** Rebuild approval rows from TaskEvent (approved / rejected / submit via awaiting_approval). */
 export async function backfillApprovalRecordsFromEvents() {
   const tasks = await Task.find({

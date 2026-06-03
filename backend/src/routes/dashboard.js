@@ -9,7 +9,12 @@ import { isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
 import { isManagement } from "../constants/roles.js";
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
-import { listMyAssignees, buildAssigneeHistoryQuery } from "../services/taskApprovalHistory.js";
+import {
+  listMyAssignees,
+  buildAssigneeHistoryQuery,
+  fetchLivePendingApprovals,
+  mergeAssigneeApprovalRows,
+} from "../services/taskApprovalHistory.js";
 
 const router = Router();
 router.use(authRequired);
@@ -359,16 +364,29 @@ router.get("/assignee-approval-history", async (req, res) => {
     to: req.query.to,
   });
 
-  const records = await TaskApprovalRecord.find(q)
-    .populate("approvedBy", "name email")
-    .populate("rejectedBy", "name email")
-    .sort({ submittedAt: -1 })
-    .limit(500)
-    .lean();
+  const [stored, livePending] = await Promise.all([
+    TaskApprovalRecord.find(q)
+      .populate("approvedBy", "name email")
+      .populate("rejectedBy", "name email")
+      .sort({ submittedAt: -1 })
+      .limit(500)
+      .lean(),
+    fetchLivePendingApprovals({
+      userId: req.userId,
+      assigneeId,
+      centerId: me?.centerId || null,
+      isCeoRole: isCeo(req.userRole),
+      from: req.query.from,
+      to: req.query.to,
+    }),
+  ]);
+
+  const records = mergeAssigneeApprovalRows(stored, livePending);
 
   const summary = {
     total: records.length,
     pending: records.filter((r) => r.status === "pending").length,
+    waitingForApproval: records.filter((r) => r.status === "pending").length,
     approved: records.filter((r) => r.status === "approved" || r.status === "not_done_acknowledged").length,
     rejected: records.filter((r) => r.status === "rejected").length,
     notDone: records.filter((r) => r.kind === "not_done").length,
