@@ -32,6 +32,21 @@ type ProjectOpt = { _id: string; name: string };
 type CenterOpt = { _id: string; name: string };
 type DepartmentOpt = { _id: string; name: string };
 
+const TASK_TYPE_LABELS: Record<string, string> = {
+  one_time: "One time",
+  daily: "Daily",
+  weekly: "Weekly",
+  fortnightly: "Fortnightly",
+  monthly: "Monthly",
+  quarterly: "Quarterly",
+  yearly: "Yearly",
+  custom: "Custom",
+};
+
+function formatTaskTypeLabel(value: string) {
+  return TASK_TYPE_LABELS[value] || value.replace(/_/g, " ");
+}
+
 function toLocalDatetimeValue(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
@@ -217,16 +232,28 @@ export function TaskEditModal({
               <Input placeholder="Task title" value={title} onChange={(e) => setTitle(e.target.value)} className="mt-1" />
             </label>
             <label className="md:col-span-2 block">
+              <span className="text-xs font-semibold text-zinc-500">Task type</span>
+              <p className="mt-0.5 text-[11px] text-zinc-500">One time, daily, weekly, monthly, etc.</p>
+              <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                <span className="inline-flex rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-xs font-semibold text-brand-800 dark:border-brand-800 dark:bg-brand-950/50 dark:text-brand-200">
+                  {formatTaskTypeLabel(taskType)}
+                </span>
+                {taskType !== "one_time" && (
+                  <span className="text-[11px] text-zinc-500">Recurring task — schedule options below</span>
+                )}
+              </div>
+              <Select value={taskType} onChange={(e) => setTaskType(e.target.value)} className="mt-2">
+                {types.map((tp) => (
+                  <option key={tp} value={tp}>
+                    {formatTaskTypeLabel(tp)}
+                  </option>
+                ))}
+              </Select>
+            </label>
+            <label className="md:col-span-2 block">
               <span className="text-xs font-semibold text-zinc-500">Description</span>
               <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 min-h-[80px]" />
             </label>
-            <Select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
-              {types.map((tp) => (
-                <option key={tp} value={tp}>
-                  {tp.replace("_", " ")}
-                </option>
-              ))}
-            </Select>
             <Select value={status} onChange={(e) => setStatus(e.target.value)}>
               {statuses.map((s) => (
                 <option key={s} value={s}>
