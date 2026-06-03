@@ -9,7 +9,7 @@ import { isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
 import { isManagement } from "../constants/roles.js";
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
-import { listMyAssignees } from "../services/taskApprovalHistory.js";
+import { listMyAssignees, buildAssigneeHistoryQuery } from "../services/taskApprovalHistory.js";
 
 const router = Router();
 router.use(authRequired);
@@ -350,16 +350,14 @@ router.get("/assignee-approval-history", async (req, res) => {
     return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
   }
 
-  const q = { assignedBy: req.userId, assigneeId };
-  if (req.query.from || req.query.to) {
-    q.submittedAt = {};
-    if (req.query.from) q.submittedAt.$gte = new Date(String(req.query.from));
-    if (req.query.to) {
-      const to = new Date(String(req.query.to));
-      to.setHours(23, 59, 59, 999);
-      q.submittedAt.$lte = to;
-    }
-  }
+  const q = await buildAssigneeHistoryQuery({
+    userId: req.userId,
+    assigneeId,
+    centerId: me?.centerId || null,
+    isCeoRole: isCeo(req.userRole),
+    from: req.query.from,
+    to: req.query.to,
+  });
 
   const records = await TaskApprovalRecord.find(q)
     .populate("approvedBy", "name email")

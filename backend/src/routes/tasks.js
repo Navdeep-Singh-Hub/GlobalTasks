@@ -16,6 +16,7 @@ import {
   recordTaskSubmission,
   recordNotDoneSubmission,
   finalizeApprovalRecord,
+  backfillApprovalRecordsFromEvents,
 } from "../services/taskApprovalHistory.js";
 
 const router = Router();
@@ -235,6 +236,12 @@ router.post("/admin/backfill-assigned-by", requireRoles("ceo"), async (_req, res
     updated += 1;
   }
   res.json({ ok: true, updated, total: tasks.length });
+});
+
+/** One-time: rebuild TaskApprovalRecord from TaskEvent submit/approve logs (CEO only). */
+router.post("/admin/backfill-approval-history", requireRoles("ceo"), async (_req, res) => {
+  const result = await backfillApprovalRecordsFromEvents();
+  res.json({ ok: true, ...result });
 });
 
 router.get("/", async (req, res) => {

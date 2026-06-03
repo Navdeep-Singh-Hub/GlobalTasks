@@ -104,7 +104,8 @@ export function AssigneeApprovalHistory() {
       <h2 className="text-lg font-bold">Task approval history</h2>
       <p className="mt-1 text-sm text-zinc-500">
         Select someone you assigned tasks to. See every submission, approval, due date, and remarks — including daily recurring
-        occurrences.
+        occurrences. Clear the date filters to see all time. Rows appear after tasks are submitted and approved; ask your admin to
+        run a one-time history backfill if older approvals are missing.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -237,7 +238,10 @@ export function AssigneeApprovalHistory() {
           {loading ? (
             <p className="mt-4 text-center text-sm text-zinc-500">Loading history…</p>
           ) : !records.length && assigneeId ? (
-            <p className="mt-4 text-center text-sm text-zinc-500">No approval activity for this filter yet.</p>
+            <p className="mt-4 text-center text-sm text-zinc-500">
+              No approval activity for this person in the selected dates. Clear <strong>From</strong> and <strong>To</strong> and
+              click Refresh — or wait until they submit and you approve new tasks (history is recorded from then on).
+            </p>
           ) : null}
         </>
       )}

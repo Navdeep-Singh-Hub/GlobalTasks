@@ -7,6 +7,7 @@ import { logActivity } from "./activityService.js";
 import { isCeo } from "../constants/roles.js";
 import { isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import { queueTaskAssignedWhatsApp } from "./whatsappTaskAssignment.js";
+import { recordTaskSubmission, finalizeApprovalRecord } from "./taskApprovalHistory.js";
 
 export const SUPERVISOR_SHEET_TASK_TITLE_REGEX = /fill\s+daily\s+supervisor\s+sheet/i;
 export const COORDINATOR_SHEET_TASK_TITLE_REGEX = /fill\s+daily\s+coordinator\s+sheet/i;
@@ -254,6 +255,13 @@ export async function submitDailySheetTaskForApproval({
       eventType: "approved",
       meta: { via: "daily_sheet_save", ceoAuto: true },
     });
+    await finalizeApprovalRecord({
+      task,
+      occurrenceDueDate: task.dueDate,
+      approverId: actorUserId,
+      status: "approved",
+      extra: { submittedAt: task.updatedAt },
+    });
     await advanceIfRecurring(task, actorUserId, actor?.name);
     return { ok: true, autoCompleted: true };
   }
@@ -265,6 +273,15 @@ export async function submitDailySheetTaskForApproval({
   task.requiresApproval = true;
   task.completedAt = null;
   await task.save();
+
+  if (prevStatus !== "awaiting_approval") {
+    await recordTaskSubmission({
+      task,
+      assigneeId: actorUserId,
+      remarks: task.submissionRemarks || `${kind === "supervisor" ? "Supervisor" : "Coordinator"} sheet submitted`,
+      kind: "completion",
+    });
+  }
 
   await TaskEvent.create({
     taskId: task._id,

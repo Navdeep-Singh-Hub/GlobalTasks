@@ -1,8 +1,17 @@
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { Task } from "../models/Task.js";
+import { TaskEvent } from "../models/TaskEvent.js";
 
 export function taskAssignerIdFromDoc(task) {
   return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy?._id || task?.createdBy || "");
+}
+
+function dueDateDayBounds(d) {
+  const start = new Date(d);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(d);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
 }
 
 export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
@@ -42,10 +51,11 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
     update.approvedBy = approverId;
   }
 
+  const { start, end } = dueDateDayBounds(due);
   const record = await TaskApprovalRecord.findOneAndUpdate(
     {
       taskId: task._id,
-      occurrenceDueDate: due,
+      occurrenceDueDate: { $gte: start, $lte: end },
       status: "pending",
     },
     { $set: update },
@@ -109,4 +119,132 @@ export async function listMyAssignees({ userId, centerId, isCeoRole }) {
 
   const assigneeIds = await Task.distinct("assignees", taskFilter);
   return assigneeIds.map(String).filter(Boolean);
+}
+
+/** Match history for tasks you assigned even if record.assignedBy was stored before backfill. */
+export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, isCeoRole, from, to }) {
+  const taskFilter = {
+    deletedAt: null,
+    assignees: assigneeId,
+    ...assignerScopeClause(userId),
+  };
+  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
+  const taskIds = await Task.distinct("_id", taskFilter);
+
+  const q = {
+    assigneeId,
+    $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }],
+  };
+  if (from || to) {
+    q.submittedAt = {};
+    if (from) q.submittedAt.$gte = new Date(String(from));
+    if (to) {
+      const end = new Date(String(to));
+      end.setHours(23, 59, 59, 999);
+      q.submittedAt.$lte = end;
+    }
+  }
+  return q;
+}
+
+/** Rebuild approval rows from TaskEvent (approved / rejected / submit via awaiting_approval). */
+export async function backfillApprovalRecordsFromEvents() {
+  const tasks = await Task.find({
+    deletedAt: null,
+    $or: [{ requiresApproval: true }, { approvalStatus: { $in: ["approved", "rejected", "pending"] } }],
+  })
+    .select("_id title taskType centerId assignees assignedBy createdBy dueDate submissionRemarks")
+    .lean();
+  const taskMap = new Map(tasks.map((t) => [String(t._id), t]));
+  if (!tasks.length) return { created: 0, skipped: 0 };
+
+  const events = await TaskEvent.find({
+    taskId: { $in: tasks.map((t) => t._id) },
+    eventType: { $in: ["updated", "approved", "rejected"] },
+  })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  let created = 0;
+  let skipped = 0;
+  const pendingSubmit = new Map();
+
+  for (const e of events) {
+    const task = taskMap.get(String(e.taskId));
+    if (!task) continue;
+    const tid = String(e.taskId);
+
+    if (e.eventType === "updated" && e.meta?.status === "awaiting_approval") {
+      pendingSubmit.set(tid, {
+        submittedAt: e.createdAt,
+        assigneeId: e.actorId || task.assignees?.[0],
+        occurrenceDueDate: task.dueDate,
+        remarks: task.submissionRemarks || "",
+      });
+      continue;
+    }
+
+    if (e.eventType !== "approved" && e.eventType !== "rejected") continue;
+
+    const pending = pendingSubmit.get(tid);
+    const assigneeId = pending?.assigneeId || task.assignees?.[0];
+    const assignedBy = taskAssignerIdFromDoc(task);
+    if (!assigneeId || !assignedBy) {
+      skipped += 1;
+      continue;
+    }
+
+    const occurrenceDueDate = e.meta?.occurrenceDueDate || pending?.occurrenceDueDate || task.dueDate;
+    const submittedAt = pending?.submittedAt || e.createdAt;
+    const status = e.eventType === "approved" ? "approved" : "rejected";
+
+    const exists = await TaskApprovalRecord.findOne({
+      taskId: e.taskId,
+      assigneeId,
+      occurrenceDueDate,
+      status,
+      $or: [{ approvedAt: e.createdAt }, { rejectedAt: e.createdAt }],
+    }).lean();
+    if (exists) {
+      skipped += 1;
+      pendingSubmit.delete(tid);
+      continue;
+    }
+
+    await TaskApprovalRecord.create({
+      taskId: e.taskId,
+      taskTitle: task.title,
+      taskType: task.taskType,
+      centerId: task.centerId || null,
+      assignedBy,
+      assigneeId,
+      occurrenceDueDate,
+      submittedAt,
+      submissionRemarks: String(pending?.remarks || "").trim(),
+      kind: "completion",
+      status,
+      approvedAt: e.eventType === "approved" ? e.createdAt : null,
+      approvedBy: e.eventType === "approved" ? e.actorId : null,
+      rejectedAt: e.eventType === "rejected" ? e.createdAt : null,
+      rejectedBy: e.eventType === "rejected" ? e.actorId : null,
+      rejectionRemarks: String(e.meta?.remarks || ""),
+      rejectionMode: String(e.meta?.mode || ""),
+    });
+    created += 1;
+    pendingSubmit.delete(tid);
+  }
+
+  let repaired = 0;
+  const allRecords = await TaskApprovalRecord.find({}).select("taskId assignedBy").lean();
+  for (const r of allRecords) {
+    const task = taskMap.get(String(r.taskId));
+    if (!task) continue;
+    const assigner = taskAssignerIdFromDoc(task);
+    if (assigner && String(r.assignedBy) !== assigner) {
+      await TaskApprovalRecord.updateOne({ _id: r._id }, { $set: { assignedBy: assigner } });
+      repaired += 1;
+    }
+  }
+
+  return { created, skipped, repaired };
 }
