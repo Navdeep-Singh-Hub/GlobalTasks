@@ -7,6 +7,9 @@ import { Escalation } from "../models/Escalation.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
+import { isManagement } from "../constants/roles.js";
+import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
+import { listMyAssignees } from "../services/taskApprovalHistory.js";
 
 const router = Router();
 router.use(authRequired);
@@ -308,6 +311,92 @@ router.get("/search", async (req, res) => {
       .lean(),
   ]);
   res.json({ tasks, projects, users });
+});
+
+/** People who have tasks assigned by the current user (for approval history drill-down). */
+router.get("/my-assignees", async (req, res) => {
+  if (!isManagement(req.userRole) && !isCeo(req.userRole)) {
+    return res.status(403).json({ message: "Management access required" });
+  }
+  const me = await actor(req);
+  const ids = await listMyAssignees({
+    userId: req.userId,
+    centerId: me?.centerId || null,
+    isCeoRole: isCeo(req.userRole),
+  });
+  if (!ids.length) return res.json({ assignees: [] });
+  const users = await User.find({ _id: { $in: ids } })
+    .select("name email role executorKind")
+    .sort({ name: 1 })
+    .lean();
+  res.json({ assignees: users });
+});
+
+/** Full submit / approve history for one assignee on tasks you assigned. */
+router.get("/assignee-approval-history", async (req, res) => {
+  if (!isManagement(req.userRole) && !isCeo(req.userRole)) {
+    return res.status(403).json({ message: "Management access required" });
+  }
+  const assigneeId = String(req.query.assigneeId || "").trim();
+  if (!assigneeId) return res.status(400).json({ message: "assigneeId is required" });
+
+  const me = await actor(req);
+  const allowedIds = await listMyAssignees({
+    userId: req.userId,
+    centerId: me?.centerId || null,
+    isCeoRole: isCeo(req.userRole),
+  });
+  if (!allowedIds.includes(assigneeId)) {
+    return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
+  }
+
+  const q = { assignedBy: req.userId, assigneeId };
+  if (req.query.from || req.query.to) {
+    q.submittedAt = {};
+    if (req.query.from) q.submittedAt.$gte = new Date(String(req.query.from));
+    if (req.query.to) {
+      const to = new Date(String(req.query.to));
+      to.setHours(23, 59, 59, 999);
+      q.submittedAt.$lte = to;
+    }
+  }
+
+  const records = await TaskApprovalRecord.find(q)
+    .populate("approvedBy", "name email")
+    .populate("rejectedBy", "name email")
+    .sort({ submittedAt: -1 })
+    .limit(500)
+    .lean();
+
+  const summary = {
+    total: records.length,
+    pending: records.filter((r) => r.status === "pending").length,
+    approved: records.filter((r) => r.status === "approved" || r.status === "not_done_acknowledged").length,
+    rejected: records.filter((r) => r.status === "rejected").length,
+    notDone: records.filter((r) => r.kind === "not_done").length,
+  };
+
+  res.json({ records, summary });
+});
+
+/** Approved / completed history still visible after recurring tasks advance. */
+router.get("/approval-history", async (req, res) => {
+  if (!isManagement(req.userRole) && !isCeo(req.userRole)) {
+    return res.status(403).json({ message: "Management access required" });
+  }
+  const me = await actor(req);
+  const q = { assignedBy: req.userId, status: { $in: ["approved", "not_done_acknowledged", "rejected"] } };
+  if (!isCeo(req.userRole) && me?.centerId) q.centerId = me.centerId;
+  if (req.query.assigneeId) q.assigneeId = String(req.query.assigneeId);
+  if (req.query.status && req.query.status !== "all") q.status = String(req.query.status);
+
+  const records = await TaskApprovalRecord.find(q)
+    .populate("assigneeId", "name email role")
+    .sort({ approvedAt: -1, submittedAt: -1 })
+    .limit(200)
+    .lean();
+
+  res.json({ records });
 });
 
 export default router;

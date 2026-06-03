@@ -1,9 +1,10 @@
 "use client";
 
+import { AssigneeApprovalHistory } from "@/components/performance/assignee-approval-history";
 import { TeamThroughputChart } from "@/components/performance/team-throughput-chart";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
-import { canViewUserTeamPerformance, formatRoleLine } from "@/lib/roles";
+import { canViewUserTeamPerformance, formatRoleLine, isManagement } from "@/lib/roles";
 import { Zap } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
@@ -27,6 +28,7 @@ export default function PerformancePage() {
   const [data, setData] = useState<Member[]>([]);
   const isOperationsView = user?.role === "operations";
   const canView = canViewUserTeamPerformance(user?.role);
+  const showApprovalHistory = Boolean(user?.role && (isManagement(user.role) || user.role === "ceo"));
 
   useEffect(() => {
     if (!canView) return;
@@ -96,6 +98,8 @@ export default function PerformancePage() {
           </div>
         ))}
       </div>
+
+      {showApprovalHistory && <AssigneeApprovalHistory />}
     </div>
   );
 }

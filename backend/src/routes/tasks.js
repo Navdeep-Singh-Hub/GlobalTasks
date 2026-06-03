@@ -12,6 +12,11 @@ import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
 import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
+import {
+  recordTaskSubmission,
+  recordNotDoneSubmission,
+  finalizeApprovalRecord,
+} from "../services/taskApprovalHistory.js";
 
 const router = Router();
 router.use(authRequired);
@@ -481,6 +486,12 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
+      await recordTaskSubmission({
+        task,
+        assigneeId: req.userId,
+        remarks: task.submissionRemarks,
+        kind: "completion",
+      });
       const note = String(task.submissionRemarks || "").trim();
       const snippet = note ? ` Remarks: ${note.slice(0, 240)}${note.length > 240 ? "…" : ""}` : "";
       const approverId = taskAssignerId(task);
@@ -562,6 +573,13 @@ router.post("/bulk", async (req, res) => {
         t.approvalStatus = "pending";
         t.requiresApproval = true;
         t.completedAt = null;
+        // eslint-disable-next-line no-await-in-loop
+        await recordTaskSubmission({
+          task: t,
+          assigneeId: req.userId,
+          remarks: submissionRemarks,
+          kind: "completion",
+        });
       } else {
         t.status = "completed";
         if (!t.completedAt) t.completedAt = new Date();
@@ -640,6 +658,13 @@ router.post("/:id/not-done", async (req, res) => {
       task.status = "awaiting_approval";
     }
 
+    await recordNotDoneSubmission({
+      task,
+      assigneeId: req.userId,
+      remarks,
+      occurrenceDueDate: occurrenceDue,
+    });
+
     await task.save();
     await TaskEvent.create({
       taskId: task._id,
@@ -687,12 +712,19 @@ router.post("/:id/approve", async (req, res) => {
   }
 
   if (task.notDoneApproval?.status === "pending") {
+    const occurrenceDue = task.notDoneApproval?.dueDate || task.dueDate;
     task.notDoneApproval.status = "acknowledged";
     task.submissionRemarks = "";
     if (task.status === "awaiting_approval" && !isRecurring(task.taskType)) {
       task.status = "pending";
     }
     await task.save();
+    await finalizeApprovalRecord({
+      task,
+      occurrenceDueDate: occurrenceDue,
+      approverId: req.userId,
+      status: "not_done_acknowledged",
+    });
     await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "not_done_acknowledged", meta: {} });
     if (task.assignees?.length) {
       await notifyMany(task.assignees, {
@@ -705,13 +737,20 @@ router.post("/:id/approve", async (req, res) => {
     return res.json({ task });
   }
 
+  const occurrenceDue = task.dueDate;
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();
-  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: {} });
+  await finalizeApprovalRecord({
+    task,
+    occurrenceDueDate: occurrenceDue,
+    approverId: req.userId,
+    status: "approved",
+  });
+  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: { occurrenceDueDate: occurrenceDue } });
   const actorUser = await User.findById(req.userId).lean();
   await advanceIfRecurring(task, req.userId, actorUser?.name);
   if (task.assignees?.length) {
@@ -754,7 +793,20 @@ router.post("/:id/reject", async (req, res) => {
       task.status = "pending";
       task.requiresApproval = false;
     }
+    const occurrenceDue = task.dueDate;
     await task.save();
+    await finalizeApprovalRecord({
+      task,
+      occurrenceDueDate: occurrenceDue,
+      approverId: req.userId,
+      status: "rejected",
+      extra: {
+        rejectedAt: new Date(),
+        rejectionRemarks: text,
+        rejectionMode: mode,
+        submissionRemarks: task.submissionRemarks,
+      },
+    });
     await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "rejected", meta: { mode, remarks: text } });
 
     const actorUser = await User.findById(req.userId).lean();
