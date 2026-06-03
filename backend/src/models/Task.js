@@ -42,6 +42,8 @@ const taskSchema = new mongoose.Schema(
 
     project: { type: mongoose.Schema.Types.ObjectId, ref: "Project", default: null },
     assignees: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    /** User who created/assigned the task (used for master lists and ownership). */
+    assignedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
     requiresApproval: { type: Boolean, default: false },
@@ -74,6 +76,7 @@ taskSchema.index({ status: 1, taskType: 1, dueDate: 1 });
 taskSchema.index({ departmentId: 1, status: 1 });
 taskSchema.index({ centerId: 1, status: 1 });
 taskSchema.index({ assignees: 1, status: 1 });
+taskSchema.index({ assignedBy: 1, status: 1 });
 taskSchema.index({ approvalStatus: 1, status: 1 });
 taskSchema.index({ deletedAt: 1 });
 

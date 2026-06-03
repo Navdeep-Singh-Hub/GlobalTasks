@@ -54,10 +54,14 @@ export async function userAssigneeIdsForOperationsLead(operationsLeadId, centerI
   }).distinct("_id");
 }
 
+function taskAssignerId(task) {
+  return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy || "");
+}
+
 export async function canApproveTaskForUser({ userId, userRole, task }) {
   if (!task) return false;
   if (userRole === "ceo") return true;
-  if (String(task.createdBy || "") === String(userId || "")) return true;
+  if (taskAssignerId(task) === String(userId || "")) return true;
   if (userRole === "operations" && task.assignees?.length) {
     const count = await User.countDocuments({
       _id: { $in: task.assignees },

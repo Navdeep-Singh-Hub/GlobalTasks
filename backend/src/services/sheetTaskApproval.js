@@ -118,6 +118,7 @@ async function createDailySheetTask({ kind, assigneeUser, approverId, sheetDate 
     functionTag,
     recurrence: { forever: true, includeSunday: false, weekOff: "Sunday" },
     assignees: [assigneeUser._id],
+    assignedBy: approverId,
     createdBy: approverId,
     requiresApproval: true,
     approvalStatus: "none",

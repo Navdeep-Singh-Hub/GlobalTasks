@@ -42,8 +42,12 @@ const ADMIN_TASK_FIELDS = new Set([
   "inputPayload",
 ]);
 
+function taskAssignerId(task) {
+  return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy?._id || task?.createdBy || "");
+}
+
 function taskCreatedByUser(task, userId) {
-  return String(task?.createdBy?._id || task?.createdBy || "") === String(userId || "");
+  return taskAssignerId(task) === String(userId || "");
 }
 
 function managementCreatorOwnsTask(req, task) {
@@ -153,7 +157,15 @@ function mergeClauseIntoFilter(filter, clause) {
 /** Master Single / Recurring: only tasks the user created or is assigned to. */
 function applyMasterScopeFilter(filter, userId, relation) {
   const clause =
-    relation === "assigned" ? { assignees: userId } : { createdBy: userId };
+    relation === "assigned"
+      ? { assignees: userId }
+      : {
+          $or: [
+            { assignedBy: userId },
+            { assignedBy: null, createdBy: userId },
+            { assignedBy: { $exists: false }, createdBy: userId },
+          ],
+        };
   mergeClauseIntoFilter(filter, clause);
 }
 
@@ -164,7 +176,14 @@ function userIsAssigneeOnTask(task, userId) {
 
 /** Tasks the user created or is assigned to (all non-CEO roles). */
 function personalTaskScopeClause(userId) {
-  return { $or: [{ assignees: userId }, { createdBy: userId }] };
+  return {
+    $or: [
+      { assignees: userId },
+      { assignedBy: userId },
+      { assignedBy: null, createdBy: userId },
+      { assignedBy: { $exists: false }, createdBy: userId },
+    ],
+  };
 }
 
 function applyPersonalTaskScopeFilter(filter, userId) {
@@ -182,13 +201,13 @@ function applyPersonalTaskScopeToQuery(query, userId) {
 
 function userCanAccessTaskDoc(task, userId) {
   const uid = String(userId || "");
-  if (String(task.createdBy?._id || task.createdBy || "") === uid) return true;
+  if (taskAssignerId(task) === uid) return true;
   return userIsAssigneeOnTask(task, uid);
 }
 
 function canApproveTask({ userId, userRole, task }) {
   if (!task) return false;
-  if (String(task.createdBy || "") === String(userId || "")) return true;
+  if (taskAssignerId(task) === String(userId || "")) return true;
   // Safety fallback for top-level oversight.
   if (userRole === "ceo") return true;
   return false;
@@ -196,6 +215,21 @@ function canApproveTask({ userId, userRole, task }) {
 
 router.get("/meta", (_req, res) => {
   res.json({ types: TASK_TYPES, statuses: TASK_STATUSES, priorities: TASK_PRIORITIES });
+});
+
+/** One-time: repair assignedBy from TaskEvent creators (CEO only). */
+router.post("/admin/backfill-assigned-by", requireRoles("ceo"), async (_req, res) => {
+  const createdEvents = await TaskEvent.find({ eventType: "created" }).select("taskId actorId").lean();
+  const actorByTask = new Map(createdEvents.map((e) => [String(e.taskId), String(e.actorId)]));
+  const tasks = await Task.find({}).select("_id createdBy assignedBy").lean();
+  let updated = 0;
+  for (const t of tasks) {
+    const assigner = actorByTask.get(String(t._id)) || String(t.createdBy || "");
+    if (!assigner || String(t.assignedBy || "") === assigner) continue;
+    await Task.updateOne({ _id: t._id }, { $set: { assignedBy: assigner } });
+    updated += 1;
+  }
+  res.json({ ok: true, updated, total: tasks.length });
 });
 
 router.get("/", async (req, res) => {
@@ -216,6 +250,7 @@ router.get("/", async (req, res) => {
   const [tasks, total] = await Promise.all([
     Task.find(filter)
       .populate("assignees", "name email avatarUrl role")
+      .populate("assignedBy", "name email")
       .populate("createdBy", "name email")
       .populate("project", "name")
       .populate("departmentId", "name code")
@@ -233,6 +268,7 @@ router.get("/:id", async (req, res) => {
   const me = await actor(req);
   const task = await Task.findById(req.params.id)
     .populate("assignees", "name email avatarUrl role")
+    .populate("assignedBy", "name email")
     .populate("createdBy", "name email")
     .populate("project", "name")
     .populate("departmentId", "name code")
@@ -278,6 +314,7 @@ router.post("/", async (req, res, next) => {
     if (!payload.requiredInputsSchema) payload.requiredInputsSchema = { type: "object", properties: {}, required: [] };
     if (!payload.inputPayload) payload.inputPayload = {};
     if (payload.requiresApproval) payload.approvalStatus = "none";
+    payload.assignedBy = req.userId;
     payload.createdBy = req.userId;
     const task = await Task.create(payload);
     await TaskEvent.create({
@@ -446,12 +483,15 @@ router.patch("/:id", async (req, res, next) => {
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
       const note = String(task.submissionRemarks || "").trim();
       const snippet = note ? ` Remarks: ${note.slice(0, 240)}${note.length > 240 ? "…" : ""}` : "";
-      await notifyMany([task.createdBy], {
-        type: "task_approval_request",
-        title: "Completion pending approval",
-        message: `An assignee submitted "${task.title}" for completion.${snippet}`,
-        link: "/for-approval",
-      });
+      const approverId = taskAssignerId(task);
+      if (approverId) {
+        await notifyMany([approverId], {
+          type: "task_approval_request",
+          title: "Completion pending approval",
+          message: `An assignee submitted "${task.title}" for completion.${snippet}`,
+          link: "/for-approval",
+        });
+      }
     }
 
     if (prevStatus !== task.status && task.assignees?.length) {
@@ -532,8 +572,8 @@ router.post("/bulk", async (req, res) => {
     if (!isCeo(req.userRole)) {
       const creatorCounts = new Map();
       for (const t of tasks) {
-        if (!t.createdBy) continue;
-        const key = String(t.createdBy);
+        const key = taskAssignerId(t);
+        if (!key) continue;
         creatorCounts.set(key, (creatorCounts.get(key) || 0) + 1);
       }
       for (const [creatorId, count] of creatorCounts.entries()) {
@@ -610,7 +650,8 @@ router.post("/:id/not-done", async (req, res) => {
 
     const dueLabel = occurrenceDue ? new Date(occurrenceDue).toLocaleDateString() : "this occurrence";
     const snippet = remarks.slice(0, 240) + (remarks.length > 240 ? "…" : "");
-    await notifyMany([task.createdBy], {
+    const approverId = taskAssignerId(task);
+    await notifyMany([approverId || task.createdBy], {
       type: "task_approval_request",
       title: "Assignee marked task as not done",
       message: `"${task.title}" was marked not done for ${dueLabel}.${advanced ? " Next occurrence is scheduled." : ""} Remarks: ${snippet}`,
