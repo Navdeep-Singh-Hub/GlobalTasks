@@ -331,7 +331,7 @@ router.get("/my-assignees", async (req, res) => {
   });
   if (!ids.length) return res.json({ assignees: [] });
   const users = await User.find({ _id: { $in: ids } })
-    .select("name email role executorKind")
+    .select("name email role executorKind active")
     .sort({ name: 1 })
     .lean();
   res.json({ assignees: users });

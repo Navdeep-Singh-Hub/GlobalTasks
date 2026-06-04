@@ -7,7 +7,7 @@ import { formatRoleLine, isManagement } from "@/lib/roles";
 import { useAuth } from "@/contexts/auth-context";
 import { useCallback, useEffect, useState } from "react";
 
-type Assignee = { _id: string; name: string; email: string; role: string; executorKind?: string };
+type Assignee = { _id: string; name: string; email: string; role: string; executorKind?: string; active?: boolean };
 
 type ApprovalRecord = {
   _id: string;
@@ -108,8 +108,8 @@ export function AssigneeApprovalHistory() {
     <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
       <h2 className="text-lg font-bold">Task approval history</h2>
       <p className="mt-1 text-sm text-zinc-500">
-        Select someone you assigned tasks to. See tasks waiting for approval, plus submitted, approved, and rejected history —
-        including daily recurring occurrences. Clear the date filters to see all time.
+        Everyone you have ever assigned a task to appears below. See tasks waiting for approval, plus submitted, approved, and
+        rejected history — including daily recurring occurrences. Clear the date filters to see all time.
       </p>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -119,7 +119,7 @@ export function AssigneeApprovalHistory() {
             <option value="">Select person…</option>
             {assignees.map((a) => (
               <option key={a._id} value={a._id}>
-                {a.name} ({a.email})
+                {a.name} ({a.email}){a.active === false ? " · inactive" : ""}
               </option>
             ))}
           </Select>

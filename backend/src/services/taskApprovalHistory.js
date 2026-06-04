@@ -113,12 +113,32 @@ export function assignerScopeClause(userId) {
   };
 }
 
+/**
+ * Everyone this user has ever assigned a task to (active + deleted tasks, plus approval history).
+ */
 export async function listMyAssignees({ userId, centerId, isCeoRole }) {
-  const taskFilter = { deletedAt: null, ...assignerScopeClause(userId) };
+  const assignerFilter = assignerScopeClause(userId);
+  const taskFilter = { ...assignerFilter };
   if (!isCeoRole && centerId) taskFilter.centerId = centerId;
 
-  const assigneeIds = await Task.distinct("assignees", taskFilter);
-  return assigneeIds.map(String).filter(Boolean);
+  const historyFilter = { assignedBy: userId };
+  if (!isCeoRole && centerId) historyFilter.centerId = centerId;
+
+  const [fromTasks, fromHistory, taskIdsForHistory] = await Promise.all([
+    Task.distinct("assignees", taskFilter),
+    TaskApprovalRecord.distinct("assigneeId", historyFilter),
+    Task.distinct("_id", taskFilter),
+  ]);
+
+  const historyByTask =
+    taskIdsForHistory.length > 0
+      ? await TaskApprovalRecord.distinct("assigneeId", { taskId: { $in: taskIdsForHistory } })
+      : [];
+
+  const ids = new Set(
+    [...fromTasks, ...fromHistory, ...historyByTask].map((id) => String(id)).filter(Boolean)
+  );
+  return [...ids];
 }
 
 /** Match history for tasks you assigned even if record.assignedBy was stored before backfill. */

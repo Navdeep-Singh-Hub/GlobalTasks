@@ -61,15 +61,5 @@ function taskAssignerId(task) {
 export async function canApproveTaskForUser({ userId, userRole, task }) {
   if (!task) return false;
   if (userRole === "ceo") return true;
-  if (taskAssignerId(task) === String(userId || "")) return true;
-  if (userRole === "operations" && task.assignees?.length) {
-    const count = await User.countDocuments({
-      _id: { $in: task.assignees },
-      role: "user",
-      reportsTo: userId,
-      active: true,
-    });
-    if (count > 0) return true;
-  }
-  return false;
+  return taskAssignerId(task) === String(userId || "");
 }

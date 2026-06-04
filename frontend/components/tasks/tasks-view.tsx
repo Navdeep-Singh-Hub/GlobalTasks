@@ -319,7 +319,7 @@ export function TasksView({
             {loading ? "Loading…" : `${tasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
             {masterAdminActions
               ? masterRelation === "created"
-                ? " · tasks you assigned"
+                ? " · only tasks you assigned"
                 : " · tasks assigned to you"
               : ""}
           </p>

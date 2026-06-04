@@ -23,6 +23,7 @@ import {
   recordNotDoneSubmission,
   finalizeApprovalRecord,
   backfillApprovalRecordsFromEvents,
+  assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
 
 const router = Router();
@@ -212,35 +213,51 @@ function userIsAssigneeOnTask(task, userId) {
   return (task.assignees || []).some((a) => String(a._id || a) === uid);
 }
 
-/** Tasks the user created or is assigned to (all non-CEO roles). */
-function personalTaskScopeClause(userId) {
-  return {
-    $or: [
-      { assignees: userId },
-      { assignedBy: userId },
-      { assignedBy: null, createdBy: userId },
-      { assignedBy: { $exists: false }, createdBy: userId },
-    ],
-  };
+/** Field staff: only tasks assigned to them. */
+function applyAssigneeScopeFilter(filter, userId) {
+  mergeClauseIntoFilter(filter, { assignees: userId });
 }
 
-function applyPersonalTaskScopeFilter(filter, userId) {
-  mergeClauseIntoFilter(filter, personalTaskScopeClause(userId));
+/** Management (non-CEO): only tasks they assigned — not other managers' tasks. */
+function applyAssignerScopeFilter(filter, userId) {
+  mergeClauseIntoFilter(filter, assignerScopeClause(userId));
 }
 
-function applyPersonalTaskScopeToQuery(query, userId) {
-  const clause = personalTaskScopeClause(userId);
-  if (query.$and) {
-    query.$and.push(clause);
+function applyListScopeForRole(filter, { userId, role, query }) {
+  if (isCeo(role)) return;
+  const masterScope = String(query.masterScope || "").toLowerCase() === "true";
+  if (masterScope) {
+    const masterRelation =
+      String(query.masterRelation || "").toLowerCase() === "assigned" ? "assigned" : "created";
+    applyMasterScopeFilter(filter, userId, masterRelation);
     return;
   }
-  Object.assign(query, clause);
+  if (isAssigneeOnly(role) || query.myTasks === "true") {
+    applyAssigneeScopeFilter(filter, userId);
+    return;
+  }
+  if (isManagement(role)) {
+    applyAssignerScopeFilter(filter, userId);
+  }
 }
 
-function userCanAccessTaskDoc(task, userId) {
+function applyMutationScopeForRole(query, userId, role) {
+  if (isCeo(role)) return;
+  if (isAssigneeOnly(role)) {
+    applyAssigneeScopeFilter(query, userId);
+    return;
+  }
+  if (isManagement(role)) {
+    applyAssignerScopeFilter(query, userId);
+  }
+}
+
+function userCanAccessTaskDoc(task, userId, role) {
   const uid = String(userId || "");
+  if (isCeo(role)) return true;
   if (taskAssignerId(task) === uid) return true;
-  return userIsAssigneeOnTask(task, uid);
+  if (isAssigneeOnly(role)) return userIsAssigneeOnTask(task, uid);
+  return false;
 }
 
 function canApproveTask({ userId, userRole, task }) {
@@ -280,14 +297,7 @@ router.get("/", async (req, res) => {
   const me = await actor(req);
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
-  const masterScope = String(req.query.masterScope || "").toLowerCase() === "true";
-  const masterRelation = String(req.query.masterRelation || "created").toLowerCase() === "assigned" ? "assigned" : "created";
-
-  if (masterScope) {
-    applyMasterScopeFilter(filter, req.userId, masterRelation);
-  } else if (!isCeo(req.userRole)) {
-    applyPersonalTaskScopeFilter(filter, req.userId);
-  }
+  applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
@@ -321,8 +331,8 @@ router.get("/:id", async (req, res) => {
   if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
-  if (!isCeo(req.userRole) && !userCanAccessTaskDoc(task, req.userId)) {
-    return res.status(403).json({ message: "You can only access tasks assigned to you or that you created" });
+  if (!userCanAccessTaskDoc(task, req.userId, req.userRole)) {
+    return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
   res.json({ task });
 });
@@ -407,7 +417,7 @@ router.patch("/:id", async (req, res, next) => {
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
-    if (!isCeo(req.userRole) && !managementCreatorOwnsTask(req, task) && !userCanAccessTaskDoc(task, req.userId)) {
+    if (!managementCreatorOwnsTask(req, task) && !userCanAccessTaskDoc(task, req.userId, req.userRole)) {
       return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
     }
 
@@ -578,7 +588,7 @@ router.post("/bulk", async (req, res) => {
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
   const scope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
-  if (!isCeo(req.userRole)) applyPersonalTaskScopeToQuery(scope, req.userId);
+  applyMutationScopeForRole(scope, req.userId, req.userRole);
 
   if (action === "delete") {
     await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: new Date() } });
@@ -907,7 +917,7 @@ router.delete("/:id", requireManagement, async (req, res) => {
     if (!isCeo(req.userRole)) where.centerId = me?.centerId || null;
   } else {
     where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-    if (!isCeo(req.userRole)) applyPersonalTaskScopeToQuery(where, req.userId);
+    applyMutationScopeForRole(where, req.userId, req.userRole);
   }
 
   const task = await Task.findOneAndUpdate(where, { deletedAt: new Date() });
@@ -919,7 +929,7 @@ router.delete("/:id", requireManagement, async (req, res) => {
 router.post("/:id/restore", async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  if (!isCeo(req.userRole)) applyPersonalTaskScopeToQuery(where, req.userId);
+  applyMutationScopeForRole(where, req.userId, req.userRole);
   const task = await Task.findOneAndUpdate(where, { deletedAt: null });
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
   res.json({ ok: true });
@@ -928,7 +938,7 @@ router.post("/:id/restore", async (req, res) => {
 router.delete("/:id/hard", requireRoles("ceo", "centre_head"), async (req, res) => {
   const me = await actor(req);
   const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  if (!isCeo(req.userRole)) applyPersonalTaskScopeToQuery(where, req.userId);
+  applyMutationScopeForRole(where, req.userId, req.userRole);
   const task = await Task.findOne(where);
   if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });
   await Task.deleteOne(where);
