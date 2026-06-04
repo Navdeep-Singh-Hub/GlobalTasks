@@ -5,7 +5,13 @@ import { authRequired, requireCenterAssigned, requireManagement, requireRoles } 
 import { isManagement, isCeo, isAssigneeOnly } from "../constants/roles.js";
 import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
-import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
+import {
+  RECURRING_TYPES as RECURRING,
+  isRecurring,
+  computeNextDueDate,
+  applyWorkableTodayDueFilter,
+  isOccurrenceWorkableToday,
+} from "../utils/recurrence.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
@@ -104,7 +110,21 @@ async function advanceIfRecurring(task, actorId, actorName) {
 }
 
 function buildFilter(query, userId, role) {
-  const { search, status, statusGroup, priority, assignee, taskType, recurring, myTasks, approval, departmentId, centerId, functionTag } = query;
+  const {
+    search,
+    status,
+    statusGroup,
+    priority,
+    assignee,
+    taskType,
+    recurring,
+    myTasks,
+    approval,
+    departmentId,
+    centerId,
+    functionTag,
+    workableToday,
+  } = query;
   const trashOnly = query.trash === "only" || query.bin === "only";
   /** Default lists active tasks; trash/recycle lists soft-deleted only. */
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
@@ -144,7 +164,19 @@ function buildFilter(query, userId, role) {
   if (myTasks === "true") filter.assignees = userId;
   else if (isAssigneeOnly(role)) filter.assignees = userId;
 
+  if (workableToday === "true" && recurring === "true") {
+    applyWorkableTodayDueFilter(filter);
+  }
+
   return filter;
+}
+
+function assertOccurrenceWorkableForAssignee(task) {
+  if (!isRecurring(task.taskType)) return null;
+  if (!isOccurrenceWorkableToday(task.dueDate)) {
+    return "This occurrence is not due yet. It will appear on its due date.";
+  }
+  return null;
 }
 
 function mergeClauseIntoFilter(filter, clause) {
@@ -463,6 +495,8 @@ router.patch("/:id", async (req, res, next) => {
       });
     }
     if (requestedComplete && !isCeo(req.userRole)) {
+      const workableErr = assertOccurrenceWorkableForAssignee(task);
+      if (workableErr) return res.status(400).json({ message: workableErr });
       const submissionRemarks = String(req.body.submissionRemarks || "").trim();
       if (!submissionRemarks) {
         return res.status(400).json({ message: "Remarks are required when submitting for approval" });
@@ -571,6 +605,13 @@ router.post("/bulk", async (req, res) => {
     if (!isCeo(req.userRole) && !submissionRemarks) {
       return res.status(400).json({ message: "Remarks are required when submitting for approval" });
     }
+    if (!isCeo(req.userRole)) {
+      const tasksToCheck = await Task.find({ _id: { $in: ids }, ...scope }).lean();
+      const tooEarly = tasksToCheck.find((t) => assertOccurrenceWorkableForAssignee(t));
+      if (tooEarly) {
+        return res.status(400).json({ message: assertOccurrenceWorkableForAssignee(tooEarly) });
+      }
+    }
     const actor = await User.findById(req.userId).lean();
     const tasks = await Task.find({ _id: { $in: ids }, ...scope });
     for (const t of tasks) {
@@ -637,6 +678,8 @@ router.post("/:id/not-done", async (req, res) => {
     if (task.notDoneApproval?.status === "pending") {
       return res.status(400).json({ message: "A not-done request is already pending approval" });
     }
+    const workableErr = assertOccurrenceWorkableForAssignee(task);
+    if (workableErr) return res.status(400).json({ message: workableErr });
 
     const remarks = String(req.body.submissionRemarks || req.body.remarks || "Not done for this occurrence").trim();
     if (!remarks) {

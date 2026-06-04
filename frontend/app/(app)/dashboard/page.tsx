@@ -55,7 +55,9 @@ export default function DashboardPage() {
     if (!showMyPending) return;
     void Promise.all([
       api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=false&page=1&limit=1"),
-      api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=true&page=1&limit=1"),
+      api<{ total?: number }>(
+        "/tasks?myTasks=true&statusGroup=open&recurring=true&workableToday=true&page=1&limit=1"
+      ),
     ])
       .then(([single, recurring]) => {
         setMyPendingSingle(Number(single.total) || 0);

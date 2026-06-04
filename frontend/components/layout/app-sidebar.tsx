@@ -81,7 +81,9 @@ export function AppSidebar({
   useEffect(() => {
     let cancel = false;
     import("@/lib/api").then(({ api }) => {
-      api<{ tasks: { _id: string }[] }>("/tasks?recurring=true&status=pending&limit=1")
+      api<{ tasks: { _id: string }[]; total?: number }>(
+        "/tasks?recurring=true&statusGroup=open&workableToday=true&limit=1"
+      )
         .then((d) => {
           if (!cancel) setPendingCount((d as unknown as { total: number }).total ?? d.tasks.length);
         })

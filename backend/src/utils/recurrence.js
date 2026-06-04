@@ -47,6 +47,41 @@ function addInterval(date, taskType) {
  * for daily tasks when includeSunday === false.
  * Returns a Date, or null if the series has ended.
  */
+export const APP_TIMEZONE = "Asia/Kolkata";
+
+/** Calendar day YYYY-MM-DD in app timezone (for occurrence visibility). */
+export function calendarDayKeyInTz(date, timeZone = APP_TIMEZONE) {
+  if (!date) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(date));
+}
+
+/** Start of next calendar day in app timezone (India: +05:30). */
+export function startOfNextCalendarDayInTz(now = new Date(), timeZone = APP_TIMEZONE) {
+  const todayKey = calendarDayKeyInTz(now, timeZone);
+  const anchor = new Date(`${todayKey}T12:00:00+05:30`);
+  anchor.setDate(anchor.getDate() + 1);
+  const nextKey = calendarDayKeyInTz(anchor, timeZone);
+  return new Date(`${nextKey}T00:00:00+05:30`);
+}
+
+/** True when assignee may work on this occurrence (due day is today or earlier, not tomorrow+). */
+export function isOccurrenceWorkableToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
+  if (!dueDate) return false;
+  const dueKey = calendarDayKeyInTz(dueDate, timeZone);
+  const todayKey = calendarDayKeyInTz(now, timeZone);
+  return dueKey <= todayKey;
+}
+
+/** Pending Recurring: hide next-day (and future) occurrences until that calendar day. */
+export function applyWorkableTodayDueFilter(filter, now = new Date()) {
+  filter.dueDate = { ...(filter.dueDate || {}), $lt: startOfNextCalendarDayInTz(now) };
+}
+
 export function computeNextDueDate(task) {
   if (!isRecurring(task.taskType)) return null;
   const base = task.dueDate ? new Date(task.dueDate) : new Date();

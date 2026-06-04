@@ -20,8 +20,8 @@ export default function PendingRecurringPage() {
       <div className={showTopDailyBlock ? "border-t border-zinc-200 pt-8 dark:border-zinc-800" : undefined}>
         <TasksView
           title="Pending Recurring"
-          subtitle="Recurring tasks waiting to be completed for the current cadence."
-          preset={{ recurring: true, status: "pending", statusGroup: "open" }}
+          subtitle="Today's and overdue daily occurrences only — the next day's task appears on that date (e.g. 5 June shows on 5 June, not before)."
+          preset={{ recurring: true, statusGroup: "open", workableToday: true }}
         />
       </div>
     </div>
