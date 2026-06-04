@@ -389,7 +389,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     waitingForApproval: records.filter((r) => r.status === "pending").length,
     approved: records.filter((r) => r.status === "approved" || r.status === "not_done_acknowledged").length,
     rejected: records.filter((r) => r.status === "rejected").length,
-    notDone: records.filter((r) => r.kind === "not_done").length,
+    notDone: records.filter((r) => r.kind === "not_done" || r.status === "missed").length,
   };
 
   res.json({ records, summary });

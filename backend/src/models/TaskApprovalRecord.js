@@ -16,7 +16,7 @@ const taskApprovalRecordSchema = new mongoose.Schema(
     kind: { type: String, enum: ["completion", "not_done"], default: "completion" },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected", "not_done_acknowledged"],
+      enum: ["pending", "approved", "rejected", "not_done_acknowledged", "missed"],
       default: "pending",
     },
     approvedAt: { type: Date, default: null },

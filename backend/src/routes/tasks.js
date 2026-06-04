@@ -5,13 +5,14 @@ import { authRequired, requireCenterAssigned, requireManagement, requireRoles } 
 import { isManagement, isCeo, isAssigneeOnly } from "../constants/roles.js";
 import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
+import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
 import {
-  RECURRING_TYPES as RECURRING,
-  isRecurring,
-  computeNextDueDate,
-  applyWorkableTodayDueFilter,
-  isOccurrenceWorkableToday,
-} from "../utils/recurrence.js";
+  applyTodayOnlyDueFilter,
+  isOccurrenceDueToday,
+  syncRecurringTasksForAssignee,
+  syncRecurringTaskToToday,
+} from "../services/recurringOccurrenceSync.js";
+import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
@@ -166,7 +167,7 @@ function buildFilter(query, userId, role) {
   else if (isAssigneeOnly(role)) filter.assignees = userId;
 
   if (workableToday === "true" && recurring === "true") {
-    applyWorkableTodayDueFilter(filter);
+    applyTodayOnlyDueFilter(filter);
   }
 
   return filter;
@@ -174,8 +175,8 @@ function buildFilter(query, userId, role) {
 
 function assertOccurrenceWorkableForAssignee(task) {
   if (!isRecurring(task.taskType)) return null;
-  if (!isOccurrenceWorkableToday(task.dueDate)) {
-    return "This occurrence is not due yet. It will appear on its due date.";
+  if (!isOccurrenceDueToday(task.dueDate)) {
+    return "You can only work on today's occurrence. Past days are marked not done automatically.";
   }
   return null;
 }
@@ -293,8 +294,22 @@ router.post("/admin/backfill-approval-history", requireRoles("ceo"), async (_req
   res.json({ ok: true, ...result });
 });
 
+router.get("/my-missed-occurrences", async (req, res) => {
+  const records = await TaskApprovalRecord.find({
+    assigneeId: req.userId,
+    status: "missed",
+  })
+    .sort({ occurrenceDueDate: -1 })
+    .limit(100)
+    .lean();
+  res.json({ records });
+});
+
 router.get("/", async (req, res) => {
   const me = await actor(req);
+  if (req.query.workableToday === "true" && req.query.recurring === "true" && isAssigneeOnly(req.userRole)) {
+    await syncRecurringTasksForAssignee(req.userId);
+  }
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
   applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
@@ -320,13 +335,25 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const me = await actor(req);
-  const task = await Task.findById(req.params.id)
-    .populate("assignees", "name email avatarUrl role")
-    .populate("assignedBy", "name email")
-    .populate("createdBy", "name email")
-    .populate("project", "name")
-    .populate("departmentId", "name code")
-    .populate("centerId", "name code");
+  let raw = await Task.findById(req.params.id);
+  if (
+    raw &&
+    !raw.deletedAt &&
+    isRecurring(raw.taskType) &&
+    userIsAssigneeOnTask(raw, req.userId)
+  ) {
+    await syncRecurringTaskToToday(raw, { assigneeId: req.userId });
+    raw = await Task.findById(req.params.id);
+  }
+  const task = raw
+    ? await Task.findById(req.params.id)
+        .populate("assignees", "name email avatarUrl role")
+        .populate("assignedBy", "name email")
+        .populate("createdBy", "name email")
+        .populate("project", "name")
+        .populate("departmentId", "name code")
+        .populate("centerId", "name code")
+    : null;
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
   if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });

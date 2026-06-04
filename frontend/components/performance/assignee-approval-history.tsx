@@ -45,6 +45,7 @@ function statusLabel(s: string) {
   if (s === "pending") return "Waiting for approval";
   if (s === "approved") return "Approved";
   if (s === "not_done_acknowledged") return "Not done acknowledged";
+  if (s === "missed") return "Not done (auto)";
   if (s === "rejected") return "Rejected";
   return s;
 }
@@ -197,7 +198,9 @@ export function AssigneeApprovalHistory() {
                         className={
                           r.status === "approved" || r.status === "not_done_acknowledged"
                             ? "text-emerald-600"
-                            : r.status === "rejected"
+                            : r.status === "missed"
+                              ? "text-violet-600"
+                              : r.status === "rejected"
                               ? "text-rose-600"
                               : "font-medium text-amber-600"
                         }

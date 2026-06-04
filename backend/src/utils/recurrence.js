@@ -69,17 +69,10 @@ export function startOfNextCalendarDayInTz(now = new Date(), timeZone = APP_TIME
   return new Date(`${nextKey}T00:00:00+05:30`);
 }
 
-/** True when assignee may work on this occurrence (due day is today or earlier, not tomorrow+). */
+/** @deprecated Use isOccurrenceDueToday from recurringOccurrenceSync / applyTodayOnlyDueFilter */
 export function isOccurrenceWorkableToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
   if (!dueDate) return false;
-  const dueKey = calendarDayKeyInTz(dueDate, timeZone);
-  const todayKey = calendarDayKeyInTz(now, timeZone);
-  return dueKey <= todayKey;
-}
-
-/** Pending Recurring: hide next-day (and future) occurrences until that calendar day. */
-export function applyWorkableTodayDueFilter(filter, now = new Date()) {
-  filter.dueDate = { ...(filter.dueDate || {}), $lt: startOfNextCalendarDayInTz(now) };
+  return calendarDayKeyInTz(dueDate, timeZone) === calendarDayKeyInTz(now, timeZone);
 }
 
 export function computeNextDueDate(task) {
