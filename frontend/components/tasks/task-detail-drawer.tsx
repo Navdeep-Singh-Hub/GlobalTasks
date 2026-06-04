@@ -87,6 +87,7 @@ export function TaskDetailDrawer({
   const isCeoUser = isCeo(me?.role);
 
   const [task, setTask] = useState<TaskDetail | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -133,9 +134,13 @@ export function TaskDetailDrawer({
   const load = useCallback(() => {
     if (!taskId) return;
     setLoading(true);
+    setLoadError("");
     api<{ task: TaskDetail }>(`/tasks/${taskId}`)
       .then((d) => setTask(d.task))
-      .catch(() => setTask(null))
+      .catch((e) => {
+        setTask(null);
+        setLoadError(e instanceof ApiError ? e.message : "Could not load task details.");
+      })
       .finally(() => setLoading(false));
   }, [taskId]);
 
@@ -143,6 +148,7 @@ export function TaskDetailDrawer({
     if (open && taskId) load();
     if (!open) {
       setTask(null);
+      setLoadError("");
       setRejectOpen(false);
       setSubmissionRemarksDraft("");
       setSubmitErr("");
@@ -283,6 +289,11 @@ export function TaskDetailDrawer({
           style={{ paddingBottom: keyboardInset ? `${keyboardInset}px` : undefined }}
         >
           <div className="space-y-5 p-5">
+          {loadError && !loading && (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-200">
+              {loadError}
+            </p>
+          )}
           {task?.description && (
             <section>
               <div className="mb-1 text-[10.5px] font-semibold uppercase tracking-[0.1em] text-zinc-400">Description</div>

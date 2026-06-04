@@ -256,7 +256,7 @@ function userCanAccessTaskDoc(task, userId, role) {
   const uid = String(userId || "");
   if (isCeo(role)) return true;
   if (taskAssignerId(task) === uid) return true;
-  if (isAssigneeOnly(role)) return userIsAssigneeOnTask(task, uid);
+  if (userIsAssigneeOnTask(task, uid)) return true;
   return false;
 }
 
