@@ -346,13 +346,15 @@ router.get("/assignee-approval-history", async (req, res) => {
   if (!assigneeId) return res.status(400).json({ message: "assigneeId is required" });
 
   const me = await actor(req);
-  const allowedIds = await listMyAssignees({
-    userId: req.userId,
-    centerId: me?.centerId || null,
-    isCeoRole: isCeo(req.userRole),
-  });
-  if (!allowedIds.includes(assigneeId)) {
-    return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
+  if (!isCeo(req.userRole)) {
+    const allowedIds = await listMyAssignees({
+      userId: req.userId,
+      centerId: me?.centerId || null,
+      isCeoRole: false,
+    });
+    if (!allowedIds.includes(assigneeId)) {
+      return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
+    }
   }
 
   const q = await buildAssigneeHistoryQuery({

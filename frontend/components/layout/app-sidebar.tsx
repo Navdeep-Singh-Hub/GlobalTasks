@@ -47,7 +47,7 @@ const NAV: NavItem[] = [
   { href: "/recycle-bin", label: "Recycle bin", icon: Trash2, roles: NAV_MANAGEMENT },
   { href: "/performance", label: "Performance", icon: Zap, roles: NAV_GENERAL_PERFORMANCE },
   { href: "/performance", label: "User team performance", icon: Zap, roles: NAV_USER_TEAM_PERFORMANCE },
-  { href: "/performance#task-approval-history", label: "Approval history", icon: ClipboardCheck, roles: NAV_MANAGEMENT },
+  { href: "/performance#task-approval-history", label: "Approval history", icon: ClipboardCheck, roles: [...NAV_MANAGEMENT, "ceo"] },
   { href: "/therapist-performance", label: "Therapist Performance", icon: Activity, roles: NAV_CLINICAL_PERFORMANCE },
   { href: "/supervisor-performance", label: "Supervisor & coordinator sheets", icon: Activity, roles: NAV_CLINICAL_PERFORMANCE },
   { href: "/admin", label: "Admin Panel", icon: ShieldCheck, roles: NAV_MANAGEMENT },

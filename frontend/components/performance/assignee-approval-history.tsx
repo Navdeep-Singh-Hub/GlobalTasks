@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { api } from "@/lib/api";
-import { formatRoleLine, isManagement } from "@/lib/roles";
+import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
 import { useAuth } from "@/contexts/auth-context";
 import { useCallback, useEffect, useState } from "react";
 
@@ -106,12 +106,20 @@ export function AssigneeApprovalHistory() {
   const selected = assignees.find((a) => a._id === assigneeId);
 
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-      <h2 className="text-lg font-bold">Task approval history</h2>
+    <div className="rounded-xl border-2 border-brand-200/80 bg-white p-4 shadow-card dark:border-brand-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+      <h2 className="text-lg font-bold text-brand-800 dark:text-brand-200">Task approval history</h2>
       <p className="mt-1 text-sm text-zinc-500">
-        Everyone you have ever assigned a task to appears below. See tasks waiting for approval, plus submitted, approved, and
-        rejected history — including daily recurring occurrences. Clear the date filters to see all time.
+        {isCeoUser
+          ? "Select any team member to see their full submit / approve / not-done history across the organisation."
+          : "Everyone you have ever assigned a task to appears below. See tasks waiting for approval, plus submitted, approved, and rejected history — including daily recurring occurrences."}{" "}
+        Clear the date filters to see all time.
       </p>
+      {!assignees.length ? (
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+          No assignees found yet. Assign tasks from <strong>Assign Task</strong>, then history will appear here after people
+          submit for approval.
+        </p>
+      ) : null}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 sm:col-span-2">

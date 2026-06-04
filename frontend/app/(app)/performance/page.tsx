@@ -68,8 +68,10 @@ export default function PerformancePage() {
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
           {isOperationsView
-            ? "Task completion for users mapped to you as operations lead. Scroll to Task approval history or use the link below."
-            : "Throughput and reliability of each team member."}
+            ? "Task completion for users mapped to you as operations lead."
+            : user?.role === "ceo"
+              ? "Team throughput below. Use Task approval history (above) to review submissions and approvals by person."
+              : "Throughput and reliability of each team member."}
         </p>
         {showApprovalHistory && (
           <a

@@ -117,12 +117,23 @@ export function assignerScopeClause(userId) {
  * Everyone this user has ever assigned a task to (active + deleted tasks, plus approval history).
  */
 export async function listMyAssignees({ userId, centerId, isCeoRole }) {
+  if (isCeoRole) {
+    const [fromTasks, fromHistory] = await Promise.all([
+      Task.distinct("assignees", { deletedAt: null }),
+      TaskApprovalRecord.distinct("assigneeId", {}),
+    ]);
+    const ids = new Set(
+      [...fromTasks, ...fromHistory].map((id) => String(id)).filter(Boolean)
+    );
+    return [...ids];
+  }
+
   const assignerFilter = assignerScopeClause(userId);
   const taskFilter = { ...assignerFilter };
-  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
+  if (centerId) taskFilter.centerId = centerId;
 
   const historyFilter = { assignedBy: userId };
-  if (!isCeoRole && centerId) historyFilter.centerId = centerId;
+  if (centerId) historyFilter.centerId = centerId;
 
   const [fromTasks, fromHistory, taskIdsForHistory] = await Promise.all([
     Task.distinct("assignees", taskFilter),
@@ -143,18 +154,21 @@ export async function listMyAssignees({ userId, centerId, isCeoRole }) {
 
 /** Match history for tasks you assigned even if record.assignedBy was stored before backfill. */
 export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, isCeoRole, from, to }) {
-  const taskFilter = {
-    deletedAt: null,
-    assignees: assigneeId,
-    ...assignerScopeClause(userId),
-  };
-  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
-  const taskIds = await Task.distinct("_id", taskFilter);
+  let q = { assigneeId };
 
-  const q = {
-    assigneeId,
-    $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }],
-  };
+  if (!isCeoRole) {
+    const taskFilter = {
+      deletedAt: null,
+      assignees: assigneeId,
+      ...assignerScopeClause(userId),
+    };
+    if (centerId) taskFilter.centerId = centerId;
+    const taskIds = await Task.distinct("_id", taskFilter);
+    q = {
+      assigneeId,
+      $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }],
+    };
+  }
   if (from || to) {
     q.submittedAt = {};
     if (from) q.submittedAt.$gte = new Date(String(from));
@@ -177,14 +191,20 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
   const taskFilter = {
     deletedAt: null,
     assignees: assigneeId,
-    ...assignerScopeClause(userId),
-    $or: [
-      { status: "awaiting_approval", approvalStatus: "pending" },
-      { requiresApproval: true, approvalStatus: "pending", status: "awaiting_approval" },
-      { "notDoneApproval.status": "pending" },
+    $and: [
+      {
+        $or: [
+          { status: "awaiting_approval", approvalStatus: "pending" },
+          { requiresApproval: true, approvalStatus: "pending", status: "awaiting_approval" },
+          { "notDoneApproval.status": "pending" },
+        ],
+      },
     ],
   };
-  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
+  if (!isCeoRole) {
+    taskFilter.$and.push(assignerScopeClause(userId));
+    if (centerId) taskFilter.centerId = centerId;
+  }
 
   const tasks = await Task.find(taskFilter)
     .select("_id title taskType dueDate submissionRemarks updatedAt notDoneApproval")
