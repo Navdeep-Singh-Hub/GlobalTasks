@@ -588,29 +588,26 @@ export function TasksView({
                 ) : null}
                 {masterAdminActions ? (
                   <div className="mt-2 space-y-1.5 text-[11px] text-zinc-500">
-                    {masterRelation === "created" ? (
-                      <div>
-                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned to</span>
-                        {t.assignees?.length ? (
-                          <ul className="mt-0.5 space-y-1">
-                            {t.assignees.map((a) => (
-                              <li key={a._id}>
-                                <UserNameEmail name={a.name} email={a.email} />
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <span className="mt-0.5 block">—</span>
-                        )}
+                    <div>
+                      <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned by</span>
+                      <div className="mt-0.5">
+                        <UserNameEmail name={taskAssigner(t)?.name} email={taskAssigner(t)?.email} />
                       </div>
-                    ) : (
-                      <div>
-                        <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned by</span>
-                        <div className="mt-0.5">
-                          <UserNameEmail name={taskAssigner(t)?.name} email={taskAssigner(t)?.email} />
-                        </div>
-                      </div>
-                    )}
+                    </div>
+                    <div>
+                      <span className="font-semibold text-zinc-600 dark:text-zinc-300">Assigned to</span>
+                      {t.assignees?.length ? (
+                        <ul className="mt-0.5 space-y-1">
+                          {t.assignees.map((a) => (
+                            <li key={a._id}>
+                              <UserNameEmail name={a.name} email={a.email} />
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="mt-0.5 block">—</span>
+                      )}
+                    </div>
                   </div>
                 ) : null}
                 <div className="mt-3 flex flex-wrap gap-1.5">
