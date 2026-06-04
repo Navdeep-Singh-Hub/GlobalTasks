@@ -51,7 +51,12 @@ export default function DashboardPage() {
     if (user.role === "centre_head") api<CentreHeadReport>(`/reports/centre-head?${query}`).then(setCentreHead).catch(() => setCentreHead(null));
     if (user.role === "ceo") api<CioSummary>(`/reports/ceo-summary?${query}`).then(setCeo).catch(() => setCeo(null));
 
-    const showMyPending = isAssigneeOnly(user.role) || user.role === "coordinator" || user.role === "centre_head";
+    const showMyPending =
+      isAssigneeOnly(user.role) ||
+      user.role === "coordinator" ||
+      user.role === "centre_head" ||
+      user.role === "supervisor" ||
+      user.role === "operations";
     if (!showMyPending) return;
     void Promise.all([
       api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=false&page=1&limit=1"),

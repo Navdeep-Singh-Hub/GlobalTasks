@@ -224,6 +224,21 @@ function applyAssignerScopeFilter(filter, userId) {
   mergeClauseIntoFilter(filter, assignerScopeClause(userId));
 }
 
+/** Pending Single / Pending Recurring — show tasks assigned TO me (incl. supervisor, coordinator, ops). */
+function isAssigneeInboxQuery(query) {
+  if (query.myTasks === "true") return true;
+  if (query.workableToday === "true" && query.recurring === "true") return true;
+  if (
+    query.recurring === "false" &&
+    query.statusGroup === "open" &&
+    String(query.masterScope || "").toLowerCase() !== "true" &&
+    query.approval !== "true"
+  ) {
+    return true;
+  }
+  return false;
+}
+
 function applyListScopeForRole(filter, { userId, role, query }) {
   if (isCeo(role)) return;
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
@@ -233,7 +248,7 @@ function applyListScopeForRole(filter, { userId, role, query }) {
     applyMasterScopeFilter(filter, userId, masterRelation);
     return;
   }
-  if (isAssigneeOnly(role) || query.myTasks === "true") {
+  if (isAssigneeInboxQuery(query) || isAssigneeOnly(role)) {
     applyAssigneeScopeFilter(filter, userId);
     return;
   }
@@ -307,7 +322,7 @@ router.get("/my-missed-occurrences", async (req, res) => {
 
 router.get("/", async (req, res) => {
   const me = await actor(req);
-  if (req.query.workableToday === "true" && req.query.recurring === "true" && isAssigneeOnly(req.userRole)) {
+  if (req.query.workableToday === "true" && req.query.recurring === "true") {
     await syncRecurringTasksForAssignee(req.userId);
   }
   const filter = buildFilter(req.query, req.userId, req.userRole);

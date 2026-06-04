@@ -43,6 +43,8 @@ type Preset = {
   approval?: boolean;
   /** Recurring assignee lists: only due today or earlier (not tomorrow+). */
   workableToday?: boolean;
+  /** Pending inbox: tasks assigned to the signed-in user. */
+  myTasks?: boolean;
 };
 
 function taskAssigner(t: Task) {
@@ -203,6 +205,7 @@ export function TasksView({
     if (preset.statusGroup) qs.set("statusGroup", preset.statusGroup);
     if (preset.approval) qs.set("approval", "true");
     if (preset.workableToday) qs.set("workableToday", "true");
+    if (preset.myTasks) qs.set("myTasks", "true");
     if (masterAdminActions) {
       qs.set("masterScope", "true");
       qs.set("masterRelation", masterRelation);
@@ -215,7 +218,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, masterAdminActions, masterRelation]);
+  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, masterAdminActions, masterRelation]);
 
   useEffect(() => {
     load();
