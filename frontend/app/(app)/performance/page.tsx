@@ -35,6 +35,12 @@ export default function PerformancePage() {
     api<{ members: Member[] }>("/dashboard/team-performance").then((d) => setData(d.members)).catch(() => setData([]));
   }, [canView]);
 
+  useEffect(() => {
+    if (typeof window === "undefined" || window.location.hash !== "#task-approval-history") return;
+    const el = document.getElementById("task-approval-history");
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [showApprovalHistory]);
+
   if (user && !canView) {
     return (
       <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
@@ -62,10 +68,24 @@ export default function PerformancePage() {
         </h1>
         <p className="mt-1 text-sm text-zinc-500">
           {isOperationsView
-            ? "Task completion for users mapped to you as operations lead."
+            ? "Task completion for users mapped to you as operations lead. Scroll to Task approval history or use the link below."
             : "Throughput and reliability of each team member."}
         </p>
+        {showApprovalHistory && (
+          <a
+            href="#task-approval-history"
+            className="mt-2 inline-flex text-sm font-semibold text-brand-600 underline-offset-2 hover:underline"
+          >
+            Go to Task approval history →
+          </a>
+        )}
       </div>
+
+      {showApprovalHistory && (
+        <div id="task-approval-history">
+          <AssigneeApprovalHistory />
+        </div>
+      )}
 
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <div className="h-[280px] min-w-0 sm:h-[340px]">
@@ -98,8 +118,6 @@ export default function PerformancePage() {
           </div>
         ))}
       </div>
-
-      {showApprovalHistory && <AssigneeApprovalHistory />}
     </div>
   );
 }
