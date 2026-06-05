@@ -125,8 +125,8 @@ export function AssigneeApprovalHistory() {
       <p className="mt-1 text-sm text-zinc-500">
         {isCeoUser
           ? "Select any team member to see their full submit / approve / not-done history across the organisation."
-          : "Everyone you have ever assigned a task to appears below. See tasks waiting for approval, plus submitted, approved, and rejected history — including daily recurring occurrences."}{" "}
-        Clear the date filters to see all time.
+          : "Everyone you have ever assigned a task to appears below. Daily tasks show every scheduled day since the task was assigned — approved, waiting, or not done."}{" "}
+        Clear the date filters to see full history.
       </p>
       {!assignees.length ? (
         <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">

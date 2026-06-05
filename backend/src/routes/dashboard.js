@@ -18,7 +18,10 @@ import {
   collapseReopenedDuplicates,
   pruneDuplicatePendingPerTask,
   correctMisdatedPendingOccurrence,
+  fillMissingDailyOccurrenceHistory,
+  sortRecordsByOccurrence,
 } from "../services/taskApprovalHistory.js";
+import { syncRecurringTasksForAssignee } from "../services/recurringOccurrenceSync.js";
 
 const router = Router();
 router.use(authRequired);
@@ -361,6 +364,8 @@ router.get("/assignee-approval-history", async (req, res) => {
     }
   }
 
+  await syncRecurringTasksForAssignee(assigneeId);
+
   const q = await buildAssigneeHistoryQuery({
     userId: req.userId,
     assigneeId,
@@ -374,8 +379,8 @@ router.get("/assignee-approval-history", async (req, res) => {
     TaskApprovalRecord.find(q)
       .populate("approvedBy", "name email")
       .populate("rejectedBy", "name email")
-      .sort({ submittedAt: -1 })
-      .limit(500)
+      .sort({ occurrenceDueDate: -1, submittedAt: -1 })
+      .limit(2000)
       .lean(),
     fetchLivePendingApprovals({
       userId: req.userId,
@@ -387,13 +392,24 @@ router.get("/assignee-approval-history", async (req, res) => {
     }),
   ]);
 
-  const records = collapseReopenedDuplicates(
+  let records = collapseReopenedDuplicates(
     dedupeApprovalRecords(
       correctMisdatedPendingOccurrence(
         pruneDuplicatePendingPerTask(mergeAssigneeApprovalRows(stored, livePending))
       )
     )
   );
+
+  records = await fillMissingDailyOccurrenceHistory({
+    assigneeId,
+    records,
+    userId: req.userId,
+    centerId: me?.centerId || null,
+    isCeoRole: isCeo(req.userRole),
+    from: req.query.from,
+    to: req.query.to,
+  });
+  records = sortRecordsByOccurrence(records);
 
   const summary = {
     total: records.length,

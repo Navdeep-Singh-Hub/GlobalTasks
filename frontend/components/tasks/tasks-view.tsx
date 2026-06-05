@@ -739,7 +739,7 @@ export function TasksView({
                   )}
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-zinc-500">
-                  <span>Due {formatDueDateInTz(t.dueDate)}</span>
+                  <span>Due {taskListDueLabel(t)}</span>
                   {!masterAdminActions && (
                     <span className="truncate text-right">{t.assignees?.[0]?.name || "Unassigned"}</span>
                   )}

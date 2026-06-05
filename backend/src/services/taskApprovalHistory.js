@@ -426,12 +426,16 @@ export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, 
     };
   }
   if (from || to) {
-    q.submittedAt = {};
-    if (from) q.submittedAt.$gte = new Date(String(from));
+    q.occurrenceDueDate = {};
+    if (from) {
+      const key = calendarDayKeyInTz(new Date(String(from)));
+      q.occurrenceDueDate.$gte = new Date(`${key}T00:00:00+05:30`);
+    }
     if (to) {
-      const end = new Date(String(to));
-      end.setHours(23, 59, 59, 999);
-      q.submittedAt.$lte = end;
+      const key = calendarDayKeyInTz(new Date(String(to)));
+      const end = new Date(`${key}T00:00:00+05:30`);
+      end.setDate(end.getDate() + 1);
+      q.occurrenceDueDate.$lt = end;
     }
   }
   return q;
@@ -537,6 +541,106 @@ export function collapseReopenedDuplicates(records) {
   return kept.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
 }
 
+function nextCalendarDayKey(dayKey) {
+  const anchor = new Date(`${dayKey}T12:00:00+05:30`);
+  anchor.setDate(anchor.getDate() + 1);
+  return calendarDayKeyInTz(anchor);
+}
+
+function isDailyOccurrenceScheduled(task, dayKey) {
+  if (task.taskType !== "daily") return false;
+  const weekOff = task.recurrence?.weekOff || "Sunday";
+  const includeSunday = task.recurrence?.includeSunday === true;
+  const weekday = new Intl.DateTimeFormat("en-US", {
+    timeZone: APP_TIMEZONE,
+    weekday: "long",
+  }).format(new Date(`${dayKey}T12:00:00+05:30`));
+  if (!includeSunday && weekday === weekOff) return false;
+  const forever = task.recurrence?.forever === true;
+  const endDate = task.recurrence?.endDate ? new Date(task.recurrence.endDate) : null;
+  if (!forever && endDate && new Date(`${dayKey}T12:00:00+05:30`) > endDate) return false;
+  return true;
+}
+
+/** Fill gaps so every scheduled daily occurrence since assignment appears in history. */
+export async function fillMissingDailyOccurrenceHistory({
+  assigneeId,
+  records,
+  userId,
+  centerId,
+  isCeoRole,
+  from,
+  to,
+}) {
+  const taskFilter = {
+    deletedAt: null,
+    taskType: "daily",
+    assignees: assigneeId,
+    ...assignerScopeClause(userId),
+  };
+  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
+
+  const tasks = await Task.find(taskFilter)
+    .select("_id title taskType createdAt recurrence dueDate")
+    .lean();
+  if (!tasks.length) return sortRecordsByOccurrence(records);
+
+  const todayKey = calendarDayKeyInTz(new Date());
+  const fromKey = from ? calendarDayKeyInTz(new Date(String(from))) : null;
+  const toKey = to ? calendarDayKeyInTz(new Date(String(to))) : todayKey;
+  const rangeEndKey = toKey < todayKey ? toKey : todayKey;
+
+  const recordKeys = new Set(
+    records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
+  );
+
+  const synth = [];
+  for (const task of tasks) {
+    const assignKey = calendarDayKeyInTz(task.createdAt);
+    const dueKey = task.dueDate ? calendarDayKeyInTz(task.dueDate) : assignKey;
+    let dayKey = assignKey < dueKey ? assignKey : dueKey;
+
+    while (dayKey <= rangeEndKey) {
+      if (fromKey && dayKey < fromKey) {
+        dayKey = nextCalendarDayKey(dayKey);
+        continue;
+      }
+      if (!isDailyOccurrenceScheduled(task, dayKey)) {
+        dayKey = nextCalendarDayKey(dayKey);
+        continue;
+      }
+
+      const recKey = `${task._id}-${dayKey}`;
+      if (!recordKeys.has(recKey) && dayKey < todayKey) {
+        const endOfDay = new Date(`${dayKey}T23:59:59+05:30`);
+        synth.push({
+          _id: `gap-${task._id}-${dayKey}`,
+          taskId: task._id,
+          taskTitle: task.title,
+          taskType: task.taskType,
+          occurrenceDueDate: endOfDay,
+          submittedAt: endOfDay,
+          submissionRemarks: "No submission recorded for this day.",
+          kind: "not_done",
+          status: "missed",
+        });
+        recordKeys.add(recKey);
+      }
+      dayKey = nextCalendarDayKey(dayKey);
+    }
+  }
+
+  return sortRecordsByOccurrence([...records, ...synth]);
+}
+
+export function sortRecordsByOccurrence(records) {
+  return [...records].sort((a, b) => {
+    const occ = new Date(b.occurrenceDueDate).getTime() - new Date(a.occurrenceDueDate).getTime();
+    if (occ !== 0) return occ;
+    return String(a.taskTitle || "").localeCompare(String(b.taskTitle || ""));
+  });
+}
+
 /** Tasks currently waiting in For Approval (includes rows without a history record yet). */
 export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, isCeoRole, from, to }) {
   const taskFilter = {
@@ -592,12 +696,14 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     }
 
     if (from || to) {
-      const sub = new Date(submittedAt);
-      if (from && sub < new Date(String(from))) continue;
+      const occKey = occurrenceDayKey(occurrenceDueDate);
+      if (from) {
+        const fromKey = calendarDayKeyInTz(new Date(String(from)));
+        if (occKey < fromKey) continue;
+      }
       if (to) {
-        const end = new Date(String(to));
-        end.setHours(23, 59, 59, 999);
-        if (sub > end) continue;
+        const toKey = calendarDayKeyInTz(new Date(String(to)));
+        if (occKey > toKey) continue;
       }
     }
 
