@@ -327,6 +327,20 @@ export function TasksView({
     load();
   };
 
+  const isAssigneeOnTask = (t: Task) => Boolean(myId && t.assignees?.some((a) => String(a._id) === myId));
+
+  const canResubmitTask = (t: Task) =>
+    t.taskType === "daily" &&
+    t.notDoneApproval?.status !== "pending" &&
+    ((t.status === "awaiting_approval" && t.approvalStatus === "pending") ||
+      (t.status === "completed" && (t.approvalStatus === "approved" || t.masterDisplayStatus === "approved"))) &&
+    (isAssigneeOnTask(t) || canEditTaskAsAssigner(t));
+
+  const resubmitTask = async (id: string) => {
+    await api(`/tasks/${id}/resubmit`, { method: "POST" });
+    load();
+  };
+
   const displayedId = (i: number) => 1200 + i;
 
   const taskStatusLabel = (t: Task) => {
@@ -600,6 +614,16 @@ export function TasksView({
                               </button>
                             </>
                           )}
+                          {canResubmitTask(t) && (
+                            <button
+                              type="button"
+                              onClick={() => void resubmitTask(t._id)}
+                              title={canEditTaskAsAssigner(t) && !isAssigneeOnTask(t) ? "Resubmit to assignee" : "Resubmit"}
+                              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-brand-50 hover:text-brand-600 sm:h-7 sm:w-7 dark:hover:bg-brand-950/40 dark:hover:text-brand-400"
+                            >
+                              <Inbox className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           {(canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t))) && (
                             <button
                               type="button"
@@ -717,6 +741,7 @@ export function TasksView({
                 </div>
               </button>
               {(showApprovalQuickActions && rowNeedsApproval(t)) ||
+              canResubmitTask(t) ||
               canManageOwnMasterTask(t) ||
               (preset.approval && canEditTaskAsAssigner(t)) ||
               (masterAdminActions && canSendBackForApproval(t)) ? (
@@ -746,6 +771,19 @@ export function TasksView({
                         Reject
                       </Button>
                     </>
+                  )}
+                  {canResubmitTask(t) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void resubmitTask(t._id);
+                      }}
+                    >
+                      {canEditTaskAsAssigner(t) && !isAssigneeOnTask(t) ? "Resubmit to assignee" : "Resubmit"}
+                    </Button>
                   )}
                   {canSendBackForApproval(t) && (
                     <Button

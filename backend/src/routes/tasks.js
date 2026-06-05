@@ -24,6 +24,7 @@ import {
   recordNotDoneSubmission,
   finalizeApprovalRecord,
   reopenApprovalForAssigner,
+  resubmitDailyRecurringTask,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
@@ -921,6 +922,65 @@ router.post("/bulk", async (req, res) => {
     await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { status } });
   }
   res.json({ ok: true });
+});
+
+router.post("/:id/resubmit", async (req, res) => {
+  try {
+    const me = await actor(req);
+    const task = await Task.findById(req.params.id);
+    if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
+    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+      return res.status(403).json({ message: "You can resubmit tasks from your center only" });
+    }
+
+    const isAssignee = userIsAssigneeOnTask(task, req.userId);
+    const isAssigner = await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task });
+    if (!isAssignee && !isAssigner) {
+      return res.status(403).json({ message: "Only the assignee or assigner can resubmit this task" });
+    }
+
+    const result = await resubmitDailyRecurringTask({ task });
+    if (!result.ok) return res.status(400).json({ message: result.message });
+
+    const actorUser = await User.findById(req.userId).lean();
+    await TaskEvent.create({
+      taskId: task._id,
+      actorId: req.userId,
+      eventType: "updated",
+      meta: {
+        action: "resubmitted",
+        occurrenceDueDate: result.occurrenceDueDate,
+        by: isAssigner ? "assigner" : "assignee",
+      },
+    });
+
+    if (isAssigner && task.assignees?.length) {
+      await notifyMany(task.assignees, {
+        type: "task_assigned",
+        title: "Please resubmit today's task",
+        message: `${actorUser?.name || "Your assigner"} asked you to redo and submit "${task.title}" again for today.`,
+        link: "/pending-recurring",
+      });
+    } else if (isAssignee) {
+      const approverId = taskAssignerId(task);
+      if (approverId) {
+        await notifyMany([approverId], {
+          type: "task_updated",
+          title: "Submission withdrawn",
+          message: `${actorUser?.name || "Assignee"} withdrew "${task.title}" to redo today's occurrence.`,
+          link: "/for-approval",
+        });
+      }
+    }
+
+    const refreshed = await Task.findById(task._id)
+      .populate("assignees", "name email avatarUrl role")
+      .populate("assignedBy", "name email")
+      .populate("createdBy", "name email");
+    res.json({ task: refreshed });
+  } catch (e) {
+    res.status(500).json({ message: e.message || "Could not resubmit task" });
+  }
 });
 
 router.post("/:id/not-done", async (req, res) => {

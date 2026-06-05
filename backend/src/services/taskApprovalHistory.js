@@ -107,6 +107,84 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
   });
 }
 
+/**
+ * Daily recurring: reset today's occurrence to pending so assignee can redo and submit again.
+ * Clears pending/approved completion records for today (removes from For Approval & performance).
+ */
+export async function resubmitDailyRecurringTask({ task }) {
+  if (task.taskType !== "daily") {
+    return { ok: false, message: "Resubmit is only available for daily recurring tasks" };
+  }
+
+  const todayBounds = dueDateDayBounds(new Date());
+  const todayKey = todayBounds.key;
+
+  const [pendingRecord, approvedRecord] = await Promise.all([
+    TaskApprovalRecord.findOne({
+      taskId: task._id,
+      kind: "completion",
+      status: "pending",
+      occurrenceDueDate: { $gte: todayBounds.start, $lt: todayBounds.end },
+    })
+      .sort({ submittedAt: -1 })
+      .lean(),
+    TaskApprovalRecord.findOne({
+      taskId: task._id,
+      kind: "completion",
+      status: "approved",
+      occurrenceDueDate: { $gte: todayBounds.start, $lt: todayBounds.end },
+    })
+      .sort({ approvedAt: -1, submittedAt: -1 })
+      .lean(),
+  ]);
+
+  const awaiting =
+    task.status === "awaiting_approval" &&
+    task.approvalStatus === "pending" &&
+    !task.notDoneApproval?.status;
+  const completedApproved =
+    task.status === "completed" && (task.approvalStatus === "approved" || Boolean(approvedRecord));
+
+  if (!awaiting && !completedApproved && !pendingRecord && !approvedRecord) {
+    return { ok: false, message: "This task cannot be resubmitted" };
+  }
+
+  let occurrenceDue =
+    pendingRecord?.occurrenceDueDate || approvedRecord?.occurrenceDueDate || task.dueDate;
+  if (calendarDayKeyInTz(occurrenceDue) !== todayKey) {
+    if (pendingRecord || approvedRecord || isOccurrenceDueToday(task.dueDate)) {
+      occurrenceDue = occurrenceDueOnDay(occurrenceDue, todayKey);
+    } else {
+      return { ok: false, message: "You can only resubmit today's daily occurrence" };
+    }
+  }
+
+  await TaskApprovalRecord.deleteMany({
+    taskId: task._id,
+    kind: "completion",
+    occurrenceDueDate: { $gte: todayBounds.start, $lt: todayBounds.end },
+    status: { $in: ["pending", "approved"] },
+  });
+
+  task.status = "pending";
+  task.approvalStatus = "none";
+  task.requiresApproval = true;
+  task.submissionRemarks = "";
+  task.completedAt = null;
+  task.rejectionRemarks = "";
+  task.rejectionMode = "";
+  task.notDoneApproval = undefined;
+  task.dueDate = occurrenceDue;
+  await task.save();
+
+  return { ok: true, occurrenceDueDate: occurrenceDue };
+}
+
+function isOccurrenceDueToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
+  if (!dueDate) return false;
+  return calendarDayKeyInTz(dueDate, timeZone) === calendarDayKeyInTz(now, timeZone);
+}
+
 export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;

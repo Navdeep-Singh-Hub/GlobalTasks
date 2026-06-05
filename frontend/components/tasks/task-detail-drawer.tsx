@@ -99,6 +99,7 @@ export function TaskDetailDrawer({
   const [submitErr, setSubmitErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [sendingBack, setSendingBack] = useState(false);
+  const [resubmitting, setResubmitting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const remarksRef = useRef<HTMLTextAreaElement>(null);
@@ -115,8 +116,18 @@ export function TaskDetailDrawer({
   const canEditAsAssigner = Boolean(
     task && myId && assignerId === myId && (isCeoUser || isManagement(me?.role))
   );
+  const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
+  const isAssignee = Boolean(task && myId && task.assignees?.some((a) => String(a._id) === myId));
+  const canResubmit = Boolean(
+    task &&
+      task.taskType === "daily" &&
+      !hasPendingNotDone &&
+      ((task.status === "awaiting_approval" && task.approvalStatus === "pending") ||
+        (task.status === "completed" && task.approvalStatus === "approved")) &&
+      (isAssignee || canEditAsAssigner)
+  );
   const isTerminalStatus = task?.status === "completed" || task?.status === "cancelled";
-  const showFooter = Boolean(task && (!isTerminalStatus || canEditAsAssigner));
+  const showFooter = Boolean(task && (!isTerminalStatus || canEditAsAssigner || (isAssignee && canResubmit)));
   const canSendBackForApproval = Boolean(
     canEditAsAssigner &&
       task &&
@@ -124,7 +135,6 @@ export function TaskDetailDrawer({
         task.status === "cancelled" ||
         task.approvalStatus === "approved")
   );
-  const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
   const assigneeBlockedByCompletionApproval =
     task?.status === "awaiting_approval" || task?.approvalStatus === "pending";
@@ -195,6 +205,21 @@ export function TaskDetailDrawer({
       setSubmitErr(e instanceof ApiError ? e.message : "Could not mark as not done.");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const resubmitTask = async () => {
+    if (!task) return;
+    setResubmitting(true);
+    try {
+      await api(`/tasks/${task._id}/resubmit`, { method: "POST" });
+      onUpdated?.();
+      load();
+      setSubmissionRemarksDraft("");
+    } catch (e) {
+      setSubmitErr(e instanceof ApiError ? e.message : "Could not resubmit task.");
+    } finally {
+      setResubmitting(false);
     }
   };
 
@@ -482,6 +507,17 @@ export function TaskDetailDrawer({
                     Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                    {canResubmit ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        disabled={resubmitting}
+                        onClick={() => void resubmitTask()}
+                      >
+                        {resubmitting ? "Resubmitting…" : "Resubmit to assignee"}
+                      </Button>
+                    ) : null}
                     {canSendBackForApproval && onSendBackForApproval ? (
                       <Button
                         size="sm"
@@ -542,6 +578,12 @@ export function TaskDetailDrawer({
                           <strong>Waiting for approval.</strong> The person who assigned this task must approve before it is
                           marked completed
                           {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
+                          {canResubmit && isAssignee ? (
+                            <span className="mt-1 block">
+                              Use <strong>Resubmit</strong> below to withdraw this submission and redo today&apos;s work in Pending
+                              Recurring.
+                            </span>
+                          ) : null}
                         </>
                       )}
                     </div>
@@ -599,12 +641,33 @@ export function TaskDetailDrawer({
                           >
                             {canApproveNotDone ? "Acknowledge not done" : "Approve & complete"}
                           </Button>
+                          {canResubmit && canEditAsAssigner ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full sm:w-auto"
+                              disabled={resubmitting}
+                              onClick={() => void resubmitTask()}
+                            >
+                              {resubmitting ? "Resubmitting…" : "Resubmit to assignee"}
+                            </Button>
+                          ) : null}
                           {canEditAsAssigner && onRequestEdit ? (
                             <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
                               Edit
                             </Button>
                           ) : null}
                         </>
+                      ) : canResubmit && isAssignee ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full sm:w-auto"
+                          disabled={resubmitting}
+                          onClick={() => void resubmitTask()}
+                        >
+                          {resubmitting ? "Resubmitting…" : "Resubmit"}
+                        </Button>
                       ) : null
                     ) : (
                       <>
@@ -631,6 +694,16 @@ export function TaskDetailDrawer({
                             }}
                           >
                             Mark completed
+                          </Button>
+                        ) : canResubmit && isAssignee ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="w-full sm:w-auto"
+                            disabled={resubmitting}
+                            onClick={() => void resubmitTask()}
+                          >
+                            {resubmitting ? "Resubmitting…" : "Resubmit"}
                           </Button>
                         ) : canSubmitForApproval ? (
                           <Button
