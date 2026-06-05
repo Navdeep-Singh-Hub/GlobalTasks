@@ -206,3 +206,22 @@ export async function syncRecurringTasksForAssignee(assigneeId, now = new Date()
   }
   return { synced, totalMissed };
 }
+
+/** Run occurrence sync for every assignee with recurring tasks (all centres / assigners). */
+export async function syncAllAssigneesRecurringOccurrences(now = new Date()) {
+  const assigneeIds = await Task.distinct("assignees", {
+    deletedAt: null,
+    taskType: { $in: RECURRING_TYPES },
+  });
+
+  let synced = 0;
+  let totalMissed = 0;
+  for (const assigneeId of assigneeIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await syncRecurringTasksForAssignee(assigneeId, now);
+    synced += result.synced || 0;
+    totalMissed += result.totalMissed || 0;
+  }
+
+  return { assignees: assigneeIds.length, synced, totalMissed };
+}

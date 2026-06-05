@@ -562,6 +562,19 @@ function isDailyOccurrenceScheduled(task, dayKey) {
   return true;
 }
 
+async function dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole }) {
+  const taskFilter = {
+    deletedAt: null,
+    taskType: "daily",
+    assignees: assigneeId,
+  };
+  if (!isCeoRole) {
+    Object.assign(taskFilter, assignerScopeClause(userId));
+    if (centerId) taskFilter.centerId = centerId;
+  }
+  return Task.find(taskFilter).select("_id title taskType createdAt recurrence dueDate").lean();
+}
+
 /** Fill gaps so every scheduled daily occurrence since assignment appears in history. */
 export async function fillMissingDailyOccurrenceHistory({
   assigneeId,
@@ -572,17 +585,7 @@ export async function fillMissingDailyOccurrenceHistory({
   from,
   to,
 }) {
-  const taskFilter = {
-    deletedAt: null,
-    taskType: "daily",
-    assignees: assigneeId,
-    ...assignerScopeClause(userId),
-  };
-  if (!isCeoRole && centerId) taskFilter.centerId = centerId;
-
-  const tasks = await Task.find(taskFilter)
-    .select("_id title taskType createdAt recurrence dueDate")
-    .lean();
+  const tasks = await dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole });
   if (!tasks.length) return sortRecordsByOccurrence(records);
 
   const todayKey = calendarDayKeyInTz(new Date());

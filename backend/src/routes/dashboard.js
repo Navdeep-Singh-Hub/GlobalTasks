@@ -337,6 +337,8 @@ router.get("/my-assignees", async (req, res) => {
     isCeoRole: isCeo(req.userRole),
   });
   if (!ids.length) return res.json({ assignees: [] });
+
+  await Promise.all(ids.map((assigneeId) => syncRecurringTasksForAssignee(assigneeId)));
   const users = await User.find({ _id: { $in: ids } })
     .select("name email role executorKind active")
     .sort({ name: 1 })

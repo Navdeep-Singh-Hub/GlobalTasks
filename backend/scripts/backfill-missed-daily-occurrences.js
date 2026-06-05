@@ -6,8 +6,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-import { Task } from "../src/models/Task.js";
-import { syncRecurringTasksForAssignee } from "../src/services/recurringOccurrenceSync.js";
+import { syncAllAssigneesRecurringOccurrences } from "../src/services/recurringOccurrenceSync.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, "..", ".env") });
@@ -20,22 +19,10 @@ async function main() {
   }
   await mongoose.connect(uri);
 
-  const assigneeIds = await Task.distinct("assignees", {
-    deletedAt: null,
-    taskType: "daily",
-  });
-
-  let totalMissed = 0;
-  let synced = 0;
-  for (const assigneeId of assigneeIds) {
-    // eslint-disable-next-line no-await-in-loop
-    const result = await syncRecurringTasksForAssignee(assigneeId);
-    synced += result.synced || 0;
-    totalMissed += result.totalMissed || 0;
-  }
+  const result = await syncAllAssigneesRecurringOccurrences();
 
   console.log(
-    `Backfill complete: synced ${synced} task(s) across ${assigneeIds.length} assignee(s); ${totalMissed} missed occurrence(s) recorded.`
+    `Backfill complete: synced ${result.synced} task(s) across ${result.assignees} assignee(s); ${result.totalMissed} missed occurrence(s) recorded.`
   );
   await mongoose.disconnect();
 }
