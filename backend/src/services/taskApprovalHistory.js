@@ -42,6 +42,12 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     existing.submittedAt = new Date();
     existing.submissionRemarks = text || existing.submissionRemarks;
     await existing.save();
+    await TaskApprovalRecord.deleteMany({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+      _id: { $ne: existing._id },
+    });
     return existing;
   }
 
@@ -261,6 +267,72 @@ export function dedupeApprovalRecords(records) {
   return [...byKey.values()].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 
+/** Keep only the newest pending row per task (drops orphan 6/6 rows after reopen on 5/6). */
+export function pruneDuplicatePendingPerTask(records) {
+  const latestPendingByTask = new Map();
+  for (const r of records) {
+    if (r.status !== "pending") continue;
+    const tid = String(r.taskId || "");
+    if (!tid) continue;
+    const prev = latestPendingByTask.get(tid);
+    if (!prev || new Date(r.submittedAt).getTime() > new Date(prev.submittedAt).getTime()) {
+      latestPendingByTask.set(tid, r);
+    }
+  }
+  if (!latestPendingByTask.size) return records;
+  return records.filter((r) => {
+    if (r.status !== "pending") return true;
+    const tid = String(r.taskId || "");
+    const latest = latestPendingByTask.get(tid);
+    return latest && String(r._id) === String(latest._id);
+  });
+}
+
+/**
+ * After send-back, hide the latest approved row for a task when a newer pending exists
+ * (fixes legacy duplicate rows: approved 5/6 + waiting 6/6 for the same reopen).
+ */
+export function collapseReopenedDuplicates(records) {
+  const byTask = new Map();
+  for (const r of records) {
+    const tid = String(r.taskId || "");
+    if (!tid) continue;
+    if (!byTask.has(tid)) byTask.set(tid, []);
+    byTask.get(tid).push(r);
+  }
+
+  const kept = [];
+  for (const rows of byTask.values()) {
+    const pending = rows
+      .filter((r) => r.status === "pending")
+      .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+    if (!pending.length) {
+      kept.push(...rows);
+      continue;
+    }
+    const latestPendingAt = new Date(pending[0].submittedAt).getTime();
+    const approved = rows
+      .filter((r) => r.status === "approved" || r.status === "not_done_acknowledged")
+      .sort(
+        (a, b) =>
+          new Date(b.approvedAt || b.submittedAt).getTime() -
+          new Date(a.approvedAt || a.submittedAt).getTime()
+      );
+    const supersededApprovedId =
+      approved[0] &&
+      new Date(approved[0].approvedAt || approved[0].submittedAt).getTime() < latestPendingAt
+        ? String(approved[0]._id)
+        : null;
+
+    for (const r of rows) {
+      if (supersededApprovedId && String(r._id) === supersededApprovedId) continue;
+      kept.push(r);
+    }
+  }
+
+  return kept.sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
+}
+
 /** Tasks currently waiting in For Approval (includes rows without a history record yet). */
 export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, isCeoRole, from, to }) {
   const taskFilter = {
@@ -285,12 +357,35 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     .select("_id title taskType dueDate submissionRemarks updatedAt notDoneApproval")
     .lean();
 
+  const taskIds = tasks.map((t) => t._id);
+  const storedPendingRows =
+    taskIds.length > 0
+      ? await TaskApprovalRecord.find({
+          taskId: { $in: taskIds },
+          status: "pending",
+          kind: "completion",
+        })
+          .sort({ submittedAt: -1 })
+          .lean()
+      : [];
+  const pendingByTask = new Map();
+  for (const p of storedPendingRows) {
+    const tid = String(p.taskId);
+    if (!pendingByTask.has(tid)) pendingByTask.set(tid, p);
+  }
+
   const rows = [];
   for (const t of tasks) {
     const isNotDone = t.notDoneApproval?.status === "pending";
-    const submittedAt = isNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
-    const occurrenceDueDate = isNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
-    const remarks = isNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;
+    const storedPending = pendingByTask.get(String(t._id));
+    let submittedAt = isNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
+    let occurrenceDueDate = isNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
+    let remarks = isNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;
+    if (!isNotDone && storedPending) {
+      submittedAt = storedPending.submittedAt;
+      occurrenceDueDate = storedPending.occurrenceDueDate;
+      remarks = storedPending.submissionRemarks;
+    }
 
     if (from || to) {
       const sub = new Date(submittedAt);
@@ -326,9 +421,14 @@ export function mergeAssigneeApprovalRows(records, livePending) {
   const covered = new Set(
     records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
   );
-  const extra = livePending.filter(
-    (p) => !covered.has(`${String(p.taskId)}-${occurrenceDayKey(p.occurrenceDueDate)}`)
+  const tasksWithStoredPending = new Set(
+    records.filter((r) => r.status === "pending").map((r) => String(r.taskId))
   );
+  const extra = livePending.filter((p) => {
+    const tid = String(p.taskId);
+    if (tasksWithStoredPending.has(tid)) return false;
+    return !covered.has(`${tid}-${occurrenceDayKey(p.occurrenceDueDate)}`);
+  });
   return [...extra, ...records].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 

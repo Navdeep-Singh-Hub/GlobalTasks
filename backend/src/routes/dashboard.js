@@ -15,6 +15,8 @@ import {
   fetchLivePendingApprovals,
   mergeAssigneeApprovalRows,
   dedupeApprovalRecords,
+  collapseReopenedDuplicates,
+  pruneDuplicatePendingPerTask,
 } from "../services/taskApprovalHistory.js";
 
 const router = Router();
@@ -384,7 +386,11 @@ router.get("/assignee-approval-history", async (req, res) => {
     }),
   ]);
 
-  const records = dedupeApprovalRecords(mergeAssigneeApprovalRows(stored, livePending));
+  const records = collapseReopenedDuplicates(
+    dedupeApprovalRecords(
+      pruneDuplicatePendingPerTask(mergeAssigneeApprovalRows(stored, livePending))
+    )
+  );
 
   const summary = {
     total: records.length,
