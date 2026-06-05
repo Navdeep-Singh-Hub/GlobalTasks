@@ -39,6 +39,8 @@ type Task = {
   masterLastClosedAt?: string | null;
   masterLastOccurrenceDue?: string | null;
   masterHistoryCount?: number;
+  /** For Approval inbox: occurrence from pending approval record (IST). */
+  pendingOccurrenceDueDate?: string | null;
 };
 
 type Preset = {
@@ -343,6 +345,9 @@ export function TasksView({
 
   const displayedId = (i: number) => 1200 + i;
 
+  const taskListDueLabel = (t: Task) =>
+    formatDueDateInTz(t.pendingOccurrenceDueDate || t.dueDate);
+
   const taskStatusLabel = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return "Approved";
     if (t.masterDisplayStatus === "rejected") return "Rejected";
@@ -583,7 +588,7 @@ export function TasksView({
                           </div>
                         )}
                       </td>
-                      <td className="p-3 text-zinc-700 dark:text-zinc-200">{formatDueDateInTz(t.dueDate)}</td>
+                      <td className="p-3 text-zinc-700 dark:text-zinc-200">{taskListDueLabel(t)}</td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-0.5 sm:gap-0.5">
                           <button

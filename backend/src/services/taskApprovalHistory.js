@@ -25,6 +25,84 @@ function occurrenceDueOnDay(dueDate, dayKey, timeZone = APP_TIMEZONE) {
   return new Date(`${dayKey}T${time}+05:30`);
 }
 
+/** Correct pending occurrence when due day is after submit day (rolled-forward task.dueDate bug). */
+export function effectivePendingOccurrenceDue(pending, task) {
+  if (pending?.occurrenceDueDate) {
+    if (pending.kind === "not_done") return pending.occurrenceDueDate;
+    const subKey = calendarDayKeyInTz(pending.submittedAt);
+    const dueKey = calendarDayKeyInTz(pending.occurrenceDueDate);
+    if (subKey && dueKey && dueKey > subKey) {
+      return occurrenceDueOnDay(pending.occurrenceDueDate, subKey);
+    }
+    return pending.occurrenceDueDate;
+  }
+  if (task?.notDoneApproval?.status === "pending" && task.notDoneApproval?.dueDate) {
+    return task.notDoneApproval.dueDate;
+  }
+  return task?.dueDate || null;
+}
+
+/** For Approval inbox: show today's occurrence due, hide misdated daily rows, repair stored dates. */
+export async function enrichApprovalInboxTasks(tasks) {
+  if (!tasks.length) return [];
+
+  const ids = tasks.map((t) => t._id);
+  const pendingRows = await TaskApprovalRecord.find({
+    taskId: { $in: ids },
+    status: "pending",
+  })
+    .sort({ submittedAt: -1 })
+    .lean();
+
+  const pendingByTask = new Map();
+  for (const r of pendingRows) {
+    const tid = String(r.taskId);
+    if (!pendingByTask.has(tid)) pendingByTask.set(tid, r);
+  }
+
+  const todayKey = calendarDayKeyInTz(new Date());
+  const out = [];
+
+  for (const t of tasks) {
+    const doc = t.toObject ? t.toObject() : { ...t };
+    const pending = pendingByTask.get(String(t._id));
+    const effectiveDue = effectivePendingOccurrenceDue(pending, doc);
+    doc.pendingOccurrenceDueDate = effectiveDue;
+
+    if (doc.taskType === "daily") {
+      if (!effectiveDue || calendarDayKeyInTz(effectiveDue) !== todayKey) continue;
+
+      doc.dueDate = effectiveDue;
+      if (pending && calendarDayKeyInTz(pending.occurrenceDueDate) !== todayKey) {
+        // eslint-disable-next-line no-await-in-loop
+        await TaskApprovalRecord.updateOne(
+          { _id: pending._id },
+          { $set: { occurrenceDueDate: effectiveDue } }
+        );
+      }
+      if (calendarDayKeyInTz(t.dueDate) !== todayKey) {
+        // eslint-disable-next-line no-await-in-loop
+        await Task.updateOne({ _id: t._id }, { $set: { dueDate: effectiveDue } });
+      }
+    }
+
+    out.push(doc);
+  }
+
+  return out;
+}
+
+export async function resolveOccurrenceDueForApproval(task) {
+  const pending = await TaskApprovalRecord.findOne({
+    taskId: task._id,
+    status: "pending",
+    kind: "completion",
+  })
+    .sort({ submittedAt: -1 })
+    .lean();
+  return effectivePendingOccurrenceDue(pending, task) || task.dueDate;
+}
+
 /** Pending submitted today cannot be for a future day (send-back used rolled-forward task.dueDate). */
 export function correctMisdatedPendingOccurrence(records) {
   return records.map((r) => {
@@ -188,6 +266,13 @@ function isOccurrenceDueToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE
 export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;
+  let occurrenceDue = task.dueDate;
+  if (task.taskType === "daily" && kind === "completion") {
+    const todayKey = calendarDayKeyInTz(new Date());
+    if (calendarDayKeyInTz(occurrenceDue) !== todayKey) {
+      occurrenceDue = occurrenceDueOnDay(occurrenceDue, todayKey);
+    }
+  }
   return TaskApprovalRecord.create({
     taskId: task._id,
     taskTitle: task.title,
@@ -195,7 +280,7 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
     centerId: task.centerId || null,
     assignedBy,
     assigneeId,
-    occurrenceDueDate: task.dueDate,
+    occurrenceDueDate: occurrenceDue,
     submittedAt: new Date(),
     submissionRemarks: String(remarks || "").trim(),
     kind,

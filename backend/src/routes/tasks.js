@@ -5,7 +5,13 @@ import { authRequired, requireCenterAssigned, requireManagement, requireRoles } 
 import { isManagement, isCeo, isAssigneeOnly } from "../constants/roles.js";
 import { notifyMany } from "../services/notificationService.js";
 import { logActivity } from "../services/activityService.js";
-import { RECURRING_TYPES as RECURRING, isRecurring, computeNextDueDate } from "../utils/recurrence.js";
+import {
+  RECURRING_TYPES as RECURRING,
+  isRecurring,
+  computeNextDueDate,
+  calendarDayKeyInTz,
+  APP_TIMEZONE,
+} from "../utils/recurrence.js";
 import {
   applyTodayOnlyDueFilter,
   isOccurrenceDueToday,
@@ -25,6 +31,8 @@ import {
   finalizeApprovalRecord,
   reopenApprovalForAssigner,
   resubmitDailyRecurringTask,
+  enrichApprovalInboxTasks,
+  resolveOccurrenceDueForApproval,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
@@ -504,9 +512,17 @@ router.get("/", async (req, res) => {
     tasks = tasks.filter((t) => isOccurrenceDueToday(t.dueDate));
   }
 
+  const isApprovalInbox = req.query.approval === "true";
+  if (isApprovalInbox) {
+    tasks = await enrichApprovalInboxTasks(tasks);
+  }
+
   res.json({
     tasks,
-    total: req.query.workableToday === "true" && req.query.recurring === "true" ? tasks.length : total,
+    total:
+      (req.query.workableToday === "true" && req.query.recurring === "true") || isApprovalInbox
+        ? tasks.length
+        : total,
     page,
     limit,
   });
@@ -733,6 +749,17 @@ router.patch("/:id", async (req, res, next) => {
       task.approvalStatus = "pending";
       task.requiresApproval = true;
       task.completedAt = null;
+      if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
+        const todayKey = calendarDayKeyInTz(new Date());
+        const time = new Intl.DateTimeFormat("en-GB", {
+          timeZone: APP_TIMEZONE,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }).format(new Date(task.dueDate));
+        task.dueDate = new Date(`${todayKey}T${time}+05:30`);
+      }
     } else if (task.status === "in_progress" || task.status === "pending") {
       if ("submissionRemarks" in req.body) task.submissionRemarks = "";
     } else if (task.status === "completed" && !task.completedAt) {
@@ -1109,7 +1136,10 @@ router.post("/:id/approve", async (req, res) => {
     return res.json({ task });
   }
 
-  const occurrenceDue = task.dueDate;
+  const occurrenceDue = await resolveOccurrenceDueForApproval(task);
+  if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
+    task.dueDate = occurrenceDue;
+  }
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
