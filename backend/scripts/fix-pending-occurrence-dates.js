@@ -41,16 +41,14 @@ async function main() {
     if (!subKey || !dueKey || dueKey <= subKey) continue;
 
     const corrected = occurrenceDueOnDay(row.occurrenceDueDate, subKey);
+    const dayStart = new Date(`${subKey}T00:00:00+05:30`);
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
     const dup = await TaskApprovalRecord.findOne({
       _id: { $ne: row._id },
       taskId: row.taskId,
       status: "pending",
-      occurrenceDueDate: {
-        $gte: new Date(`${subKey}T00:00:00+05:30`),
-        $lt: new Date(`${subKey}T00:00:00+05:30`).setDate(
-          new Date(`${subKey}T00:00:00+05:30`).getDate() + 1
-        ),
-      },
+      occurrenceDueDate: { $gte: dayStart, $lt: dayEnd },
     }).lean();
 
     if (dup) {
