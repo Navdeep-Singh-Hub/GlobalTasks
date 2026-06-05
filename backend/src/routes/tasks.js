@@ -266,6 +266,95 @@ function isAssigneeInboxQuery(query) {
   return false;
 }
 
+/**
+ * Master Completed / Rejected filters: recurring tasks roll to pending after approval,
+ * so match tasks that have approval-history rows as well as live terminal status.
+ */
+async function applyMasterHistoricalStatusFilter(filter, query) {
+  const isMasterScope = String(query.masterScope || "").toLowerCase() === "true";
+  const status = query.status;
+  if (!isMasterScope || !status || status === "all") return;
+
+  if (status !== "completed" && status !== "cancelled") return;
+
+  const scopedFilter = { ...filter };
+  delete scopedFilter.status;
+
+  const scopedTaskIds = await Task.distinct("_id", scopedFilter);
+  if (!scopedTaskIds.length) {
+    filter._id = { $in: [] };
+    delete filter.status;
+    return;
+  }
+
+  if (status === "completed") {
+    const [fromHistory, fromLive] = await Promise.all([
+      TaskApprovalRecord.distinct("taskId", {
+        taskId: { $in: scopedTaskIds },
+        status: { $in: ["approved", "not_done_acknowledged"] },
+      }),
+      Task.distinct("_id", { _id: { $in: scopedTaskIds }, status: "completed" }),
+    ]);
+    const ids = [...new Set([...fromHistory, ...fromLive].map(String))];
+    filter._id = { $in: ids };
+    delete filter.status;
+    return;
+  }
+
+  const [fromHistory, fromLive] = await Promise.all([
+    TaskApprovalRecord.distinct("taskId", {
+      taskId: { $in: scopedTaskIds },
+      status: "rejected",
+    }),
+    Task.distinct("_id", { _id: { $in: scopedTaskIds }, status: "cancelled" }),
+  ]);
+  const ids = [...new Set([...fromHistory, ...fromLive].map(String))];
+  filter._id = { $in: ids };
+  delete filter.status;
+}
+
+async function enrichMasterTasksWithHistoryMeta(tasks, statusFilter) {
+  if (!tasks.length || (statusFilter !== "completed" && statusFilter !== "cancelled")) {
+    return tasks.map((t) => (t.toObject ? t.toObject() : t));
+  }
+
+  const ids = tasks.map((t) => t._id);
+  const matchStatus =
+    statusFilter === "completed"
+      ? { $in: ["approved", "not_done_acknowledged"] }
+      : "rejected";
+
+  const rows = await TaskApprovalRecord.aggregate([
+    { $match: { taskId: { $in: ids }, status: matchStatus } },
+    { $sort: { approvedAt: -1, rejectedAt: -1, submittedAt: -1 } },
+    {
+      $group: {
+        _id: "$taskId",
+        lastClosedAt: { $first: { $ifNull: ["$approvedAt", "$rejectedAt"] } },
+        lastOccurrenceDue: { $first: "$occurrenceDueDate" },
+        historyCount: { $sum: 1 },
+      },
+    },
+  ]);
+  const map = new Map(rows.map((r) => [String(r._id), r]));
+
+  return tasks.map((t) => {
+    const doc = t.toObject ? t.toObject() : { ...t };
+    const hist = map.get(String(t._id));
+    if (!hist) return doc;
+    doc.masterLastClosedAt = hist.lastClosedAt;
+    doc.masterLastOccurrenceDue = hist.lastOccurrenceDue;
+    doc.masterHistoryCount = hist.historyCount;
+    if (statusFilter === "completed" && doc.status !== "completed") {
+      doc.masterDisplayStatus = "approved";
+    }
+    if (statusFilter === "cancelled" && doc.status !== "cancelled") {
+      doc.masterDisplayStatus = "rejected";
+    }
+    return doc;
+  });
+}
+
 function applyListScopeForRole(filter, { userId, role, query }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
@@ -355,11 +444,13 @@ router.get("/", async (req, res) => {
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
   applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
+  await applyMasterHistoricalStatusFilter(filter, req.query);
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
   const isMasterList = String(req.query.masterScope || "").toLowerCase() === "true";
-  const [tasks, total] = await Promise.all([
+  const statusFilter = req.query.status && req.query.status !== "all" ? String(req.query.status) : "";
+  const [taskDocs, total] = await Promise.all([
     Task.find(filter)
       .populate("assignees", "name email avatarUrl role")
       .populate("assignedBy", "name email")
@@ -372,6 +463,10 @@ router.get("/", async (req, res) => {
       .limit(limit),
     Task.countDocuments(filter),
   ]);
+
+  const tasks = isMasterList
+    ? await enrichMasterTasksWithHistoryMeta(taskDocs, statusFilter)
+    : taskDocs.map((t) => (t.toObject ? t.toObject() : t));
 
   res.json({ tasks, total, page, limit });
 });

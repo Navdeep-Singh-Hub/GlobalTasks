@@ -34,6 +34,11 @@ type Task = {
   notDoneApproval?: { dueDate?: string; remarks?: string; status?: string };
   attachments?: { name: string; url?: string }[];
   voiceNoteUrl?: string;
+  /** Master list: live task is pending but has approved history rows. */
+  masterDisplayStatus?: "approved" | "rejected";
+  masterLastClosedAt?: string | null;
+  masterLastOccurrenceDue?: string | null;
+  masterHistoryCount?: number;
 };
 
 type Preset = {
@@ -281,6 +286,18 @@ export function TasksView({
 
   const displayedId = (i: number) => 1200 + i;
 
+  const taskStatusLabel = (t: Task) => {
+    if (t.masterDisplayStatus === "approved") return "Approved";
+    if (t.masterDisplayStatus === "rejected") return "Rejected";
+    return t.status.replace(/_/g, " ");
+  };
+
+  const taskStatusBadgeTone = (t: Task) => {
+    if (t.masterDisplayStatus === "approved") return statusTone("completed");
+    if (t.masterDisplayStatus === "rejected") return statusTone("cancelled");
+    return statusTone(t.status);
+  };
+
   return (
     <div className="space-y-4 sm:space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
@@ -467,7 +484,7 @@ export function TasksView({
                       <td className="p-3">
                         <Badge tone={cadenceTone(t.taskType)}>{CADENCE_LABEL[t.taskType] || t.taskType}</Badge>
                       </td>
-                      <td className="p-3"><Badge tone={statusTone(t.status)}>{t.status.replace("_", " ")}</Badge></td>
+                      <td className="p-3"><Badge tone={taskStatusBadgeTone(t)}>{taskStatusLabel(t)}</Badge></td>
                       <td className="p-3">
                         <Badge tone={priorityTone(t.priority)}>
                           {t.priority === "high" && "🔥 "}
@@ -620,8 +637,21 @@ export function TasksView({
                     </div>
                   </div>
                 ) : null}
+                {masterAdminActions && t.masterDisplayStatus && t.masterLastClosedAt ? (
+                  <div className="mt-2 text-[11px] text-zinc-500">
+                    Last {t.masterDisplayStatus === "approved" ? "approved" : "rejected"}{" "}
+                    {new Date(t.masterLastClosedAt).toLocaleString()}
+                    {t.masterLastOccurrenceDue
+                      ? ` · occurrence ${new Date(t.masterLastOccurrenceDue).toLocaleDateString()}`
+                      : ""}
+                    {t.masterHistoryCount && t.masterHistoryCount > 1 ? ` · ${t.masterHistoryCount} in history` : ""}
+                  </div>
+                ) : null}
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  <Badge tone={statusTone(t.status)}>{t.status.replace("_", " ")}</Badge>
+                  <Badge tone={taskStatusBadgeTone(t)}>{taskStatusLabel(t)}</Badge>
+                  {t.masterDisplayStatus && t.status !== t.masterDisplayStatus ? (
+                    <Badge tone={statusTone(t.status)}>Live: {t.status.replace(/_/g, " ")}</Badge>
+                  ) : null}
                   <Badge tone={priorityTone(t.priority)}>{t.priority}</Badge>
                   {(t.attachments?.length || 0) > 0 && (
                     <Badge tone="brand">
