@@ -284,6 +284,21 @@ export function TasksView({
     load();
   };
 
+  const canSendBackForApproval = (t: Task) =>
+    canEditTaskAsAssigner(t) &&
+    (t.status === "completed" ||
+      t.status === "cancelled" ||
+      t.masterDisplayStatus === "approved" ||
+      t.masterDisplayStatus === "rejected");
+
+  const sendBackForApproval = async (id: string) => {
+    await api(`/tasks/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sendBackForApproval: true }),
+    });
+    load();
+  };
+
   const displayedId = (i: number) => 1200 + i;
 
   const taskStatusLabel = (t: Task) => {
@@ -673,7 +688,10 @@ export function TasksView({
                   )}
                 </div>
               </button>
-              {(showApprovalQuickActions && rowNeedsApproval(t)) || canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t)) ? (
+              {(showApprovalQuickActions && rowNeedsApproval(t)) ||
+              canManageOwnMasterTask(t) ||
+              (preset.approval && canEditTaskAsAssigner(t)) ||
+              (masterAdminActions && canSendBackForApproval(t)) ? (
                 <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-zinc-50/50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
                   {showApprovalQuickActions && rowNeedsApproval(t) && (
                     <>
@@ -700,6 +718,19 @@ export function TasksView({
                         Reject
                       </Button>
                     </>
+                  )}
+                  {canSendBackForApproval(t) && (
+                    <Button
+                      size="sm"
+                      variant="gradient"
+                      className="h-8 text-xs"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void sendBackForApproval(t._id);
+                      }}
+                    >
+                      Send back to For Approval
+                    </Button>
                   )}
                   {(canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t))) && (
                     <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); setEditId(t._id); }}>
@@ -767,6 +798,10 @@ export function TasksView({
         onRequestEdit={(id) => {
           setDetailId(null);
           setEditId(id);
+        }}
+        onSendBackForApproval={async (id) => {
+          await sendBackForApproval(id);
+          setDetailId(null);
         }}
       />
 

@@ -186,9 +186,39 @@ function assertOccurrenceWorkableForAssignee(task) {
 /** Assigner reopened or reset a task after approve / reject / complete. */
 function applyAssignerLifecycleReset(task, prevStatus, body, isAssignerEdit) {
   if (!isAssignerEdit) return;
+
+  if (body.sendBackForApproval === true) {
+    task.status = "awaiting_approval";
+    task.approvalStatus = "pending";
+    task.requiresApproval = true;
+    task.completedAt = null;
+    task.rejectionRemarks = "";
+    task.rejectionMode = "";
+    task.notDoneApproval = undefined;
+    const remarks = String(
+      body.submissionRemarks || task.submissionRemarks || "Reopened by assigner for re-approval."
+    ).trim();
+    task.submissionRemarks = remarks;
+    return;
+  }
+
   const nextStatus = "status" in body ? body.status : task.status;
   const reopenStatuses = ["pending", "in_progress", "overdue"];
   const wasClosed = ["completed", "cancelled", "awaiting_approval"].includes(prevStatus);
+  if ("status" in body && nextStatus === "awaiting_approval" && wasClosed) {
+    task.approvalStatus = "pending";
+    task.requiresApproval = true;
+    task.completedAt = null;
+    task.rejectionRemarks = "";
+    task.rejectionMode = "";
+    task.notDoneApproval = undefined;
+    if (!String(task.submissionRemarks || "").trim()) {
+      task.submissionRemarks = String(
+        body.submissionRemarks || "Reopened by assigner for re-approval."
+      ).trim();
+    }
+    return;
+  }
   if ("status" in body && reopenStatuses.includes(nextStatus) && wasClosed) {
     task.approvalStatus = "none";
     task.completedAt = null;
@@ -590,12 +620,22 @@ router.patch("/:id", async (req, res, next) => {
     const denied = assertTaskPatchPermission(req, req.body, task);
     if (denied) return res.status(403).json({ message: denied });
 
+    const prevStatus = task.status;
+    if (isAssignerEdit && req.body.sendBackForApproval === true) {
+      const canSendBack =
+        ["completed", "cancelled"].includes(prevStatus) ||
+        task.approvalStatus === "approved" ||
+        (prevStatus === "pending" && task.requiresApproval);
+      if (!canSendBack) {
+        return res.status(400).json({ message: "This task cannot be sent back for approval" });
+      }
+    }
+
     if ("departmentId" in req.body) {
       const deptOk = await assertAllowedDepartmentId(req.body.departmentId);
       if (!deptOk.ok) return res.status(400).json({ message: deptOk.message });
     }
 
-    const prevStatus = task.status;
     const prevAssigneeIds = (task.assignees || []).map((id) => String(id));
     const allowedFields = [
       "title",
@@ -705,22 +745,38 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
+      const primaryAssignee = (task.assignees || [])[0] || req.userId;
+      const assignerReopened =
+        isAssignerEdit &&
+        String(taskAssignerId(task)) === String(req.userId) &&
+        (req.body.sendBackForApproval === true || ["completed", "cancelled"].includes(prevStatus));
       await recordTaskSubmission({
         task,
-        assigneeId: req.userId,
+        assigneeId: assignerReopened ? primaryAssignee : req.userId,
         remarks: task.submissionRemarks,
         kind: "completion",
       });
       const note = String(task.submissionRemarks || "").trim();
       const snippet = note ? ` Remarks: ${note.slice(0, 240)}${note.length > 240 ? "…" : ""}` : "";
-      const approverId = taskAssignerId(task);
-      if (approverId) {
-        await notifyMany([approverId], {
-          type: "task_approval_request",
-          title: "Completion pending approval",
-          message: `An assignee submitted "${task.title}" for completion.${snippet}`,
-          link: "/for-approval",
-        });
+      if (assignerReopened) {
+        if (task.assignees?.length) {
+          await notifyMany(task.assignees, {
+            type: "task_approval_request",
+            title: "Task sent back for review",
+            message: `Your assigner reopened "${task.title}" for re-approval.${snippet}`,
+            link: isRecurring(task.taskType) ? "/pending-recurring" : "/pending-single",
+          });
+        }
+      } else {
+        const approverId = taskAssignerId(task);
+        if (approverId) {
+          await notifyMany([approverId], {
+            type: "task_approval_request",
+            title: "Completion pending approval",
+            message: `An assignee submitted "${task.title}" for completion.${snippet}`,
+            link: "/for-approval",
+          });
+        }
       }
     }
 

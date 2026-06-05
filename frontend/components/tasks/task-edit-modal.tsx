@@ -223,7 +223,13 @@ export function TaskEditModal({
         (isManagement(user.role) || isCeo(user.role));
       const reopenStatuses = ["pending", "in_progress", "overdue"];
       const wasClosed = ["completed", "cancelled", "awaiting_approval"].includes(initialStatus);
-      if (isAssigner && reopenStatuses.includes(status) && wasClosed) {
+      if (isAssigner && status === "awaiting_approval" && wasClosed) {
+        body.approvalStatus = "pending";
+        body.requiresApproval = true;
+        if (!body.submissionRemarks) {
+          body.submissionRemarks = "Reopened by assigner for re-approval.";
+        }
+      } else if (isAssigner && reopenStatuses.includes(status) && wasClosed) {
         body.approvalStatus = "none";
         body.submissionRemarks = "";
       }
@@ -291,9 +297,14 @@ export function TaskEditModal({
               user.role &&
               (isManagement(user.role) || isCeo(user.role)) &&
               ["completed", "cancelled", "awaiting_approval"].includes(initialStatus) &&
-              ["pending", "in_progress", "overdue"].includes(status) ? (
+              status === "awaiting_approval" ? (
                 <p className="mt-1 text-[11px] text-zinc-500">
-                  Reopens the task for the assignee and clears approval / rejection state.
+                  Sends the task back to <strong>For Approval</strong> for you to review again.
+                </p>
+              ) : ["completed", "cancelled", "awaiting_approval"].includes(initialStatus) &&
+                ["pending", "in_progress", "overdue"].includes(status) ? (
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Reopens the task for the assignee without putting it in For Approval.
                 </p>
               ) : null}
             </label>

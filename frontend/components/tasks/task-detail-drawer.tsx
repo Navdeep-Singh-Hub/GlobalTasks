@@ -77,12 +77,14 @@ export function TaskDetailDrawer({
   onClose,
   onUpdated,
   onRequestEdit,
+  onSendBackForApproval,
 }: {
   taskId: string | null;
   open: boolean;
   onClose: () => void;
   onUpdated?: () => void;
   onRequestEdit?: (taskId: string) => void;
+  onSendBackForApproval?: (taskId: string) => void | Promise<void>;
 }) {
   const { user: me } = useAuth();
   const myId = me?._id ? String(me._id) : "";
@@ -96,6 +98,7 @@ export function TaskDetailDrawer({
   const [submissionRemarksDraft, setSubmissionRemarksDraft] = useState("");
   const [submitErr, setSubmitErr] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sendingBack, setSendingBack] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const remarksRef = useRef<HTMLTextAreaElement>(null);
@@ -114,6 +117,13 @@ export function TaskDetailDrawer({
   );
   const isTerminalStatus = task?.status === "completed" || task?.status === "cancelled";
   const showFooter = Boolean(task && (!isTerminalStatus || canEditAsAssigner));
+  const canSendBackForApproval = Boolean(
+    canEditAsAssigner &&
+      task &&
+      (task.status === "completed" ||
+        task.status === "cancelled" ||
+        task.approvalStatus === "approved")
+  );
   const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
   const assigneeBlockedByCompletionApproval =
@@ -463,21 +473,44 @@ export function TaskDetailDrawer({
                   </div>
                 ) : (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 px-3 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
-                    <strong>Task completed.</strong> You can edit and set status to Pending to send it back to the assignee.
+                    <strong>Task completed.</strong> Use <strong>Send back to For Approval</strong> to unapprove and
+                    review again, or <strong>Edit</strong> to change details.
                   </div>
                 )}
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div className="text-[11px] text-zinc-500">
                     Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    onClick={() => onRequestEdit?.(task._id)}
-                  >
-                    Edit task
-                  </Button>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                    {canSendBackForApproval && onSendBackForApproval ? (
+                      <Button
+                        size="sm"
+                        variant="gradient"
+                        className="w-full sm:w-auto"
+                        disabled={sendingBack}
+                        onClick={async () => {
+                          setSendingBack(true);
+                          try {
+                            await onSendBackForApproval(task._id);
+                            onUpdated?.();
+                            load();
+                          } finally {
+                            setSendingBack(false);
+                          }
+                        }}
+                      >
+                        {sendingBack ? "Sending…" : "Send back to For Approval"}
+                      </Button>
+                    ) : null}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="w-full sm:w-auto"
+                      onClick={() => onRequestEdit?.(task._id)}
+                    >
+                      Edit task
+                    </Button>
+                  </div>
                 </div>
               </>
             ) : task.status === "cancelled" ? (
