@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
 import { api, ApiError, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
-import { isCeo } from "@/lib/roles";
+import { isCeo, isManagement } from "@/lib/roles";
 import {
   CalendarDays,
   Download,
@@ -76,11 +76,13 @@ export function TaskDetailDrawer({
   open,
   onClose,
   onUpdated,
+  onRequestEdit,
 }: {
   taskId: string | null;
   open: boolean;
   onClose: () => void;
   onUpdated?: () => void;
+  onRequestEdit?: (taskId: string) => void;
 }) {
   const { user: me } = useAuth();
   const myId = me?._id ? String(me._id) : "";
@@ -107,6 +109,11 @@ export function TaskDetailDrawer({
 
   const assignerId = task ? String(task.assignedBy?._id || task.createdBy?._id || "") : "";
   const canApprove = Boolean(task && myId && (isCeoUser || assignerId === myId));
+  const canEditAsAssigner = Boolean(
+    task && myId && assignerId === myId && (isCeoUser || isManagement(me?.role))
+  );
+  const isTerminalStatus = task?.status === "completed" || task?.status === "cancelled";
+  const showFooter = Boolean(task && (!isTerminalStatus || canEditAsAssigner));
   const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
   const assigneeBlockedByCompletionApproval =
@@ -440,15 +447,46 @@ export function TaskDetailDrawer({
           </section>
           </div>
 
-        {task && task.status !== "completed" && (
+        {showFooter && (
           <div className="space-y-3 border-t border-zinc-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:border-zinc-800 dark:bg-zinc-950">
-            {task.status === "cancelled" ? (
+            {isTerminalStatus && canEditAsAssigner ? (
+              <>
+                {task!.status === "cancelled" ? (
+                  <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
+                    <strong className="text-zinc-900 dark:text-zinc-100">This task was rejected and closed.</strong>
+                    {task!.rejectionRemarks ? (
+                      <p className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
+                        <span className="font-semibold text-zinc-800 dark:text-zinc-200">Reason: </span>
+                        {task!.rejectionRemarks}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/90 px-3 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100">
+                    <strong>Task completed.</strong> You can edit and set status to Pending to send it back to the assignee.
+                  </div>
+                )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+                  <div className="text-[11px] text-zinc-500">
+                    Created {task!.createdAt ? new Date(task!.createdAt).toLocaleString() : "—"}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={() => onRequestEdit?.(task!._id)}
+                  >
+                    Edit task
+                  </Button>
+                </div>
+              </>
+            ) : task!.status === "cancelled" ? (
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
                 <strong className="text-zinc-900 dark:text-zinc-100">This task was permanently closed.</strong>
-                {task.rejectionRemarks ? (
+                {task!.rejectionRemarks ? (
                   <p className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
                     <span className="font-semibold text-zinc-800 dark:text-zinc-200">Reason: </span>
-                    {task.rejectionRemarks}
+                    {task!.rejectionRemarks}
                   </p>
                 ) : null}
               </div>
@@ -528,6 +566,11 @@ export function TaskDetailDrawer({
                           >
                             {canApproveNotDone ? "Acknowledge not done" : "Approve & complete"}
                           </Button>
+                          {canEditAsAssigner && onRequestEdit ? (
+                            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
+                              Edit
+                            </Button>
+                          ) : null}
                         </>
                       ) : null
                     ) : (
@@ -565,6 +608,11 @@ export function TaskDetailDrawer({
                             onClick={() => void submitForApproval()}
                           >
                             {submitting ? "Submitting…" : "Submit for approval"}
+                          </Button>
+                        ) : null}
+                        {canEditAsAssigner && onRequestEdit ? (
+                          <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
+                            Edit
                           </Button>
                         ) : null}
                       </>

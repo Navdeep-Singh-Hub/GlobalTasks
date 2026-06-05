@@ -1,17 +1,17 @@
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { Task } from "../models/Task.js";
 import { TaskEvent } from "../models/TaskEvent.js";
+import { APP_TIMEZONE, calendarDayKeyInTz, startOfNextCalendarDayInTz } from "../utils/recurrence.js";
 
 export function taskAssignerIdFromDoc(task) {
   return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy?._id || task?.createdBy || "");
 }
 
-function dueDateDayBounds(d) {
-  const start = new Date(d);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(d);
-  end.setHours(23, 59, 59, 999);
-  return { start, end };
+function dueDateDayBounds(d, timeZone = APP_TIMEZONE) {
+  const key = calendarDayKeyInTz(d, timeZone);
+  const start = new Date(`${key}T00:00:00+05:30`);
+  const end = new Date(startOfNextCalendarDayInTz(start, timeZone));
+  return { start, end, key };
 }
 
 export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
@@ -55,7 +55,7 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
   const record = await TaskApprovalRecord.findOneAndUpdate(
     {
       taskId: task._id,
-      occurrenceDueDate: { $gte: start, $lte: end },
+      occurrenceDueDate: { $gte: start, $lt: end },
       status: "pending",
     },
     { $set: update },
@@ -183,7 +183,29 @@ export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, 
 
 function occurrenceDayKey(d) {
   if (!d) return "";
-  return new Date(d).toISOString().slice(0, 10);
+  return calendarDayKeyInTz(d);
+}
+
+/** Collapse duplicate rows for the same task occurrence (e.g. double auto-missed logs). */
+export function dedupeApprovalRecords(records) {
+  const byKey = new Map();
+  for (const r of records) {
+    const taskKey = String(r.taskId || "");
+    const key = `${taskKey}-${occurrenceDayKey(r.occurrenceDueDate)}-${r.status}-${r.kind}`;
+    const prev = byKey.get(key);
+    if (!prev) {
+      byKey.set(key, r);
+      continue;
+    }
+    const pick =
+      (prev.live && !r.live) ||
+      (!prev.live && !r.live && new Date(r.submittedAt) > new Date(prev.submittedAt)) ||
+      (prev.live && r.live && new Date(r.submittedAt) > new Date(prev.submittedAt))
+        ? r
+        : prev;
+    byKey.set(key, pick);
+  }
+  return [...byKey.values()].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 
 /** Tasks currently waiting in For Approval (includes rows without a history record yet). */

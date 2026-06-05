@@ -14,6 +14,7 @@ import {
   buildAssigneeHistoryQuery,
   fetchLivePendingApprovals,
   mergeAssigneeApprovalRows,
+  dedupeApprovalRecords,
 } from "../services/taskApprovalHistory.js";
 
 const router = Router();
@@ -383,7 +384,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     }),
   ]);
 
-  const records = mergeAssigneeApprovalRows(stored, livePending);
+  const records = dedupeApprovalRecords(mergeAssigneeApprovalRows(stored, livePending));
 
   const summary = {
     total: records.length,
@@ -391,7 +392,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     waitingForApproval: records.filter((r) => r.status === "pending").length,
     approved: records.filter((r) => r.status === "approved" || r.status === "not_done_acknowledged").length,
     rejected: records.filter((r) => r.status === "rejected").length,
-    notDone: records.filter((r) => r.kind === "not_done" || r.status === "missed").length,
+    notDone: records.filter((r) => r.status === "missed" || (r.kind === "not_done" && r.status === "pending")).length,
   };
 
   res.json({ records, summary });

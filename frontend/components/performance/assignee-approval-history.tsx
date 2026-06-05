@@ -41,13 +41,26 @@ function fmt(dt?: string | null) {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
 
-function statusLabel(s: string) {
-  if (s === "pending") return "Waiting for approval";
-  if (s === "approved") return "Approved";
-  if (s === "not_done_acknowledged") return "Not done acknowledged";
-  if (s === "missed") return "Not done (auto)";
-  if (s === "rejected") return "Rejected";
-  return s;
+function fmtDateOnly(dt?: string | null) {
+  if (!dt) return "—";
+  const d = new Date(dt);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleDateString();
+}
+
+function statusLabel(r: ApprovalRecord) {
+  if (r.status === "pending") return r.kind === "not_done" ? "Not done (waiting)" : "Waiting for approval";
+  if (r.status === "approved") return "Approved";
+  if (r.status === "not_done_acknowledged") return "Not done acknowledged";
+  if (r.status === "missed") return "Not done (auto)";
+  if (r.status === "rejected") return "Rejected";
+  return r.status;
+}
+
+function submittedLabel(r: ApprovalRecord) {
+  if (r.status === "missed") {
+    return `Auto — day ended (${fmtDateOnly(r.occurrenceDueDate)})`;
+  }
+  return fmt(r.submittedAt);
 }
 
 function closedLabel(r: ApprovalRecord) {
@@ -57,7 +70,8 @@ function closedLabel(r: ApprovalRecord) {
 
 export function AssigneeApprovalHistory() {
   const { user } = useAuth();
-  const canUse = Boolean(user?.role && (isManagement(user.role) || user.role === "ceo"));
+  const isCeoUser = isCeo(user?.role);
+  const canUse = Boolean(user?.role && (isManagement(user.role) || isCeoUser));
 
   const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [assigneeId, setAssigneeId] = useState("");
@@ -198,7 +212,7 @@ export function AssigneeApprovalHistory() {
                   <tr key={r._id} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="px-2 py-2 font-medium">{r.taskTitle}</td>
                     <td className="px-2 py-2">{TASK_TYPE_LABELS[r.taskType] || r.taskType}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{fmt(r.occurrenceDueDate)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{fmtDateOnly(r.occurrenceDueDate)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{fmt(r.submittedAt)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{closedLabel(r)}</td>
                     <td className="px-2 py-2">
@@ -238,11 +252,11 @@ export function AssigneeApprovalHistory() {
               <div key={`m-${r._id}`} className="rounded-lg border border-zinc-200/80 p-3 text-xs dark:border-zinc-800">
                 <div className="font-semibold">{r.taskTitle}</div>
                 <div className="mt-1 text-zinc-500">
-                  {TASK_TYPE_LABELS[r.taskType] || r.taskType} · {statusLabel(r.status)}
+                  {TASK_TYPE_LABELS[r.taskType] || r.taskType} · {statusLabel(r)}
                 </div>
                 <div className="mt-2 grid gap-1 text-zinc-600 dark:text-zinc-300">
-                  <div>Due: {fmt(r.occurrenceDueDate)}</div>
-                  <div>Submitted: {fmt(r.submittedAt)}</div>
+                  <div>Due: {fmtDateOnly(r.occurrenceDueDate)}</div>
+                  <div>Submitted: {submittedLabel(r)}</div>
                   <div>Approved/rejected: {closedLabel(r)}</div>
                   {r.submissionRemarks ? <div>Remarks: {r.submissionRemarks}</div> : null}
                 </div>

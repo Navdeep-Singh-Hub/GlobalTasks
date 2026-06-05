@@ -17,6 +17,8 @@ type TaskPayload = {
   status: string;
   priority: string;
   dueDate: string;
+  assignedBy?: { _id: string } | string | null;
+  createdBy?: { _id: string } | string | null;
   centerId?: { _id: string; name?: string } | string | null;
   departmentId?: { _id: string; name?: string } | string | null;
   functionTag?: string;
@@ -93,6 +95,8 @@ export function TaskEditModal({
   const [departmentId, setDepartmentId] = useState("");
   const [functionTag, setFunctionTag] = useState("");
   const [requiredFieldsCsv, setRequiredFieldsCsv] = useState("");
+  const [initialStatus, setInitialStatus] = useState("");
+  const [loadedAssignerId, setLoadedAssignerId] = useState("");
 
   const load = useCallback(async () => {
     if (!taskId || !open) return;
@@ -119,6 +123,14 @@ export function TaskEditModal({
       setDescription(t.description || "");
       setTaskType(t.taskType || "one_time");
       setStatus(t.status || "pending");
+      setInitialStatus(t.status || "pending");
+      const aid =
+        t.assignedBy && typeof t.assignedBy === "object" && "_id" in t.assignedBy
+          ? String(t.assignedBy._id)
+          : t.createdBy && typeof t.createdBy === "object" && "_id" in t.createdBy
+            ? String(t.createdBy._id)
+            : "";
+      setLoadedAssignerId(aid);
       setPriority(t.priority || "normal");
       setDueLocal(toLocalDatetimeValue(t.dueDate));
       setForever(t.recurrence?.forever !== false);
@@ -204,6 +216,17 @@ export function TaskEditModal({
           endDate: forever || !endDate ? null : new Date(endDate).toISOString(),
         };
       }
+      const isAssigner =
+        user?._id &&
+        loadedAssignerId === String(user._id) &&
+        user.role &&
+        (isManagement(user.role) || isCeo(user.role));
+      const reopenStatuses = ["pending", "in_progress", "overdue"];
+      const wasClosed = ["completed", "cancelled", "awaiting_approval"].includes(initialStatus);
+      if (isAssigner && reopenStatuses.includes(status) && wasClosed) {
+        body.approvalStatus = "none";
+        body.submissionRemarks = "";
+      }
       await api(`/tasks/${taskId}`, { method: "PATCH", body: JSON.stringify(body) });
       onSaved();
       onClose();
@@ -254,13 +277,26 @@ export function TaskEditModal({
               <span className="text-xs font-semibold text-zinc-500">Description</span>
               <Textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 min-h-[80px]" />
             </label>
-            <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {statuses.map((s) => (
-                <option key={s} value={s}>
-                  {s.replace("_", " ")}
-                </option>
-              ))}
-            </Select>
+            <label className="block">
+              <span className="text-xs font-semibold text-zinc-500">Status</span>
+              <Select value={status} onChange={(e) => setStatus(e.target.value)} className="mt-1">
+                {statuses.map((s) => (
+                  <option key={s} value={s}>
+                    {s.replace(/_/g, " ")}
+                  </option>
+                ))}
+              </Select>
+              {user?._id &&
+              loadedAssignerId === String(user._id) &&
+              user.role &&
+              (isManagement(user.role) || isCeo(user.role)) &&
+              ["completed", "cancelled", "awaiting_approval"].includes(initialStatus) &&
+              ["pending", "in_progress", "overdue"].includes(status) ? (
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Reopens the task for the assignee and clears approval / rejection state.
+                </p>
+              ) : null}
+            </label>
             <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
               {priorities.map((p) => (
                 <option key={p} value={p}>

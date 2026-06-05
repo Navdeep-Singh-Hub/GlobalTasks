@@ -181,6 +181,31 @@ function assertOccurrenceWorkableForAssignee(task) {
   return null;
 }
 
+/** Assigner reopened or reset a task after approve / reject / complete. */
+function applyAssignerLifecycleReset(task, prevStatus, body, isAssignerEdit) {
+  if (!isAssignerEdit) return;
+  const nextStatus = "status" in body ? body.status : task.status;
+  const reopenStatuses = ["pending", "in_progress", "overdue"];
+  const wasClosed = ["completed", "cancelled", "awaiting_approval"].includes(prevStatus);
+  if ("status" in body && reopenStatuses.includes(nextStatus) && wasClosed) {
+    task.approvalStatus = "none";
+    task.completedAt = null;
+    task.rejectionRemarks = "";
+    task.rejectionMode = "";
+    if (!("submissionRemarks" in body)) task.submissionRemarks = "";
+    task.notDoneApproval = undefined;
+  }
+  if ("approvalStatus" in body && isAssignerEdit) {
+    task.approvalStatus = body.approvalStatus;
+    if (body.approvalStatus === "none" || body.approvalStatus === "rejected") {
+      if (!("status" in body) && task.status === "awaiting_approval") {
+        task.status = "pending";
+      }
+      task.completedAt = null;
+    }
+  }
+}
+
 function mergeClauseIntoFilter(filter, clause) {
   if (filter.$and) {
     filter.$and.push(clause);
@@ -459,7 +484,8 @@ router.patch("/:id", async (req, res, next) => {
     if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
-    if (!managementCreatorOwnsTask(req, task) && !userCanAccessTaskDoc(task, req.userId, req.userRole)) {
+    const isAssignerEdit = managementCreatorOwnsTask(req, task) || (isCeo(req.userRole) && taskCreatedByUser(task, req.userId));
+    if (!isAssignerEdit && !userCanAccessTaskDoc(task, req.userId, req.userRole)) {
       return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
     }
 
@@ -563,6 +589,8 @@ router.patch("/:id", async (req, res, next) => {
     } else if (task.status === "completed" && !task.completedAt) {
       task.completedAt = new Date();
     }
+
+    applyAssignerLifecycleReset(task, prevStatus, req.body, isAssignerEdit);
 
     await task.save();
     await TaskEvent.create({

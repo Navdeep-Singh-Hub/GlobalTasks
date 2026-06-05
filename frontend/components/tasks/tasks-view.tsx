@@ -88,7 +88,9 @@ export function TasksView({
   const { user } = useAuth();
   const myId = user?._id ? String(user._id) : "";
   const taskAssignerId = (t: Task) => String(t.assignedBy?._id || t.createdBy?._id || "");
-  const canManageOwnMasterTask = (t: Task) => Boolean(masterAdminActions && myId && taskAssignerId(t) === myId);
+  const canEditTaskAsAssigner = (t: Task) =>
+    Boolean(myId && taskAssignerId(t) === myId && (isManagement(user?.role) || isCeo(user?.role)));
+  const canManageOwnMasterTask = (t: Task) => Boolean(masterAdminActions && canEditTaskAsAssigner(t));
   const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -536,25 +538,25 @@ export function TasksView({
                               </button>
                             </>
                           )}
+                          {(canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t))) && (
+                            <button
+                              type="button"
+                              onClick={() => setEditId(t._id)}
+                              title="Edit task"
+                              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                           {canManageOwnMasterTask(t) && (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setEditId(t._id)}
-                                title="Edit task"
-                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-brand-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openDeleteSingle(t._id)}
-                                title="Delete task"
-                                className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </>
+                            <button
+                              type="button"
+                              onClick={() => openDeleteSingle(t._id)}
+                              title="Delete task"
+                              className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 sm:h-7 sm:w-7 dark:hover:bg-zinc-800"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -639,7 +641,7 @@ export function TasksView({
                   )}
                 </div>
               </button>
-              {(showApprovalQuickActions && rowNeedsApproval(t)) || canManageOwnMasterTask(t) ? (
+              {(showApprovalQuickActions && rowNeedsApproval(t)) || canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t)) ? (
                 <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-zinc-50/50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
                   {showApprovalQuickActions && rowNeedsApproval(t) && (
                     <>
@@ -667,15 +669,15 @@ export function TasksView({
                       </Button>
                     </>
                   )}
+                  {(canManageOwnMasterTask(t) || (preset.approval && canEditTaskAsAssigner(t))) && (
+                    <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); setEditId(t._id); }}>
+                      Edit
+                    </Button>
+                  )}
                   {canManageOwnMasterTask(t) && (
-                    <>
-                      <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); setEditId(t._id); }}>
-                        Edit
-                      </Button>
-                      <Button size="sm" variant="danger" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); openDeleteSingle(t._id); }}>
-                        Delete
-                      </Button>
-                    </>
+                    <Button size="sm" variant="danger" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); openDeleteSingle(t._id); }}>
+                      Delete
+                    </Button>
                   )}
                 </div>
               ) : null}
@@ -730,6 +732,10 @@ export function TasksView({
         open={!!detailId}
         onClose={() => setDetailId(null)}
         onUpdated={load}
+        onRequestEdit={(id) => {
+          setDetailId(null);
+          setEditId(id);
+        }}
       />
 
       <RejectTaskModal

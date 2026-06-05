@@ -50,8 +50,9 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
   const { start, end } = dueDateDayBounds(occurrenceDueDate);
   const existing = await TaskApprovalRecord.findOne({
     taskId: task._id,
-    occurrenceDueDate: { $gte: start, $lte: end },
-    status: { $in: ["missed", "approved", "pending", "not_done_acknowledged"] },
+    assigneeId,
+    occurrenceDueDate: { $gte: start, $lt: end },
+    status: { $in: ["missed", "approved", "pending", "not_done_acknowledged", "rejected"] },
   }).lean();
   if (existing) {
     if (existing.status === "pending") {
