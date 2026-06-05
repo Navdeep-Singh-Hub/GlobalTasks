@@ -84,7 +84,7 @@ export function TaskDetailDrawer({
   onClose: () => void;
   onUpdated?: () => void;
   onRequestEdit?: (taskId: string) => void;
-  onSendBackForApproval?: (taskId: string) => void | Promise<void>;
+  onSendBackForApproval?: (taskId: string, occurrenceDueDate?: string) => void | Promise<void>;
 }) {
   const { user: me } = useAuth();
   const myId = me?._id ? String(me._id) : "";

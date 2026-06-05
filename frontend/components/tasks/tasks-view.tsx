@@ -316,10 +316,13 @@ export function TasksView({
       t.masterDisplayStatus === "approved" ||
       t.masterDisplayStatus === "rejected");
 
-  const sendBackForApproval = async (id: string) => {
+  const sendBackForApproval = async (id: string, occurrenceDueDate?: string | null) => {
     await api(`/tasks/${id}`, {
       method: "PATCH",
-      body: JSON.stringify({ sendBackForApproval: true }),
+      body: JSON.stringify({
+        sendBackForApproval: true,
+        ...(occurrenceDueDate ? { occurrenceDueDate } : {}),
+      }),
     });
     load();
   };
@@ -751,7 +754,7 @@ export function TasksView({
                       className="h-8 text-xs"
                       onClick={(e) => {
                         e.stopPropagation();
-                        void sendBackForApproval(t._id);
+                        void sendBackForApproval(t._id, t.masterLastOccurrenceDue || t.dueDate);
                       }}
                     >
                       Send back to For Approval
@@ -824,8 +827,8 @@ export function TasksView({
           setDetailId(null);
           setEditId(id);
         }}
-        onSendBackForApproval={async (id) => {
-          await sendBackForApproval(id);
+        onSendBackForApproval={async (id, occurrenceDueDate) => {
+          await sendBackForApproval(id, occurrenceDueDate);
           setDetailId(null);
         }}
       />

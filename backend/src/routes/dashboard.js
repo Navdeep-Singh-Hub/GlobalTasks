@@ -17,6 +17,7 @@ import {
   dedupeApprovalRecords,
   collapseReopenedDuplicates,
   pruneDuplicatePendingPerTask,
+  correctMisdatedPendingOccurrence,
 } from "../services/taskApprovalHistory.js";
 
 const router = Router();
@@ -388,7 +389,9 @@ router.get("/assignee-approval-history", async (req, res) => {
 
   const records = collapseReopenedDuplicates(
     dedupeApprovalRecords(
-      pruneDuplicatePendingPerTask(mergeAssigneeApprovalRows(stored, livePending))
+      correctMisdatedPendingOccurrence(
+        pruneDuplicatePendingPerTask(mergeAssigneeApprovalRows(stored, livePending))
+      )
     )
   );
 

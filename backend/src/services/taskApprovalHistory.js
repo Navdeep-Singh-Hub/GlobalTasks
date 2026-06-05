@@ -14,6 +14,28 @@ function dueDateDayBounds(d, timeZone = APP_TIMEZONE) {
   return { start, end, key };
 }
 
+function occurrenceDueOnDay(dueDate, dayKey, timeZone = APP_TIMEZONE) {
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(dueDate));
+  return new Date(`${dayKey}T${time}+05:30`);
+}
+
+/** Pending submitted today cannot be for a future day (send-back used rolled-forward task.dueDate). */
+export function correctMisdatedPendingOccurrence(records) {
+  return records.map((r) => {
+    if (r.status !== "pending" || r.kind === "not_done") return r;
+    const subKey = calendarDayKeyInTz(r.submittedAt);
+    const dueKey = calendarDayKeyInTz(r.occurrenceDueDate);
+    if (!subKey || !dueKey || dueKey <= subKey) return r;
+    return { ...r, occurrenceDueDate: occurrenceDueOnDay(r.occurrenceDueDate, subKey) };
+  });
+}
+
 /** Assigner unapproves: flip the latest approved row back to pending (no duplicate row). */
 export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occurrenceDueDate }) {
   const assignedBy = taskAssignerIdFromDoc(task);
@@ -30,6 +52,24 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
 
   const existing = await TaskApprovalRecord.findOne(query).sort({ approvedAt: -1, submittedAt: -1 });
   const text = String(remarks || "Reopened by assigner for re-approval.").trim();
+
+  const resolveReopenOccurrenceDue = async () => {
+    if (occurrenceDueDate) return occurrenceDueDate;
+    if (existing?.occurrenceDueDate) return existing.occurrenceDueDate;
+    const lastApproved = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: { $in: ["approved", "not_done_acknowledged"] },
+    })
+      .sort({ approvedAt: -1, submittedAt: -1 })
+      .select("occurrenceDueDate")
+      .lean();
+    let due = lastApproved?.occurrenceDueDate || task.dueDate;
+    const todayKey = calendarDayKeyInTz(new Date());
+    if (calendarDayKeyInTz(due) > todayKey) {
+      due = occurrenceDueOnDay(due, todayKey);
+    }
+    return due;
+  };
 
   if (existing) {
     existing.status = "pending";
@@ -51,6 +91,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     return existing;
   }
 
+  const resolvedDue = await resolveReopenOccurrenceDue();
   return TaskApprovalRecord.create({
     taskId: task._id,
     taskTitle: task.title,
@@ -58,7 +99,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     centerId: task.centerId || null,
     assignedBy,
     assigneeId,
-    occurrenceDueDate: occurrenceDueDate || task.dueDate,
+    occurrenceDueDate: resolvedDue,
     submittedAt: new Date(),
     submissionRemarks: text,
     kind: "completion",
