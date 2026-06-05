@@ -213,7 +213,7 @@ export function AssigneeApprovalHistory() {
                     <td className="px-2 py-2 font-medium">{r.taskTitle}</td>
                     <td className="px-2 py-2">{TASK_TYPE_LABELS[r.taskType] || r.taskType}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{fmtDateOnly(r.occurrenceDueDate)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{fmt(r.submittedAt)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{submittedLabel(r)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{closedLabel(r)}</td>
                     <td className="px-2 py-2">
                       <span
@@ -227,8 +227,7 @@ export function AssigneeApprovalHistory() {
                               : "font-medium text-amber-600"
                         }
                       >
-                        {statusLabel(r.status)}
-                        {r.kind === "not_done" ? " · Not done" : ""}
+                        {statusLabel(r)}
                       </span>
                     </td>
                     <td className="max-w-[200px] px-2 py-2 text-xs text-zinc-600 dark:text-zinc-300">

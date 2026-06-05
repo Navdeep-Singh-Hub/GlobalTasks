@@ -447,17 +447,17 @@ export function TaskDetailDrawer({
           </section>
           </div>
 
-        {showFooter && (
+        {task && showFooter && (
           <div className="space-y-3 border-t border-zinc-100 bg-white p-4 pb-[max(1rem,env(safe-area-inset-bottom))] dark:border-zinc-800 dark:bg-zinc-950">
             {isTerminalStatus && canEditAsAssigner ? (
               <>
-                {task!.status === "cancelled" ? (
+                {task.status === "cancelled" ? (
                   <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
                     <strong className="text-zinc-900 dark:text-zinc-100">This task was rejected and closed.</strong>
-                    {task!.rejectionRemarks ? (
+                    {task.rejectionRemarks ? (
                       <p className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
                         <span className="font-semibold text-zinc-800 dark:text-zinc-200">Reason: </span>
-                        {task!.rejectionRemarks}
+                        {task.rejectionRemarks}
                       </p>
                     ) : null}
                   </div>
@@ -468,25 +468,25 @@ export function TaskDetailDrawer({
                 )}
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div className="text-[11px] text-zinc-500">
-                    Created {task!.createdAt ? new Date(task!.createdAt).toLocaleString() : "—"}
+                    Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
                     className="w-full sm:w-auto"
-                    onClick={() => onRequestEdit?.(task!._id)}
+                    onClick={() => onRequestEdit?.(task._id)}
                   >
                     Edit task
                   </Button>
                 </div>
               </>
-            ) : task!.status === "cancelled" ? (
+            ) : task.status === "cancelled" ? (
               <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900/50 dark:text-zinc-200">
                 <strong className="text-zinc-900 dark:text-zinc-100">This task was permanently closed.</strong>
-                {task!.rejectionRemarks ? (
+                {task.rejectionRemarks ? (
                   <p className="mt-2 whitespace-pre-wrap text-[11.5px] leading-relaxed text-zinc-600 dark:text-zinc-300">
                     <span className="font-semibold text-zinc-800 dark:text-zinc-200">Reason: </span>
-                    {task!.rejectionRemarks}
+                    {task.rejectionRemarks}
                   </p>
                 ) : null}
               </div>
