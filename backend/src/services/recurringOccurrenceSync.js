@@ -112,6 +112,22 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
 
   let missed = 0;
   let cursor = new Date(task.dueDate);
+  const taskPlain = task.toObject ? task.toObject() : task;
+
+  if (task.status === "completed") {
+    const next = computeNextDueDate(task);
+    task.status = "pending";
+    task.approvalStatus = "none";
+    task.completedAt = null;
+    task.submissionRemarks = "";
+    task.notDoneApproval = undefined;
+    if (!next) {
+      task.dueDate = setDueDateToCalendarDay(task.dueDate, todayKey);
+      await task.save();
+      return { synced: true, missed: 0 };
+    }
+    cursor = next;
+  }
 
   if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
     const rec = await recordMissedOccurrence({
@@ -134,8 +150,6 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
       return { synced: true, missed };
     }
   }
-
-  const taskPlain = task.toObject ? task.toObject() : task;
 
   while (calendarDayKeyInTz(cursor) < todayKey) {
     // eslint-disable-next-line no-await-in-loop
@@ -179,7 +193,7 @@ export async function syncRecurringTasksForAssignee(assigneeId, now = new Date()
     deletedAt: null,
     assignees: assigneeId,
     taskType: { $in: RECURRING_TYPES },
-    status: { $in: ["pending", "in_progress", "overdue", "awaiting_approval"] },
+    status: { $in: ["pending", "in_progress", "overdue", "awaiting_approval", "completed"] },
   });
 
   let totalMissed = 0;

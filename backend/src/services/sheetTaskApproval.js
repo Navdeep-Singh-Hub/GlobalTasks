@@ -262,7 +262,6 @@ export async function submitDailySheetTaskForApproval({
       status: "approved",
       extra: { submittedAt: task.updatedAt },
     });
-    await advanceIfRecurring(task, actorUserId, actor?.name);
     return { ok: true, autoCompleted: true };
   }
 

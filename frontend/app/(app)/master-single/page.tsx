@@ -5,7 +5,7 @@ export default function MasterSinglePage() {
   return (
     <TasksView
       title="Master Tasks"
-      subtitle="One-time master tasks you assigned or that are assigned to you."
+      subtitle="One-time tasks you assigned or that are assigned to you. Use Show Filters → Status to view completed or rejected tasks."
       preset={{ recurring: false }}
       showCadenceFilter={false}
       masterAdminActions

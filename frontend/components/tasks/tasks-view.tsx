@@ -97,7 +97,7 @@ export function TasksView({
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState<"cards">("cards");
-  const [showFilters, setShowFilters] = useState(false);
+  const [showFilters, setShowFilters] = useState(masterAdminActions);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState(preset.status || "all");
   const [priority, setPriority] = useState("all");
@@ -212,7 +212,7 @@ export function TasksView({
       qs.set("masterScope", "true");
       qs.set("masterRelation", masterRelation);
     }
-    qs.set("limit", "50");
+    qs.set("limit", masterAdminActions ? "100" : "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
       .then((d) => {
         setTasks(d.tasks);
@@ -359,6 +359,8 @@ export function TasksView({
               <option value="in_progress">In progress</option>
               <option value="awaiting_approval">Awaiting approval</option>
               <option value="completed">Completed</option>
+              <option value="overdue">Overdue</option>
+              <option value="cancelled">Rejected / cancelled</option>
             </Select>
             <Select value={priority} onChange={(e) => setPriority(e.target.value)}>
               <option value="all">All priorities</option>

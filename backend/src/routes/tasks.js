@@ -122,11 +122,13 @@ function buildFilter(query, userId, role) {
     recurring,
     myTasks,
     approval,
+    masterScope,
     departmentId,
     centerId,
     functionTag,
     workableToday,
   } = query;
+  const isMasterScope = String(masterScope || "").toLowerCase() === "true";
   const trashOnly = query.trash === "only" || query.bin === "only";
   /** Default lists active tasks; trash/recycle lists soft-deleted only. */
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
@@ -136,7 +138,7 @@ function buildFilter(query, userId, role) {
     filter.status = status;
   } else if (statusGroup === "open") {
     filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
-  } else if (!trashOnly) {
+  } else if (!trashOnly && !isMasterScope) {
     filter.status = { $ne: "cancelled" };
   }
   if (priority && priority !== "all") filter.priority = priority;
@@ -265,7 +267,6 @@ function isAssigneeInboxQuery(query) {
 }
 
 function applyListScopeForRole(filter, { userId, role, query }) {
-  if (isCeo(role)) return;
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
     const masterRelation =
@@ -273,6 +274,7 @@ function applyListScopeForRole(filter, { userId, role, query }) {
     applyMasterScopeFilter(filter, userId, masterRelation);
     return;
   }
+  if (isCeo(role)) return;
   if (isAssigneeInboxQuery(query) || isAssigneeOnly(role)) {
     applyAssigneeScopeFilter(filter, userId);
     return;
@@ -356,6 +358,7 @@ router.get("/", async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
+  const isMasterList = String(req.query.masterScope || "").toLowerCase() === "true";
   const [tasks, total] = await Promise.all([
     Task.find(filter)
       .populate("assignees", "name email avatarUrl role")
@@ -364,7 +367,7 @@ router.get("/", async (req, res) => {
       .populate("project", "name")
       .populate("departmentId", "name code")
       .populate("centerId", "name code")
-      .sort({ createdAt: -1 })
+      .sort(isMasterList ? { updatedAt: -1 } : { createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(limit),
     Task.countDocuments(filter),
@@ -882,7 +885,18 @@ router.post("/:id/approve", async (req, res) => {
   });
   await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: { occurrenceDueDate: occurrenceDue } });
   const actorUser = await User.findById(req.userId).lean();
-  await advanceIfRecurring(task, req.userId, actorUser?.name);
+  if (isRecurring(task.taskType)) {
+    await logActivity({
+      actor: req.userId,
+      actorName: actorUser?.name,
+      type: "task_occurrence_completed",
+      message: `${actorUser?.name || "Someone"} completed occurrence of ${task.title}`,
+      task: task._id,
+      taskTitle: task.title,
+      taskType: task.taskType,
+      meta: { completedFor: occurrenceDue },
+    });
+  }
   if (task.assignees?.length) {
     await notifyMany(task.assignees, {
       type: "task_approved",
