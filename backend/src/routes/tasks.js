@@ -494,11 +494,20 @@ router.get("/", async (req, res) => {
     Task.countDocuments(filter),
   ]);
 
-  const tasks = isMasterList
+  let tasks = isMasterList
     ? await enrichMasterTasksWithHistoryMeta(taskDocs, statusFilter)
     : taskDocs.map((t) => (t.toObject ? t.toObject() : t));
 
-  res.json({ tasks, total, page, limit });
+  if (req.query.workableToday === "true" && req.query.recurring === "true") {
+    tasks = tasks.filter((t) => isOccurrenceDueToday(t.dueDate));
+  }
+
+  res.json({
+    tasks,
+    total: req.query.workableToday === "true" && req.query.recurring === "true" ? tasks.length : total,
+    page,
+    limit,
+  });
 });
 
 router.get("/:id", async (req, res) => {

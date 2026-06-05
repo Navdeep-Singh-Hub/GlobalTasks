@@ -14,31 +14,63 @@ export function isRecurring(taskType) {
   return RECURRING_TYPES.includes(taskType);
 }
 
-function addInterval(date, taskType) {
-  const d = new Date(date);
+function dueTimeInTz(date, timeZone = APP_TIMEZONE) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(date));
+}
+
+/** Add calendar days in IST, preserving due time-of-day in IST. */
+export function addCalendarDaysInTz(date, days, timeZone = APP_TIMEZONE) {
+  const key = calendarDayKeyInTz(date, timeZone);
+  const anchor = new Date(`${key}T12:00:00+05:30`);
+  anchor.setDate(anchor.getDate() + days);
+  const nextKey = calendarDayKeyInTz(anchor, timeZone);
+  const time = dueTimeInTz(date, timeZone);
+  return new Date(`${nextKey}T${time}+05:30`);
+}
+
+function dayOfWeekInTz(date, timeZone = APP_TIMEZONE) {
+  const name = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(new Date(date));
+  return DAY_INDEX[name] ?? 0;
+}
+
+function addInterval(date, taskType, timeZone = APP_TIMEZONE) {
   switch (taskType) {
     case "daily":
-      d.setDate(d.getDate() + 1);
-      break;
+      return addCalendarDaysInTz(date, 1, timeZone);
     case "weekly":
-      d.setDate(d.getDate() + 7);
-      break;
+      return addCalendarDaysInTz(date, 7, timeZone);
     case "fortnightly":
-      d.setDate(d.getDate() + 14);
-      break;
-    case "monthly":
-      d.setMonth(d.getMonth() + 1);
-      break;
-    case "quarterly":
-      d.setMonth(d.getMonth() + 3);
-      break;
-    case "yearly":
-      d.setFullYear(d.getFullYear() + 1);
-      break;
+      return addCalendarDaysInTz(date, 14, timeZone);
+    case "monthly": {
+      const key = calendarDayKeyInTz(date, timeZone);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setMonth(anchor.getMonth() + 1);
+      const nextKey = calendarDayKeyInTz(anchor, timeZone);
+      return new Date(`${nextKey}T${dueTimeInTz(date, timeZone)}+05:30`);
+    }
+    case "quarterly": {
+      const key = calendarDayKeyInTz(date, timeZone);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setMonth(anchor.getMonth() + 3);
+      const nextKey = calendarDayKeyInTz(anchor, timeZone);
+      return new Date(`${nextKey}T${dueTimeInTz(date, timeZone)}+05:30`);
+    }
+    case "yearly": {
+      const key = calendarDayKeyInTz(date, timeZone);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setFullYear(anchor.getFullYear() + 1);
+      const nextKey = calendarDayKeyInTz(anchor, timeZone);
+      return new Date(`${nextKey}T${dueTimeInTz(date, timeZone)}+05:30`);
+    }
     default:
       return null;
   }
-  return d;
 }
 
 /**
@@ -78,15 +110,15 @@ export function isOccurrenceWorkableToday(dueDate, now = new Date(), timeZone = 
 export function computeNextDueDate(task) {
   if (!isRecurring(task.taskType)) return null;
   const base = task.dueDate ? new Date(task.dueDate) : new Date();
-  let next = addInterval(base, task.taskType);
+  let next = addInterval(base, task.taskType, APP_TIMEZONE);
   if (!next) return null;
 
   const weekOff = task.recurrence?.weekOff || "Sunday";
   const includeSunday = task.recurrence?.includeSunday === true;
   const weekOffIdx = DAY_INDEX[weekOff] ?? 0;
 
-  if (task.taskType === "daily" && !includeSunday && next.getDay() === weekOffIdx) {
-    next.setDate(next.getDate() + 1);
+  if (task.taskType === "daily" && !includeSunday && dayOfWeekInTz(next, APP_TIMEZONE) === weekOffIdx) {
+    next = addCalendarDaysInTz(next, 1, APP_TIMEZONE);
   }
 
   const forever = task.recurrence?.forever === true;

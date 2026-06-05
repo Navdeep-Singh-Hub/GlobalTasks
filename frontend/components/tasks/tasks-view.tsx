@@ -66,6 +66,27 @@ function UserNameEmail({ name, email }: { name?: string; email?: string }) {
   );
 }
 
+const APP_TIMEZONE = "Asia/Kolkata";
+
+function calendarDayKeyInTz(iso: string, now = new Date()) {
+  const d = iso ? new Date(iso) : now;
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function formatDueDateInTz(iso: string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: APP_TIMEZONE,
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
 const CADENCE_LABEL: Record<string, string> = {
   one_time: "One Time",
   daily: "Daily",
@@ -249,15 +270,19 @@ export function TasksView({
 
   const idList = useMemo(() => tasks.map((t) => t._id), [tasks]);
   const orderedTasks = useMemo(() => {
+    const todayKey = calendarDayKeyInTz(new Date().toISOString());
+    const list = preset.workableToday
+      ? tasks.filter((t) => calendarDayKeyInTz(t.dueDate) === todayKey)
+      : tasks;
     const myId = user?._id;
-    if (!myId || user?.role !== "supervisor") return tasks;
-    return [...tasks].sort((a, b) => {
+    if (!myId || user?.role !== "supervisor") return list;
+    return [...list].sort((a, b) => {
       const aMineFromOthers = Boolean(a.assignees?.some((assignee) => assignee._id === myId) && a.createdBy?._id !== myId);
       const bMineFromOthers = Boolean(b.assignees?.some((assignee) => assignee._id === myId) && b.createdBy?._id !== myId);
       if (aMineFromOthers === bMineFromOthers) return 0;
       return aMineFromOthers ? -1 : 1;
     });
-  }, [tasks, user?._id, user?.role]);
+  }, [tasks, user?._id, user?.role, preset.workableToday]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
   const toggle = (id: string, on: boolean) =>
@@ -353,7 +378,7 @@ export function TasksView({
             </div>
           )}
           <p className="mt-2 text-[12px] text-zinc-500">
-            {loading ? "Loading…" : `${tasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
+            {loading ? "Loading…" : `${orderedTasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
             {masterAdminActions
               ? masterRelation === "created"
                 ? " · only tasks you assigned"
@@ -541,7 +566,7 @@ export function TasksView({
                           </div>
                         )}
                       </td>
-                      <td className="p-3 text-zinc-700 dark:text-zinc-200">{new Date(t.dueDate).toLocaleDateString()}</td>
+                      <td className="p-3 text-zinc-700 dark:text-zinc-200">{formatDueDateInTz(t.dueDate)}</td>
                       <td className="p-3" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-0.5 sm:gap-0.5">
                           <button
@@ -682,7 +707,7 @@ export function TasksView({
                   )}
                 </div>
                 <div className="mt-3 flex items-center justify-between gap-2 text-[11px] text-zinc-500">
-                  <span>Due {new Date(t.dueDate).toLocaleDateString()}</span>
+                  <span>Due {formatDueDateInTz(t.dueDate)}</span>
                   {!masterAdminActions && (
                     <span className="truncate text-right">{t.assignees?.[0]?.name || "Unassigned"}</span>
                   )}
