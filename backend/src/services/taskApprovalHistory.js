@@ -14,6 +14,52 @@ function dueDateDayBounds(d, timeZone = APP_TIMEZONE) {
   return { start, end, key };
 }
 
+/** Assigner unapproves: flip the latest approved row back to pending (no duplicate row). */
+export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occurrenceDueDate }) {
+  const assignedBy = taskAssignerIdFromDoc(task);
+  if (!assignedBy || !assigneeId) return null;
+
+  const query = {
+    taskId: task._id,
+    status: { $in: ["approved", "not_done_acknowledged"] },
+  };
+  if (occurrenceDueDate) {
+    const { start, end } = dueDateDayBounds(occurrenceDueDate);
+    query.occurrenceDueDate = { $gte: start, $lt: end };
+  }
+
+  const existing = await TaskApprovalRecord.findOne(query).sort({ approvedAt: -1, submittedAt: -1 });
+  const text = String(remarks || "Reopened by assigner for re-approval.").trim();
+
+  if (existing) {
+    existing.status = "pending";
+    existing.approvedAt = null;
+    existing.approvedBy = null;
+    existing.rejectedAt = null;
+    existing.rejectedBy = null;
+    existing.rejectionRemarks = "";
+    existing.rejectionMode = "";
+    existing.submittedAt = new Date();
+    existing.submissionRemarks = text || existing.submissionRemarks;
+    await existing.save();
+    return existing;
+  }
+
+  return TaskApprovalRecord.create({
+    taskId: task._id,
+    taskTitle: task.title,
+    taskType: task.taskType,
+    centerId: task.centerId || null,
+    assignedBy,
+    assigneeId,
+    occurrenceDueDate: occurrenceDueDate || task.dueDate,
+    submittedAt: new Date(),
+    submissionRemarks: text,
+    kind: "completion",
+    status: "pending",
+  });
+}
+
 export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;
@@ -186,24 +232,31 @@ function occurrenceDayKey(d) {
   return calendarDayKeyInTz(d);
 }
 
-/** Collapse duplicate rows for the same task occurrence (e.g. double auto-missed logs). */
+function approvalRecordPriority(r) {
+  if (r.status === "pending") return 4;
+  if (r.status === "approved" || r.status === "not_done_acknowledged") return 3;
+  if (r.status === "rejected") return 2;
+  if (r.status === "missed") return 1;
+  return 0;
+}
+
+function pickPreferredApprovalRecord(prev, r) {
+  const pp = approvalRecordPriority(prev);
+  const rp = approvalRecordPriority(r);
+  if (rp > pp) return r;
+  if (rp < pp) return prev;
+  if (prev.live && !r.live) return r;
+  if (!prev.live && r.live) return prev;
+  return new Date(r.submittedAt) > new Date(prev.submittedAt) ? r : prev;
+}
+
+/** One row per task occurrence; pending wins over approved when assigner reopened. */
 export function dedupeApprovalRecords(records) {
   const byKey = new Map();
   for (const r of records) {
-    const taskKey = String(r.taskId || "");
-    const key = `${taskKey}-${occurrenceDayKey(r.occurrenceDueDate)}-${r.status}-${r.kind}`;
+    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
     const prev = byKey.get(key);
-    if (!prev) {
-      byKey.set(key, r);
-      continue;
-    }
-    const pick =
-      (prev.live && !r.live) ||
-      (!prev.live && !r.live && new Date(r.submittedAt) > new Date(prev.submittedAt)) ||
-      (prev.live && r.live && new Date(r.submittedAt) > new Date(prev.submittedAt))
-        ? r
-        : prev;
-    byKey.set(key, pick);
+    byKey.set(key, prev ? pickPreferredApprovalRecord(prev, r) : r);
   }
   return [...byKey.values()].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }

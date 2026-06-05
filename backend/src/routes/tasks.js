@@ -23,6 +23,7 @@ import {
   recordTaskSubmission,
   recordNotDoneSubmission,
   finalizeApprovalRecord,
+  reopenApprovalForAssigner,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
@@ -739,6 +740,27 @@ router.patch("/:id", async (req, res, next) => {
 
     applyAssignerLifecycleReset(task, prevStatus, req.body, isAssignerEdit);
 
+    const primaryAssignee = (task.assignees || [])[0] || req.userId;
+    const assignerReopened =
+      isAssignerEdit &&
+      String(taskAssignerId(task)) === String(req.userId) &&
+      (req.body.sendBackForApproval === true ||
+        (task.status === "awaiting_approval" &&
+          ["completed", "cancelled"].includes(prevStatus)));
+    let assignerReopenedHistory = false;
+    if (assignerReopened) {
+      const reopened = await reopenApprovalForAssigner({
+        task,
+        assigneeId: primaryAssignee,
+        remarks: task.submissionRemarks,
+        occurrenceDueDate: req.body.occurrenceDueDate,
+      });
+      if (reopened?.occurrenceDueDate) {
+        task.dueDate = reopened.occurrenceDueDate;
+      }
+      assignerReopenedHistory = true;
+    }
+
     await task.save();
     await TaskEvent.create({
       taskId: task._id,
@@ -754,17 +776,14 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     if (prevStatus !== "awaiting_approval" && task.status === "awaiting_approval") {
-      const primaryAssignee = (task.assignees || [])[0] || req.userId;
-      const assignerReopened =
-        isAssignerEdit &&
-        String(taskAssignerId(task)) === String(req.userId) &&
-        (req.body.sendBackForApproval === true || ["completed", "cancelled"].includes(prevStatus));
-      await recordTaskSubmission({
-        task,
-        assigneeId: assignerReopened ? primaryAssignee : req.userId,
-        remarks: task.submissionRemarks,
-        kind: "completion",
-      });
+      if (!assignerReopenedHistory) {
+        await recordTaskSubmission({
+          task,
+          assigneeId: assignerReopened ? primaryAssignee : req.userId,
+          remarks: task.submissionRemarks,
+          kind: "completion",
+        });
+      }
       const note = String(task.submissionRemarks || "").trim();
       const snippet = note ? ` Remarks: ${note.slice(0, 240)}${note.length > 240 ? "…" : ""}` : "";
       if (assignerReopened) {
