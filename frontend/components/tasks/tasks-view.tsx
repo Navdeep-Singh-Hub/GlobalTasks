@@ -41,6 +41,8 @@ type Task = {
   masterHistoryCount?: number;
   /** For Approval inbox: occurrence from pending approval record (IST). */
   pendingOccurrenceDueDate?: string | null;
+  pendingSubmittedAt?: string | null;
+  submissionSource?: "assignee" | "assigner_reopen";
 };
 
 type Preset = {
@@ -678,9 +680,18 @@ export function TasksView({
                 {preset.approval && (t.submissionRemarks || t.notDoneApproval?.remarks) ? (
                   <div className="mt-2 rounded-lg border border-brand-200 bg-brand-50/80 px-2 py-1.5 text-[11px] text-brand-950 dark:border-brand-800 dark:bg-brand-950/50 dark:text-brand-100">
                     <span className="font-semibold">
-                      {t.notDoneApproval?.status === "pending" ? "Not done: " : "Submission remarks: "}
+                      {t.notDoneApproval?.status === "pending"
+                        ? "Not done: "
+                        : (t as Task & { submissionSource?: string }).submissionSource === "assigner_reopen"
+                          ? "Sent back by assigner: "
+                          : "Submission remarks: "}
                     </span>
                     <span className="whitespace-pre-wrap">{t.notDoneApproval?.remarks || t.submissionRemarks}</span>
+                    {(t as Task & { pendingSubmittedAt?: string }).pendingSubmittedAt ? (
+                      <div className="mt-1 text-[10px] text-zinc-600 dark:text-zinc-400">
+                        Submitted {new Date((t as Task & { pendingSubmittedAt?: string }).pendingSubmittedAt!).toLocaleString()}
+                      </div>
+                    ) : null}
                     {t.notDoneApproval?.dueDate ? (
                       <div className="mt-1 text-[10px] text-zinc-600 dark:text-zinc-400">
                         Occurrence due {new Date(t.notDoneApproval.dueDate).toLocaleDateString()}

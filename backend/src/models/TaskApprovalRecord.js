@@ -25,6 +25,8 @@ const taskApprovalRecordSchema = new mongoose.Schema(
     rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     rejectionRemarks: { type: String, default: "" },
     rejectionMode: { type: String, default: "" },
+    /** assignee = voluntary submit; assigner_reopen = send back to For Approval */
+    submissionSource: { type: String, enum: ["assignee", "assigner_reopen"], default: "assignee" },
   },
   { timestamps: true }
 );

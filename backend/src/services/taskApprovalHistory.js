@@ -42,6 +42,108 @@ export function effectivePendingOccurrenceDue(pending, task) {
   return task?.dueDate || null;
 }
 
+/** For Approval inbox: repair phantom/stale rows and return only valid submissions. */
+export async function repairAndFilterApprovalInboxTasks(taskDocs) {
+  if (!taskDocs.length) return [];
+
+  const todayKey = calendarDayKeyInTz(new Date());
+  const kept = [];
+
+  for (const raw of taskDocs) {
+    const task = await Task.findById(raw._id || raw.id);
+    if (!task || task.deletedAt) continue;
+
+    if (task.notDoneApproval?.status === "pending") {
+      const doc = task.toObject();
+      doc.submissionRemarks = task.notDoneApproval?.remarks || "";
+      doc.pendingOccurrenceDueDate = task.notDoneApproval?.dueDate || task.dueDate;
+      kept.push(doc);
+      continue;
+    }
+
+    if (task.status !== "awaiting_approval" || task.approvalStatus !== "pending") {
+      if (task.approvalStatus === "pending") {
+        task.approvalStatus = "none";
+        task.submissionRemarks = "";
+        await task.save();
+        await TaskApprovalRecord.deleteMany({ taskId: task._id, status: "pending", kind: "completion" });
+      }
+      continue;
+    }
+
+    const pending = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+    }).sort({ submittedAt: -1 });
+
+    if (!pending) {
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      await task.save();
+      continue;
+    }
+
+    const effectiveDue = effectivePendingOccurrenceDue(pending, task);
+    const occKey = calendarDayKeyInTz(effectiveDue);
+
+    if (task.taskType === "daily" && occKey < todayKey) {
+      pending.status = "missed";
+      if (!String(pending.submissionRemarks || "").trim()) {
+        pending.submissionRemarks = "Not completed before the day ended — marked as not done automatically.";
+      }
+      await pending.save();
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      task.dueDate = occurrenceDueOnDay(task.dueDate, todayKey);
+      await task.save();
+      continue;
+    }
+
+    if (task.taskType === "daily" && occKey > todayKey) {
+      await TaskApprovalRecord.deleteOne({ _id: pending._id });
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      await task.save();
+      continue;
+    }
+
+    const lastApproved = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "approved",
+      kind: "completion",
+    })
+      .sort({ approvedAt: -1 })
+      .lean();
+    if (
+      lastApproved &&
+      pending.submissionSource !== "assigner_reopen" &&
+      String(pending.submissionRemarks || "").trim() === String(lastApproved.submissionRemarks || "").trim() &&
+      calendarDayKeyInTz(lastApproved.occurrenceDueDate) !== occKey
+    ) {
+      await TaskApprovalRecord.deleteOne({ _id: pending._id });
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      await task.save();
+      continue;
+    }
+
+    const doc = task.toObject();
+    doc.pendingOccurrenceDueDate = effectiveDue;
+    doc.dueDate = effectiveDue;
+    doc.submissionRemarks = pending.submissionRemarks;
+    doc.pendingSubmittedAt = pending.submittedAt;
+    doc.submissionSource = pending.submissionSource || "assignee";
+    kept.push(doc);
+  }
+
+  return kept;
+}
+
 /** For Approval inbox: display occurrence from pending record (read-only, no DB writes). */
 export async function enrichApprovalInboxTasks(tasks) {
   if (!tasks.length) return [];
@@ -138,7 +240,8 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     existing.rejectionRemarks = "";
     existing.rejectionMode = "";
     existing.submittedAt = new Date();
-    existing.submissionRemarks = text || existing.submissionRemarks;
+    existing.submissionRemarks = text;
+    existing.submissionSource = "assigner_reopen";
     await existing.save();
     await TaskApprovalRecord.deleteMany({
       taskId: task._id,
@@ -162,6 +265,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     submissionRemarks: text,
     kind: "completion",
     status: "pending",
+    submissionSource: "assigner_reopen",
   });
 }
 
@@ -243,7 +347,7 @@ function isOccurrenceDueToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE
   return calendarDayKeyInTz(dueDate, timeZone) === calendarDayKeyInTz(now, timeZone);
 }
 
-export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion" }) {
+export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "completion", source = "assignee" }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;
   let occurrenceDue = task.dueDate;
@@ -253,6 +357,13 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
       occurrenceDue = occurrenceDueOnDay(occurrenceDue, todayKey);
     }
   }
+  const { start, end } = dueDateDayBounds(occurrenceDue);
+  await TaskApprovalRecord.deleteMany({
+    taskId: task._id,
+    status: "pending",
+    kind: "completion",
+    occurrenceDueDate: { $gte: start, $lt: end },
+  });
   return TaskApprovalRecord.create({
     taskId: task._id,
     taskTitle: task.title,
@@ -265,6 +376,7 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
     submissionRemarks: String(remarks || "").trim(),
     kind,
     status: "pending",
+    submissionSource: source,
   });
 }
 
@@ -685,6 +797,8 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
   for (const t of tasks) {
     const isNotDone = t.notDoneApproval?.status === "pending";
     const storedPending = pendingByTask.get(String(t._id));
+    if (!isNotDone && !storedPending) continue;
+
     let submittedAt = isNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
     let occurrenceDueDate = isNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
     let remarks = isNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;

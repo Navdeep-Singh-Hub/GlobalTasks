@@ -32,6 +32,7 @@ import {
   reopenApprovalForAssigner,
   resubmitDailyRecurringTask,
   enrichApprovalInboxTasks,
+  repairAndFilterApprovalInboxTasks,
   resolveOccurrenceDueForApproval,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
@@ -168,8 +169,7 @@ function buildFilter(query, userId, role) {
   if (approval === "true") {
     const approvalClause = {
       $or: [
-        { status: "awaiting_approval" },
-        { requiresApproval: true, approvalStatus: "pending" },
+        { status: "awaiting_approval", approvalStatus: "pending" },
         { "notDoneApproval.status": "pending" },
       ],
     };
@@ -211,9 +211,7 @@ function applyAssignerLifecycleReset(task, prevStatus, body, isAssignerEdit) {
     task.rejectionRemarks = "";
     task.rejectionMode = "";
     task.notDoneApproval = undefined;
-    const remarks = String(
-      body.submissionRemarks || task.submissionRemarks || "Reopened by assigner for re-approval."
-    ).trim();
+    const remarks = String(body.submissionRemarks || "Reopened by assigner for re-approval.").trim();
     task.submissionRemarks = remarks;
     return;
   }
@@ -520,7 +518,7 @@ router.get("/", async (req, res) => {
 
   const isApprovalInbox = req.query.approval === "true";
   if (isApprovalInbox) {
-    tasks = await enrichApprovalInboxTasks(tasks);
+    tasks = await repairAndFilterApprovalInboxTasks(tasks);
   }
 
   if (req.query.assigneeInbox === "true") {
@@ -1159,6 +1157,7 @@ router.post("/:id/approve", async (req, res) => {
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
+  task.submissionRemarks = "";
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();

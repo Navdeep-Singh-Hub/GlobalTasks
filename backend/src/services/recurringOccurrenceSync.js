@@ -107,7 +107,36 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
 
   const todayKey = calendarDayKeyInTz(now);
   let dueKey = calendarDayKeyInTz(task.dueDate);
-  if (dueKey >= todayKey) return { synced: false, missed: 0 };
+
+  if (dueKey >= todayKey) {
+    if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
+      const pending = await TaskApprovalRecord.findOne({
+        taskId: task._id,
+        status: "pending",
+        kind: "completion",
+      })
+        .sort({ submittedAt: -1 })
+        .lean();
+      if (!pending) {
+        task.status = "pending";
+        task.approvalStatus = "none";
+        task.submissionRemarks = "";
+        await task.save();
+        return { synced: true, missed: 0 };
+      }
+      const occKey = calendarDayKeyInTz(pending.occurrenceDueDate);
+      if (occKey < todayKey) {
+        await TaskApprovalRecord.updateOne({ _id: pending._id }, { $set: { status: "missed" } });
+        task.status = "pending";
+        task.approvalStatus = "none";
+        task.submissionRemarks = "";
+        task.dueDate = setDueDateToCalendarDay(task.dueDate, todayKey);
+        await task.save();
+        return { synced: true, missed: 1 };
+      }
+    }
+    return { synced: false, missed: 0 };
+  }
 
   const primaryAssignee = assigneeId || (task.assignees || [])[0];
   if (!primaryAssignee) return { synced: false, missed: 0 };
