@@ -1,7 +1,8 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/input";
+import { Input } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { api } from "@/lib/api";
 import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
 import { useAuth } from "@/contexts/auth-context";
@@ -152,14 +153,17 @@ export function AssigneeApprovalHistory() {
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="space-y-1 sm:col-span-2">
           <span className="text-xs font-semibold text-zinc-500">Team member</span>
-          <Select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)}>
-            <option value="">Select person…</option>
-            {assignees.map((a) => (
-              <option key={a._id} value={a._id}>
-                {a.name} ({a.email}){a.active === false ? " · inactive" : ""}
-              </option>
-            ))}
-          </Select>
+          <SearchableSelect
+            value={assigneeId}
+            onChange={setAssigneeId}
+            placeholder="Select person…"
+            searchPlaceholder="Search name or email…"
+            options={assignees.map((a) => ({
+              value: a._id,
+              label: `${a.name} (${a.email})${a.active === false ? " · inactive" : ""}`,
+              searchText: `${a.name} ${a.email}`,
+            }))}
+          />
         </label>
         <label className="space-y-1">
           <span className="text-xs font-semibold text-zinc-500">From</span>

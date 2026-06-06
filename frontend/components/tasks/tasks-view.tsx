@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
@@ -463,14 +464,20 @@ export function TasksView({
               </Select>
             )}
             {canFilterByAssignee && masterRelation === "created" && (
-              <Select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}>
-                <option value="all">All assignees</option>
-                {myAssignees.map((a) => (
-                  <option key={a._id} value={a._id}>
-                    {a.name}{a.email ? ` (${a.email})` : ""}
-                  </option>
-                ))}
-              </Select>
+              <SearchableSelect
+                value={assigneeFilter}
+                onChange={setAssigneeFilter}
+                placeholder="All assignees"
+                searchPlaceholder="Search assignee…"
+                options={[
+                  { value: "all", label: "All assignees", searchText: "all" },
+                  ...myAssignees.map((a) => ({
+                    value: a._id,
+                    label: `${a.name}${a.email ? ` (${a.email})` : ""}`,
+                    searchText: `${a.name} ${a.email || ""}`,
+                  })),
+                ]}
+              />
             )}
             <div className="flex flex-wrap items-center gap-2 sm:col-span-2 md:col-span-3">
               {selected.length > 0 && (
