@@ -116,6 +116,7 @@ async function advanceIfRecurring(task, actorId, actorName) {
   task.dueDate = next;
   task.status = "pending";
   task.completedAt = null;
+  task.submissionRemarks = "";
   if (task.requiresApproval) task.approvalStatus = "none";
   await task.save();
   return true;
@@ -137,6 +138,7 @@ function buildFilter(query, userId, role) {
     centerId,
     functionTag,
     workableToday,
+    assigneeInbox,
   } = query;
   const isMasterScope = String(masterScope || "").toLowerCase() === "true";
   const trashOnly = query.trash === "only" || query.bin === "only";
@@ -147,7 +149,11 @@ function buildFilter(query, userId, role) {
   if (status && status !== "all") {
     filter.status = status;
   } else if (statusGroup === "open") {
-    filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
+    if (assigneeInbox === "true") {
+      filter.status = { $in: ["pending", "in_progress", "overdue"] };
+    } else {
+      filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
+    }
   } else if (!trashOnly && !isMasterScope) {
     filter.status = { $ne: "cancelled" };
   }
@@ -515,6 +521,16 @@ router.get("/", async (req, res) => {
   const isApprovalInbox = req.query.approval === "true";
   if (isApprovalInbox) {
     tasks = await enrichApprovalInboxTasks(tasks);
+  }
+
+  if (req.query.assigneeInbox === "true") {
+    tasks = tasks.map((t) => {
+      const doc = { ...t };
+      if (["pending", "in_progress", "overdue"].includes(doc.status) && doc.approvalStatus !== "pending") {
+        doc.submissionRemarks = "";
+      }
+      return doc;
+    });
   }
 
   res.json({
@@ -1205,8 +1221,9 @@ router.post("/:id/reject", async (req, res) => {
     } else {
       task.status = "pending";
       task.requiresApproval = false;
+      task.submissionRemarks = "";
     }
-    const occurrenceDue = task.dueDate;
+    const occurrenceDue = await resolveOccurrenceDueForApproval(task);
     await task.save();
     await finalizeApprovalRecord({
       task,

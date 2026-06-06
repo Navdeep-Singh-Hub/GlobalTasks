@@ -96,7 +96,7 @@ export function AssigneeApprovalHistory() {
     }
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ assigneeId });
+      const qs = new URLSearchParams({ assigneeId, sync: "true" });
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
       const d = await api<{ records: ApprovalRecord[]; summary: typeof summary }>(

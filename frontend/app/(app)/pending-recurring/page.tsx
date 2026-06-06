@@ -23,7 +23,7 @@ export default function PendingRecurringPage() {
           <TasksView
             title="Pending Recurring"
             subtitle="Only today's daily tasks appear here. When the calendar day changes, yesterday is marked not done automatically and you see the new day only."
-            preset={{ recurring: true, statusGroup: "open", workableToday: true, myTasks: true }}
+            preset={{ recurring: true, statusGroup: "open", workableToday: true, myTasks: true, assigneeInbox: true }}
           />
           <MissedOccurrencesPanel />
         </div>

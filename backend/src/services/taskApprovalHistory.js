@@ -25,13 +25,13 @@ function occurrenceDueOnDay(dueDate, dayKey, timeZone = APP_TIMEZONE) {
   return new Date(`${dayKey}T${time}+05:30`);
 }
 
-/** Correct pending occurrence when due day is after submit day (rolled-forward task.dueDate bug). */
+/** Correct pending occurrence to the submit day for daily tasks (fixes rolled-forward due dates). */
 export function effectivePendingOccurrenceDue(pending, task) {
   if (pending?.occurrenceDueDate) {
     if (pending.kind === "not_done") return pending.occurrenceDueDate;
     const subKey = calendarDayKeyInTz(pending.submittedAt);
     const dueKey = calendarDayKeyInTz(pending.occurrenceDueDate);
-    if (subKey && dueKey && dueKey > subKey) {
+    if (subKey && dueKey && dueKey !== subKey) {
       return occurrenceDueOnDay(pending.occurrenceDueDate, subKey);
     }
     return pending.occurrenceDueDate;
@@ -42,7 +42,7 @@ export function effectivePendingOccurrenceDue(pending, task) {
   return task?.dueDate || null;
 }
 
-/** For Approval inbox: show today's occurrence due, hide misdated daily rows, repair stored dates. */
+/** For Approval inbox: display occurrence from pending record (read-only, no DB writes). */
 export async function enrichApprovalInboxTasks(tasks) {
   if (!tasks.length) return [];
 
@@ -60,36 +60,16 @@ export async function enrichApprovalInboxTasks(tasks) {
     if (!pendingByTask.has(tid)) pendingByTask.set(tid, r);
   }
 
-  const todayKey = calendarDayKeyInTz(new Date());
-  const out = [];
-
-  for (const t of tasks) {
+  return tasks.map((t) => {
     const doc = t.toObject ? t.toObject() : { ...t };
     const pending = pendingByTask.get(String(t._id));
     const effectiveDue = effectivePendingOccurrenceDue(pending, doc);
-    doc.pendingOccurrenceDueDate = effectiveDue;
-
-    if (doc.taskType === "daily") {
-      if (!effectiveDue || calendarDayKeyInTz(effectiveDue) !== todayKey) continue;
-
-      doc.dueDate = effectiveDue;
-      if (pending && calendarDayKeyInTz(pending.occurrenceDueDate) !== todayKey) {
-        // eslint-disable-next-line no-await-in-loop
-        await TaskApprovalRecord.updateOne(
-          { _id: pending._id },
-          { $set: { occurrenceDueDate: effectiveDue } }
-        );
-      }
-      if (calendarDayKeyInTz(t.dueDate) !== todayKey) {
-        // eslint-disable-next-line no-await-in-loop
-        await Task.updateOne({ _id: t._id }, { $set: { dueDate: effectiveDue } });
-      }
+    if (effectiveDue) {
+      doc.pendingOccurrenceDueDate = effectiveDue;
+      if (doc.taskType === "daily") doc.dueDate = effectiveDue;
     }
-
-    out.push(doc);
-  }
-
-  return out;
+    return doc;
+  });
 }
 
 export async function resolveOccurrenceDueForApproval(task) {
@@ -109,7 +89,7 @@ export function correctMisdatedPendingOccurrence(records) {
     if (r.status !== "pending" || r.kind === "not_done") return r;
     const subKey = calendarDayKeyInTz(r.submittedAt);
     const dueKey = calendarDayKeyInTz(r.occurrenceDueDate);
-    if (!subKey || !dueKey || dueKey <= subKey) return r;
+    if (!subKey || !dueKey || dueKey === subKey) return r;
     return { ...r, occurrenceDueDate: occurrenceDueOnDay(r.occurrenceDueDate, subKey) };
   });
 }
@@ -475,23 +455,22 @@ export function dedupeApprovalRecords(records) {
   return [...byKey.values()].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 
-/** Keep only the newest pending row per task (drops orphan 6/6 rows after reopen on 5/6). */
+/** Keep one pending row per task + occurrence day (drops true duplicates only). */
 export function pruneDuplicatePendingPerTask(records) {
-  const latestPendingByTask = new Map();
+  const latestPendingByKey = new Map();
   for (const r of records) {
     if (r.status !== "pending") continue;
-    const tid = String(r.taskId || "");
-    if (!tid) continue;
-    const prev = latestPendingByTask.get(tid);
+    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+    const prev = latestPendingByKey.get(key);
     if (!prev || new Date(r.submittedAt).getTime() > new Date(prev.submittedAt).getTime()) {
-      latestPendingByTask.set(tid, r);
+      latestPendingByKey.set(key, r);
     }
   }
-  if (!latestPendingByTask.size) return records;
+  if (!latestPendingByKey.size) return records;
   return records.filter((r) => {
     if (r.status !== "pending") return true;
-    const tid = String(r.taskId || "");
-    const latest = latestPendingByTask.get(tid);
+    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+    const latest = latestPendingByKey.get(key);
     return latest && String(r._id) === String(latest._id);
   });
 }
@@ -518,18 +497,24 @@ export function collapseReopenedDuplicates(records) {
       kept.push(...rows);
       continue;
     }
-    const latestPendingAt = new Date(pending[0].submittedAt).getTime();
-    const approved = rows
-      .filter((r) => r.status === "approved" || r.status === "not_done_acknowledged")
+    const latestPending = pending[0];
+    const pendingDay = occurrenceDayKey(latestPending.occurrenceDueDate);
+    const latestPendingAt = new Date(latestPending.submittedAt).getTime();
+    const approvedSameDay = rows
+      .filter(
+        (r) =>
+          (r.status === "approved" || r.status === "not_done_acknowledged") &&
+          occurrenceDayKey(r.occurrenceDueDate) === pendingDay
+      )
       .sort(
         (a, b) =>
           new Date(b.approvedAt || b.submittedAt).getTime() -
           new Date(a.approvedAt || a.submittedAt).getTime()
       );
     const supersededApprovedId =
-      approved[0] &&
-      new Date(approved[0].approvedAt || approved[0].submittedAt).getTime() < latestPendingAt
-        ? String(approved[0]._id)
+      approvedSameDay[0] &&
+      new Date(approvedSameDay[0].approvedAt || approvedSameDay[0].submittedAt).getTime() < latestPendingAt
+        ? String(approvedSameDay[0]._id)
         : null;
 
     for (const r of rows) {
@@ -598,10 +583,21 @@ export async function fillMissingDailyOccurrenceHistory({
   );
 
   const synth = [];
+  const earliestByTask = new Map();
+  for (const r of records) {
+    const tid = String(r.taskId || "");
+    const k = occurrenceDayKey(r.occurrenceDueDate);
+    if (!tid || !k) continue;
+    if (!earliestByTask.has(tid) || k < earliestByTask.get(tid)) earliestByTask.set(tid, k);
+  }
+
   for (const task of tasks) {
-    const assignKey = calendarDayKeyInTz(task.createdAt);
-    const dueKey = task.dueDate ? calendarDayKeyInTz(task.dueDate) : assignKey;
-    let dayKey = assignKey < dueKey ? assignKey : dueKey;
+    const createdKey = calendarDayKeyInTz(task.createdAt);
+    const earliestRecord = earliestByTask.get(String(task._id));
+    let dayKey = earliestRecord || createdKey;
+    while (dayKey <= rangeEndKey && !isDailyOccurrenceScheduled(task, dayKey)) {
+      dayKey = nextCalendarDayKey(dayKey);
+    }
 
     while (dayKey <= rangeEndKey) {
       if (fromKey && dayKey < fromKey) {
@@ -734,14 +730,9 @@ export function mergeAssigneeApprovalRows(records, livePending) {
   const covered = new Set(
     records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
   );
-  const tasksWithStoredPending = new Set(
-    records.filter((r) => r.status === "pending").map((r) => String(r.taskId))
+  const extra = livePending.filter(
+    (p) => !covered.has(`${String(p.taskId)}-${occurrenceDayKey(p.occurrenceDueDate)}`)
   );
-  const extra = livePending.filter((p) => {
-    const tid = String(p.taskId);
-    if (tasksWithStoredPending.has(tid)) return false;
-    return !covered.has(`${tid}-${occurrenceDayKey(p.occurrenceDueDate)}`);
-  });
   return [...extra, ...records].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 

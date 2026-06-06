@@ -52,6 +52,8 @@ type Preset = {
   workableToday?: boolean;
   /** Pending inbox: tasks assigned to the signed-in user. */
   myTasks?: boolean;
+  /** Assignee work inbox: exclude tasks already submitted for approval. */
+  assigneeInbox?: boolean;
 };
 
 function taskAssigner(t: Task) {
@@ -236,6 +238,7 @@ export function TasksView({
     if (preset.approval) qs.set("approval", "true");
     if (preset.workableToday) qs.set("workableToday", "true");
     if (preset.myTasks) qs.set("myTasks", "true");
+    if (preset.assigneeInbox) qs.set("assigneeInbox", "true");
     if (masterAdminActions) {
       qs.set("masterScope", "true");
       qs.set("masterRelation", masterRelation);
@@ -248,7 +251,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, masterAdminActions, masterRelation]);
+  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation]);
 
   useEffect(() => {
     load();

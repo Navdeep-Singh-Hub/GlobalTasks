@@ -62,7 +62,9 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
           $set: {
             status: "missed",
             submissionRemarks:
-              remarks || "Not completed before the day ended — marked as not done automatically.",
+              existing.submissionRemarks ||
+              remarks ||
+              "Not completed before the day ended — marked as not done automatically.",
           },
         }
       );
@@ -165,7 +167,12 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
     cursor = next;
   }
 
-  task.dueDate = setDueDateToCalendarDay(task.dueDate, todayKey);
+  const cursorKey = calendarDayKeyInTz(cursor);
+  if (cursorKey >= todayKey) {
+    task.dueDate = setDueDateToCalendarDay(cursor, cursorKey);
+  } else {
+    task.dueDate = setDueDateToCalendarDay(task.dueDate, todayKey);
+  }
   task.status = "pending";
   task.approvalStatus = "none";
   task.submissionRemarks = "";
