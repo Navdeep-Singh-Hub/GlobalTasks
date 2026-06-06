@@ -20,6 +20,8 @@ import {
   correctMisdatedPendingOccurrence,
   fillMissingDailyOccurrenceHistory,
   sortRecordsByOccurrence,
+  repairMisdatedMissedRecords,
+  sanitizeHistoryMissedDisplay,
 } from "../services/taskApprovalHistory.js";
 import { syncRecurringTasksForAssignee } from "../services/recurringOccurrenceSync.js";
 
@@ -366,6 +368,7 @@ router.get("/assignee-approval-history", async (req, res) => {
 
   if (req.query.sync === "true") {
     await syncRecurringTasksForAssignee(assigneeId);
+    await repairMisdatedMissedRecords({ assigneeId });
   }
 
   const q = await buildAssigneeHistoryQuery({
@@ -411,6 +414,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     from: req.query.from,
     to: req.query.to,
   });
+  records = sanitizeHistoryMissedDisplay(records);
   records = sortRecordsByOccurrence(records);
 
   const summary = {

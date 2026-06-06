@@ -63,6 +63,13 @@ function submittedLabel(r: ApprovalRecord) {
   return fmt(r.submittedAt);
 }
 
+function remarksDisplay(r: ApprovalRecord) {
+  if (r.status === "missed") {
+    return r.submissionRemarks?.trim() || "Not completed before the day ended.";
+  }
+  return r.submissionRemarks?.trim() || "—";
+}
+
 function closedLabel(r: ApprovalRecord) {
   if (r.status === "pending") return "—";
   return fmt(r.approvedAt || r.rejectedAt);
@@ -231,8 +238,8 @@ export function AssigneeApprovalHistory() {
                       </span>
                     </td>
                     <td className="max-w-[200px] px-2 py-2 text-xs text-zinc-600 dark:text-zinc-300">
-                      <span className="line-clamp-2" title={r.submissionRemarks}>
-                        {r.submissionRemarks || "—"}
+                      <span className="line-clamp-2" title={remarksDisplay(r)}>
+                        {remarksDisplay(r)}
                       </span>
                       {r.rejectionRemarks ? (
                         <span className="mt-1 block text-rose-600" title={r.rejectionRemarks}>
@@ -257,7 +264,7 @@ export function AssigneeApprovalHistory() {
                   <div>Due: {fmtDateOnly(r.occurrenceDueDate)}</div>
                   <div>Submitted: {submittedLabel(r)}</div>
                   <div>Approved/rejected: {closedLabel(r)}</div>
-                  {r.submissionRemarks ? <div>Remarks: {r.submissionRemarks}</div> : null}
+                  {remarksDisplay(r) !== "—" ? <div>Remarks: {remarksDisplay(r)}</div> : null}
                 </div>
               </div>
             ))}

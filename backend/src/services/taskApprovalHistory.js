@@ -42,15 +42,61 @@ export function effectivePendingOccurrenceDue(pending, task) {
   return task?.dueDate || null;
 }
 
-async function resetTaskToAssigneePendingWork(task, { todayKey, dropPending = null, markPendingMissed = false } = {}) {
+export const AUTO_MISSED_REMARKS =
+  "Not completed before the day ended — marked as not done automatically.";
+export const GAP_MISSED_REMARKS = "No submission recorded for this day.";
+
+export function isAutoMissedRemarks(text) {
+  const t = String(text || "").trim();
+  return (
+    t === AUTO_MISSED_REMARKS ||
+    t === GAP_MISSED_REMARKS ||
+    t.startsWith("Submitted for approval but the day ended")
+  );
+}
+
+/** Convert stale pending to missed on the correct past day, or delete if today/future/duplicate. */
+export async function finalizePendingAsAutoMissed(pendingDoc, task, { now = new Date() } = {}) {
+  if (!pendingDoc?._id) return "skipped";
+  const todayKey = calendarDayKeyInTz(now);
+  const effectiveDue = effectivePendingOccurrenceDue(pendingDoc, task);
+  const occKey = calendarDayKeyInTz(effectiveDue);
+  if (!occKey || occKey >= todayKey) {
+    await TaskApprovalRecord.deleteOne({ _id: pendingDoc._id });
+    return "deleted";
+  }
+
+  const { start, end } = dueDateDayBounds(effectiveDue);
+  const approved = await TaskApprovalRecord.findOne({
+    taskId: pendingDoc.taskId,
+    status: { $in: ["approved", "not_done_acknowledged"] },
+    occurrenceDueDate: { $gte: start, $lt: end },
+    _id: { $ne: pendingDoc._id },
+  }).lean();
+  if (approved) {
+    await TaskApprovalRecord.deleteOne({ _id: pendingDoc._id });
+    return "deleted";
+  }
+
+  const pending = await TaskApprovalRecord.findById(pendingDoc._id);
+  if (!pending) return "skipped";
+  pending.status = "missed";
+  pending.kind = "not_done";
+  pending.occurrenceDueDate = occurrenceDueOnDay(pending.occurrenceDueDate, occKey);
+  pending.submittedAt = new Date(`${occKey}T23:59:59+05:30`);
+  pending.submissionRemarks = AUTO_MISSED_REMARKS;
+  await pending.save();
+  return "missed";
+}
+
+async function resetTaskToAssigneePendingWork(
+  task,
+  { todayKey, dropPending = null, markPendingMissed = false } = {}
+) {
   const today = todayKey || calendarDayKeyInTz(new Date());
   if (dropPending) {
     if (markPendingMissed) {
-      dropPending.status = "missed";
-      if (!String(dropPending.submissionRemarks || "").trim()) {
-        dropPending.submissionRemarks = "Not completed before the day ended — marked as not done automatically.";
-      }
-      await dropPending.save();
+      await finalizePendingAsAutoMissed(dropPending, task);
     } else {
       await TaskApprovalRecord.deleteOne({ _id: dropPending._id });
     }
@@ -123,7 +169,11 @@ export async function repairAndFilterApprovalInboxTasks(taskDocs) {
     const occKey = calendarDayKeyInTz(effectiveDue);
 
     if (task.taskType === "daily" && occKey < todayKey) {
-      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending, markPendingMissed: true });
+      await resetTaskToAssigneePendingWork(task, {
+        todayKey,
+        dropPending: pending,
+        markPendingMissed: true,
+      });
       continue;
     }
 
@@ -748,7 +798,7 @@ export async function fillMissingDailyOccurrenceHistory({
           taskType: task.taskType,
           occurrenceDueDate: endOfDay,
           submittedAt: endOfDay,
-          submissionRemarks: "No submission recorded for this day.",
+          submissionRemarks: GAP_MISSED_REMARKS,
           kind: "not_done",
           status: "missed",
         });
@@ -759,6 +809,82 @@ export async function fillMissingDailyOccurrenceHistory({
   }
 
   return sortRecordsByOccurrence([...records, ...synth]);
+}
+
+/** Fix DB rows: missed on today (day not ended), wrong occurrence day, or assignee remarks on auto-missed. */
+export async function repairMisdatedMissedRecords({ assigneeId }) {
+  const tasks = await Task.find({ deletedAt: null, assignees: assigneeId, taskType: "daily" })
+    .select("_id title taskType dueDate")
+    .lean();
+  if (!tasks.length) return { fixed: 0, removed: 0 };
+  const taskById = new Map(tasks.map((t) => [String(t._id), t]));
+  const missed = await TaskApprovalRecord.find({
+    taskId: { $in: tasks.map((t) => t._id) },
+    status: "missed",
+  });
+  const todayKey = calendarDayKeyInTz(new Date());
+  let fixed = 0;
+  let removed = 0;
+
+  for (const rec of missed) {
+    const task = taskById.get(String(rec.taskId));
+    if (!task) continue;
+    const effectiveDue = effectivePendingOccurrenceDue(rec, task);
+    const occKey = calendarDayKeyInTz(effectiveDue || rec.occurrenceDueDate);
+    const displayKey = calendarDayKeyInTz(rec.occurrenceDueDate);
+
+    if (!occKey || occKey >= todayKey || displayKey >= todayKey) {
+      await TaskApprovalRecord.deleteOne({ _id: rec._id });
+      removed += 1;
+      continue;
+    }
+
+    const { start, end } = dueDateDayBounds(effectiveDue || rec.occurrenceDueDate);
+    const approved = await TaskApprovalRecord.findOne({
+      taskId: rec.taskId,
+      status: { $in: ["approved", "not_done_acknowledged"] },
+      occurrenceDueDate: { $gte: start, $lt: end },
+      _id: { $ne: rec._id },
+    }).lean();
+    if (approved) {
+      await TaskApprovalRecord.deleteOne({ _id: rec._id });
+      removed += 1;
+      continue;
+    }
+
+    let changed = false;
+    if (displayKey !== occKey) {
+      rec.occurrenceDueDate = occurrenceDueOnDay(rec.occurrenceDueDate, occKey);
+      rec.submittedAt = new Date(`${occKey}T23:59:59+05:30`);
+      changed = true;
+    }
+    if (!isAutoMissedRemarks(rec.submissionRemarks)) {
+      rec.submissionRemarks = AUTO_MISSED_REMARKS;
+      changed = true;
+    }
+    if (changed) {
+      await rec.save();
+      fixed += 1;
+    }
+  }
+
+  return { fixed, removed };
+}
+
+/** Hide today auto-missed (day not over) and normalize remarks in API responses. */
+export function sanitizeHistoryMissedDisplay(records, now = new Date()) {
+  const todayKey = calendarDayKeyInTz(now);
+  return records
+    .map((r) => {
+      if (r.status !== "missed") return r;
+      const occKey = occurrenceDayKey(r.occurrenceDueDate);
+      if (occKey >= todayKey) return null;
+      if (!isAutoMissedRemarks(r.submissionRemarks)) {
+        return { ...r, submissionRemarks: AUTO_MISSED_REMARKS };
+      }
+      return r;
+    })
+    .filter(Boolean);
 }
 
 export function sortRecordsByOccurrence(records) {

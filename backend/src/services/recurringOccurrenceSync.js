@@ -7,7 +7,7 @@ import {
   computeNextDueDate,
   startOfNextCalendarDayInTz,
 } from "../utils/recurrence.js";
-import { taskAssignerIdFromDoc } from "./taskApprovalHistory.js";
+import { taskAssignerIdFromDoc, effectivePendingOccurrenceDue, finalizePendingAsAutoMissed, AUTO_MISSED_REMARKS } from "./taskApprovalHistory.js";
 import { notifyMany } from "./notificationService.js";
 import { logActivity } from "./activityService.js";
 
@@ -71,10 +71,15 @@ export function isAssigneeRecurringWorkable(task, now = new Date()) {
   return calendarDayKeyInTz(task.dueDate) <= todayKey;
 }
 
-export async function recordMissedOccurrence({ task, occurrenceDueDate, assigneeId, remarks }) {
+export async function recordMissedOccurrence({ task, occurrenceDueDate, assigneeId, remarks, now = new Date() }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;
 
+  const todayKey = calendarDayKeyInTz(now);
+  const occKey = calendarDayKeyInTz(occurrenceDueDate);
+  if (!occKey || occKey >= todayKey) return null;
+
+  const autoRemarks = remarks || AUTO_MISSED_REMARKS;
   const { start, end } = dueDateDayBounds(occurrenceDueDate);
   const existing = await TaskApprovalRecord.findOne({
     taskId: task._id,
@@ -83,16 +88,15 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
     status: { $in: ["missed", "approved", "pending", "not_done_acknowledged", "rejected"] },
   }).lean();
   if (existing) {
+    if (existing.status === "approved" || existing.status === "not_done_acknowledged") return existing;
     if (existing.status === "pending") {
       await TaskApprovalRecord.updateOne(
         { _id: existing._id },
         {
           $set: {
             status: "missed",
-            submissionRemarks:
-              existing.submissionRemarks ||
-              remarks ||
-              "Not completed before the day ended — marked as not done automatically.",
+            kind: "not_done",
+            submissionRemarks: autoRemarks,
           },
         }
       );
@@ -109,8 +113,7 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
     assigneeId,
     occurrenceDueDate,
     submittedAt: end,
-    submissionRemarks:
-      remarks || "Not completed before the day ended — marked as not done automatically.",
+    submissionRemarks: autoRemarks,
     kind: "not_done",
     status: "missed",
   });
@@ -152,9 +155,10 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
         await task.save();
         return { synced: true, missed: 0 };
       }
-      const occKey = calendarDayKeyInTz(pending.occurrenceDueDate);
+      const effectiveDue = effectivePendingOccurrenceDue(pending, task);
+      const occKey = calendarDayKeyInTz(effectiveDue);
       if (occKey < todayKey) {
-        await TaskApprovalRecord.updateOne({ _id: pending._id }, { $set: { status: "missed" } });
+        await finalizePendingAsAutoMissed(pending, task, { now });
         task.status = "pending";
         task.approvalStatus = "none";
         task.submissionRemarks = "";
