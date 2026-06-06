@@ -279,7 +279,11 @@ export function TasksView({
   const orderedTasks = useMemo(() => {
     const todayKey = calendarDayKeyInTz(new Date().toISOString());
     const list = preset.workableToday
-      ? tasks.filter((t) => calendarDayKeyInTz(t.dueDate) === todayKey)
+      ? tasks.filter((t) =>
+          t.taskType === "daily"
+            ? calendarDayKeyInTz(t.dueDate) === todayKey
+            : calendarDayKeyInTz(t.dueDate) <= todayKey
+        )
       : tasks;
     const myId = user?._id;
     if (!myId || user?.role !== "supervisor") return list;
@@ -478,7 +482,7 @@ export function TasksView({
         </div>
       )}
 
-      {tasks.length === 0 ? (
+      {orderedTasks.length === 0 ? (
         <EmptyState loading={loading} />
       ) : false ? (
         <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">

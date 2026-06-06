@@ -43,6 +43,34 @@ export function applyTodayOnlyDueFilter(filter, now = new Date()) {
   filter.dueDate = { ...(filter.dueDate || {}), $gte: start, $lt: end };
 }
 
+/** Assignee inbox: daily = today only; other recurring = due today or overdue. */
+export function applyAssigneeRecurringWorkableFilter(filter, now = new Date()) {
+  const todayKey = calendarDayKeyInTz(now);
+  const start = new Date(`${todayKey}T00:00:00+05:30`);
+  const end = startOfNextCalendarDayInTz(now);
+  const workableClause = {
+    $or: [
+      { taskType: "daily", dueDate: { $gte: start, $lt: end } },
+      { taskType: { $ne: "daily" }, dueDate: { $lt: end } },
+    ],
+  };
+  if (filter.$and) {
+    filter.$and.push(workableClause);
+  } else if (filter.$or) {
+    filter.$and = [{ $or: filter.$or }, workableClause];
+    delete filter.$or;
+  } else {
+    Object.assign(filter, workableClause);
+  }
+}
+
+export function isAssigneeRecurringWorkable(task, now = new Date()) {
+  if (!task?.dueDate) return false;
+  if (task.taskType === "daily") return isOccurrenceDueToday(task.dueDate, now);
+  const todayKey = calendarDayKeyInTz(now);
+  return calendarDayKeyInTz(task.dueDate) <= todayKey;
+}
+
 export async function recordMissedOccurrence({ task, occurrenceDueDate, assigneeId, remarks }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;

@@ -14,7 +14,9 @@ import {
 } from "../utils/recurrence.js";
 import {
   applyTodayOnlyDueFilter,
+  applyAssigneeRecurringWorkableFilter,
   isOccurrenceDueToday,
+  isAssigneeRecurringWorkable,
   syncRecurringTasksForAssignee,
   syncRecurringTaskToToday,
 } from "../services/recurringOccurrenceSync.js";
@@ -33,6 +35,7 @@ import {
   resubmitDailyRecurringTask,
   enrichApprovalInboxTasks,
   repairAndFilterApprovalInboxTasks,
+  repairAssigneeInboxApprovalState,
   resolveOccurrenceDueForApproval,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
@@ -185,7 +188,11 @@ function buildFilter(query, userId, role) {
   else if (isAssigneeOnly(role)) filter.assignees = userId;
 
   if (workableToday === "true" && recurring === "true") {
-    applyTodayOnlyDueFilter(filter);
+    if (assigneeInbox === "true") {
+      applyAssigneeRecurringWorkableFilter(filter);
+    } else {
+      applyTodayOnlyDueFilter(filter);
+    }
   }
 
   return filter;
@@ -482,8 +489,11 @@ router.get("/my-missed-occurrences", async (req, res) => {
 
 router.get("/", async (req, res) => {
   const me = await actor(req);
-  if (req.query.workableToday === "true" && req.query.recurring === "true") {
+  if (req.query.recurring === "true" && (req.query.workableToday === "true" || req.query.assigneeInbox === "true")) {
     await syncRecurringTasksForAssignee(req.userId);
+  }
+  if (req.query.assigneeInbox === "true") {
+    await repairAssigneeInboxApprovalState(req.userId);
   }
   const filter = buildFilter(req.query, req.userId, req.userRole);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
@@ -513,7 +523,9 @@ router.get("/", async (req, res) => {
     : taskDocs.map((t) => (t.toObject ? t.toObject() : t));
 
   if (req.query.workableToday === "true" && req.query.recurring === "true") {
-    tasks = tasks.filter((t) => isOccurrenceDueToday(t.dueDate));
+    tasks = tasks.filter((t) =>
+      req.query.assigneeInbox === "true" ? isAssigneeRecurringWorkable(t) : isOccurrenceDueToday(t.dueDate)
+    );
   }
 
   const isApprovalInbox = req.query.approval === "true";

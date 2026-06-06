@@ -42,6 +42,43 @@ export function effectivePendingOccurrenceDue(pending, task) {
   return task?.dueDate || null;
 }
 
+async function resetTaskToAssigneePendingWork(task, { todayKey, dropPending = null, markPendingMissed = false } = {}) {
+  const today = todayKey || calendarDayKeyInTz(new Date());
+  if (dropPending) {
+    if (markPendingMissed) {
+      dropPending.status = "missed";
+      if (!String(dropPending.submissionRemarks || "").trim()) {
+        dropPending.submissionRemarks = "Not completed before the day ended — marked as not done automatically.";
+      }
+      await dropPending.save();
+    } else {
+      await TaskApprovalRecord.deleteOne({ _id: dropPending._id });
+    }
+  }
+  task.status = "pending";
+  task.approvalStatus = "none";
+  task.submissionRemarks = "";
+  if (task.taskType === "daily") {
+    task.dueDate = occurrenceDueOnDay(task.dueDate, today);
+  }
+  await task.save();
+}
+
+/** Reset phantom/stale approval state so assignee pending inbox can show the task again. */
+export async function repairAssigneeInboxApprovalState(assigneeId) {
+  const candidates = await Task.find({
+    deletedAt: null,
+    assignees: assigneeId,
+    $or: [
+      { status: "awaiting_approval", approvalStatus: "pending" },
+      { approvalStatus: "pending", status: { $nin: ["awaiting_approval", "completed", "cancelled"] } },
+    ],
+  }).select("_id");
+  if (!candidates.length) return { repaired: 0 };
+  await repairAndFilterApprovalInboxTasks(candidates);
+  return { repaired: candidates.length };
+}
+
 /** For Approval inbox: repair phantom/stale rows and return only valid submissions. */
 export async function repairAndFilterApprovalInboxTasks(taskDocs) {
   if (!taskDocs.length) return [];
@@ -78,10 +115,7 @@ export async function repairAndFilterApprovalInboxTasks(taskDocs) {
     }).sort({ submittedAt: -1 });
 
     if (!pending) {
-      task.status = "pending";
-      task.approvalStatus = "none";
-      task.submissionRemarks = "";
-      await task.save();
+      await resetTaskToAssigneePendingWork(task, { todayKey });
       continue;
     }
 
@@ -89,25 +123,12 @@ export async function repairAndFilterApprovalInboxTasks(taskDocs) {
     const occKey = calendarDayKeyInTz(effectiveDue);
 
     if (task.taskType === "daily" && occKey < todayKey) {
-      pending.status = "missed";
-      if (!String(pending.submissionRemarks || "").trim()) {
-        pending.submissionRemarks = "Not completed before the day ended — marked as not done automatically.";
-      }
-      await pending.save();
-      task.status = "pending";
-      task.approvalStatus = "none";
-      task.submissionRemarks = "";
-      task.dueDate = occurrenceDueOnDay(task.dueDate, todayKey);
-      await task.save();
+      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending, markPendingMissed: true });
       continue;
     }
 
     if (task.taskType === "daily" && occKey > todayKey) {
-      await TaskApprovalRecord.deleteOne({ _id: pending._id });
-      task.status = "pending";
-      task.approvalStatus = "none";
-      task.submissionRemarks = "";
-      await task.save();
+      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending });
       continue;
     }
 
@@ -124,11 +145,7 @@ export async function repairAndFilterApprovalInboxTasks(taskDocs) {
       String(pending.submissionRemarks || "").trim() === String(lastApproved.submissionRemarks || "").trim() &&
       calendarDayKeyInTz(lastApproved.occurrenceDueDate) !== occKey
     ) {
-      await TaskApprovalRecord.deleteOne({ _id: pending._id });
-      task.status = "pending";
-      task.approvalStatus = "none";
-      task.submissionRemarks = "";
-      await task.save();
+      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending });
       continue;
     }
 
