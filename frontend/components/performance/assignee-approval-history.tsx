@@ -38,16 +38,21 @@ const TASK_TYPE_LABELS: Record<string, string> = {
 
 
 function statusLabel(r: ApprovalRecord) {
-  if (r.status === "pending") return r.kind === "not_done" ? "Not done (waiting)" : "Waiting for approval";
+  if (r.status === "pending") return r.kind === "not_done" ? "Not done (assignee, waiting)" : "Waiting for approval";
   if (r.status === "approved") return "Approved";
-  if (r.status === "not_done_acknowledged") return "Not done acknowledged";
-  if (r.status === "missed") return "Not done (auto)";
+  if (r.status === "not_done_acknowledged") return "Not done (assignee)";
+  if (r.status === "missed") {
+    if (r.kind === "not_done" && r.submissionRemarks?.trim() && !isAutoMissedRemarkText(r.submissionRemarks)) {
+      return "Not done (assignee)";
+    }
+    return "Not done (auto)";
+  }
   if (r.status === "rejected") return "Rejected";
   return r.status;
 }
 
 function submittedLabel(r: ApprovalRecord) {
-  if (r.status === "missed") {
+  if (r.status === "missed" && (!r.submissionRemarks?.trim() || isAutoMissedRemarkText(r.submissionRemarks))) {
     return `Auto — day ended (${formatAppDate(r.occurrenceDueDate)})`;
   }
   return formatAppDateTime(r.submittedAt);
@@ -55,9 +60,21 @@ function submittedLabel(r: ApprovalRecord) {
 
 function remarksDisplay(r: ApprovalRecord) {
   if (r.status === "missed") {
+    if (r.submissionRemarks?.trim() && !isAutoMissedRemarkText(r.submissionRemarks)) {
+      return r.submissionRemarks.trim();
+    }
     return r.submissionRemarks?.trim() || "Not completed before the day ended.";
   }
   return r.submissionRemarks?.trim() || "—";
+}
+
+function isAutoMissedRemarkText(text: string) {
+  const t = text.trim();
+  return (
+    t === "Not completed before the day ended — marked as not done automatically." ||
+    t === "No submission recorded for this day." ||
+    t.startsWith("Submitted for approval but the day ended")
+  );
 }
 
 function closedLabel(r: ApprovalRecord) {

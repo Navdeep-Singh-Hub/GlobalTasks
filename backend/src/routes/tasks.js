@@ -127,9 +127,54 @@ async function advanceIfRecurring(task, actorId, actorName) {
   return true;
 }
 
+function escapeRegex(text) {
+  return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function approvalInboxFilterClause() {
+  return {
+    $or: [
+      { status: "awaiting_approval", approvalStatus: "pending" },
+      { "notDoneApproval.status": "pending" },
+    ],
+  };
+}
+
+/** Match task title/description and assignee / assigner names or emails. */
+async function applyTaskTextAndPersonSearch(filter, query) {
+  const search = String(query.search || "").trim();
+  const approval = query.approval === "true";
+  if (!search) {
+    if (approval) Object.assign(filter, approvalInboxFilterClause());
+    return;
+  }
+
+  const regex = new RegExp(escapeRegex(search), "i");
+  const clauses = [{ title: regex }, { description: regex }];
+
+  const matchingUsers = await User.find({
+    $or: [{ name: regex }, { email: regex }],
+  })
+    .select("_id")
+    .lean();
+  const userIds = matchingUsers.map((u) => u._id);
+  if (userIds.length) {
+    clauses.push(
+      { assignees: { $in: userIds } },
+      { assignedBy: { $in: userIds } },
+      { createdBy: { $in: userIds } }
+    );
+  }
+
+  if (approval) {
+    filter.$and = [{ $or: clauses }, approvalInboxFilterClause()];
+  } else {
+    filter.$or = clauses;
+  }
+}
+
 function buildFilter(query, userId, role) {
   const {
-    search,
     status,
     statusGroup,
     priority,
@@ -137,7 +182,6 @@ function buildFilter(query, userId, role) {
     taskType,
     recurring,
     myTasks,
-    approval,
     masterScope,
     departmentId,
     centerId,
@@ -150,7 +194,6 @@ function buildFilter(query, userId, role) {
   /** Default lists active tasks; trash/recycle lists soft-deleted only. */
   const filter = trashOnly ? { deletedAt: { $ne: null } } : { deletedAt: null };
 
-  if (search) filter.$or = [{ title: new RegExp(search, "i") }, { description: new RegExp(search, "i") }];
   if (status && status !== "all") {
     filter.status = status;
   } else if (statusGroup === "open") {
@@ -170,20 +213,6 @@ function buildFilter(query, userId, role) {
   if (taskType && taskType !== "all") filter.taskType = taskType;
   if (recurring === "true") filter.taskType = { $in: RECURRING };
   if (recurring === "false") filter.taskType = "one_time";
-  if (approval === "true") {
-    const approvalClause = {
-      $or: [
-        { status: "awaiting_approval", approvalStatus: "pending" },
-        { "notDoneApproval.status": "pending" },
-      ],
-    };
-    if (search) {
-      filter.$and = [{ $or: filter.$or }, approvalClause];
-      delete filter.$or;
-    } else {
-      Object.assign(filter, approvalClause);
-    }
-  }
 
   if (myTasks === "true") filter.assignees = userId;
   else if (isAssigneeOnly(role)) filter.assignees = userId;
@@ -497,6 +526,7 @@ router.get("/", async (req, res) => {
     await repairAssigneeInboxApprovalState(req.userId);
   }
   const filter = buildFilter(req.query, req.userId, req.userRole);
+  await applyTaskTextAndPersonSearch(filter, req.query);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
   applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
   await applyMasterHistoricalStatusFilter(filter, req.query);
@@ -1187,7 +1217,12 @@ router.post("/:id/approve", async (req, res) => {
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();
-  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: { occurrenceDueDate: occurrenceDue } });
+  await TaskEvent.create({
+    taskId: task._id,
+    actorId: req.userId,
+    eventType: "approved",
+    meta: { occurrenceDueDate: approvedRecord.occurrenceDueDate || occurrenceDue },
+  });
   const actorUser = await User.findById(req.userId).lean();
   if (isRecurring(task.taskType)) {
     await logActivity({

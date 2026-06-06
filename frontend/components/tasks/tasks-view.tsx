@@ -124,6 +124,20 @@ export function TasksView({
   const [rejectFor, setRejectFor] = useState<{ id: string; title: string } | null>(null);
   const [submitBulkOpen, setSubmitBulkOpen] = useState(false);
   const [masterRelation, setMasterRelation] = useState<"created" | "assigned">("created");
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [myAssignees, setMyAssignees] = useState<{ _id: string; name: string; email: string }[]>([]);
+  const canFilterByAssignee = Boolean(masterAdminActions && (isManagement(user?.role) || isCeo(user?.role)));
+
+  useEffect(() => {
+    if (!canFilterByAssignee) return;
+    api<{ assignees: { _id: string; name: string; email: string }[] }>("/dashboard/my-assignees")
+      .then((d) => setMyAssignees(d.assignees || []))
+      .catch(() => setMyAssignees([]));
+  }, [canFilterByAssignee]);
+
+  useEffect(() => {
+    if (masterRelation === "assigned") setAssigneeFilter("all");
+  }, [masterRelation]);
 
   const openDeleteSingle = (id: string) => {
     const t = tasks.find((x) => x._id === id);
@@ -224,6 +238,9 @@ export function TasksView({
     if (masterAdminActions) {
       qs.set("masterScope", "true");
       qs.set("masterRelation", masterRelation);
+      if (masterRelation === "created" && assigneeFilter !== "all") {
+        qs.set("assignee", assigneeFilter);
+      }
     }
     qs.set("limit", masterAdminActions ? "100" : "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
@@ -233,7 +250,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation]);
+  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation, assigneeFilter]);
 
   useEffect(() => {
     load();
@@ -392,7 +409,9 @@ export function TasksView({
             {loading ? "Loading…" : `${orderedTasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
             {masterAdminActions
               ? masterRelation === "created"
-                ? " · only tasks you assigned"
+                ? assigneeFilter !== "all"
+                  ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
+                  : " · only tasks you assigned"
                 : " · tasks assigned to you"
               : ""}
           </p>
@@ -419,7 +438,7 @@ export function TasksView({
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
             <div className="relative sm:col-span-2">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
-              <Input placeholder="Search tasks, description…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
+              <Input placeholder="Search tasks, people, description…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
             </div>
             <Select value={status} onChange={(e) => setStatus(e.target.value)}>
               <option value="all">All statuses</option>
@@ -441,6 +460,16 @@ export function TasksView({
               <Select value={taskType} onChange={(e) => setTaskType(e.target.value)}>
                 <option value="all">All types</option>
                 {Object.entries(CADENCE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </Select>
+            )}
+            {canFilterByAssignee && masterRelation === "created" && (
+              <Select value={assigneeFilter} onChange={(e) => setAssigneeFilter(e.target.value)}>
+                <option value="all">All assignees</option>
+                {myAssignees.map((a) => (
+                  <option key={a._id} value={a._id}>
+                    {a.name}{a.email ? ` (${a.email})` : ""}
+                  </option>
+                ))}
               </Select>
             )}
             <div className="flex flex-wrap items-center gap-2 sm:col-span-2 md:col-span-3">

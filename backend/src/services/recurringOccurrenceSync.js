@@ -89,6 +89,7 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
   }).lean();
   if (existing) {
     if (existing.status === "approved" || existing.status === "not_done_acknowledged") return existing;
+    if (existing.status === "pending" && existing.kind === "not_done") return existing;
     if (existing.status === "pending") {
       await TaskApprovalRecord.updateOne(
         { _id: existing._id },

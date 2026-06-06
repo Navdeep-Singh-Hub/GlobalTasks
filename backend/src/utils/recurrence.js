@@ -127,3 +127,84 @@ export function computeNextDueDate(task) {
 
   return next;
 }
+
+/** Step one occurrence backward from fromDate (mirrors computeNextDueDate). */
+export function computePreviousDueDate(task, fromDate) {
+  if (!isRecurring(task?.taskType)) return null;
+  const base = fromDate ? new Date(fromDate) : task.dueDate ? new Date(task.dueDate) : new Date();
+  let prev;
+  switch (task.taskType) {
+    case "daily":
+      prev = addCalendarDaysInTz(base, -1, APP_TIMEZONE);
+      break;
+    case "weekly":
+      prev = addCalendarDaysInTz(base, -7, APP_TIMEZONE);
+      break;
+    case "fortnightly":
+      prev = addCalendarDaysInTz(base, -14, APP_TIMEZONE);
+      break;
+    case "monthly": {
+      const key = calendarDayKeyInTz(base, APP_TIMEZONE);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setMonth(anchor.getMonth() - 1);
+      const prevKey = calendarDayKeyInTz(anchor, APP_TIMEZONE);
+      prev = new Date(`${prevKey}T${dueTimeInTz(base, APP_TIMEZONE)}+05:30`);
+      break;
+    }
+    case "quarterly": {
+      const key = calendarDayKeyInTz(base, APP_TIMEZONE);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setMonth(anchor.getMonth() - 3);
+      const prevKey = calendarDayKeyInTz(anchor, APP_TIMEZONE);
+      prev = new Date(`${prevKey}T${dueTimeInTz(base, APP_TIMEZONE)}+05:30`);
+      break;
+    }
+    case "yearly": {
+      const key = calendarDayKeyInTz(base, APP_TIMEZONE);
+      const anchor = new Date(`${key}T12:00:00+05:30`);
+      anchor.setFullYear(anchor.getFullYear() - 1);
+      const prevKey = calendarDayKeyInTz(anchor, APP_TIMEZONE);
+      prev = new Date(`${prevKey}T${dueTimeInTz(base, APP_TIMEZONE)}+05:30`);
+      break;
+    }
+    default:
+      return null;
+  }
+
+  const weekOff = task.recurrence?.weekOff || "Sunday";
+  const includeSunday = task.recurrence?.includeSunday === true;
+  const weekOffIdx = DAY_INDEX[weekOff] ?? 0;
+  if (task.taskType === "daily" && !includeSunday && dayOfWeekInTz(prev, APP_TIMEZONE) === weekOffIdx) {
+    prev = addCalendarDaysInTz(prev, -1, APP_TIMEZONE);
+  }
+
+  return prev;
+}
+
+/**
+ * Occurrence due date for the cycle active when the assignee submitted.
+ * Walks backward from startFromDue (or task.dueDate) so future misdated rows are corrected.
+ */
+export function resolveOccurrenceDueForSubmitTime(task, submittedAt, startFromDue) {
+  if (!submittedAt || !task?.taskType || !isRecurring(task.taskType)) {
+    return startFromDue || task?.dueDate || null;
+  }
+  const subKey = calendarDayKeyInTz(submittedAt);
+  let due = new Date(startFromDue || task.dueDate || submittedAt);
+  let best = due;
+
+  for (let i = 0; i < 500; i++) {
+    const dueKey = calendarDayKeyInTz(due);
+    if (dueKey >= subKey) {
+      best = due;
+      const previous = computePreviousDueDate(task, due);
+      if (!previous) break;
+      const prevKey = calendarDayKeyInTz(previous);
+      if (prevKey < subKey) break;
+      due = previous;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
