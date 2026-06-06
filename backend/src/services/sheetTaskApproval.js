@@ -249,6 +249,13 @@ export async function submitDailySheetTaskForApproval({
     task.rejectionRemarks = "";
     task.rejectionMode = "";
     await task.save();
+    await recordTaskSubmission({
+      task,
+      assigneeId: actorUserId,
+      remarks: task.submissionRemarks || `${kind === "supervisor" ? "Supervisor" : "Coordinator"} sheet (CEO auto)`,
+      kind: "completion",
+      source: "assignee",
+    });
     await TaskEvent.create({
       taskId: task._id,
       actorId: actorUserId,
@@ -260,7 +267,6 @@ export async function submitDailySheetTaskForApproval({
       occurrenceDueDate: task.dueDate,
       approverId: actorUserId,
       status: "approved",
-      extra: { submittedAt: task.updatedAt },
     });
     return { ok: true, autoCompleted: true };
   }

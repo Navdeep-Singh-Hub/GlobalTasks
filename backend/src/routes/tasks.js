@@ -1167,6 +1167,19 @@ router.post("/:id/approve", async (req, res) => {
   if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
     task.dueDate = occurrenceDue;
   }
+
+  const approvedRecord = await finalizeApprovalRecord({
+    task,
+    occurrenceDueDate: occurrenceDue,
+    approverId: req.userId,
+    status: "approved",
+  });
+  if (!approvedRecord) {
+    return res.status(400).json({
+      message: "No pending submission found for this occurrence. The assignee must submit before approval.",
+    });
+  }
+
   task.approvalStatus = "approved";
   task.status = "completed";
   task.completedAt = new Date();
@@ -1174,12 +1187,6 @@ router.post("/:id/approve", async (req, res) => {
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();
-  await finalizeApprovalRecord({
-    task,
-    occurrenceDueDate: occurrenceDue,
-    approverId: req.userId,
-    status: "approved",
-  });
   await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "approved", meta: { occurrenceDueDate: occurrenceDue } });
   const actorUser = await User.findById(req.userId).lean();
   if (isRecurring(task.taskType)) {

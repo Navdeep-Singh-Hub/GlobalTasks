@@ -252,15 +252,21 @@ export async function resolveOccurrenceDueForApproval(task) {
   return effectivePendingOccurrenceDue(pending, task) || task.dueDate;
 }
 
-/** Pending submitted today cannot be for a future day (send-back used rolled-forward task.dueDate). */
-export function correctMisdatedPendingOccurrence(records) {
+/** Align occurrence date to submit day for daily tasks (all statuses). */
+export function correctOccurrenceDatesInHistory(records) {
   return records.map((r) => {
-    if (r.status !== "pending" || r.kind === "not_done") return r;
+    if (r.kind === "not_done" && r.status === "missed") return r;
+    if (!r.submittedAt || !r.occurrenceDueDate) return r;
     const subKey = calendarDayKeyInTz(r.submittedAt);
     const dueKey = calendarDayKeyInTz(r.occurrenceDueDate);
     if (!subKey || !dueKey || dueKey === subKey) return r;
     return { ...r, occurrenceDueDate: occurrenceDueOnDay(r.occurrenceDueDate, subKey) };
   });
+}
+
+/** @deprecated Use correctOccurrenceDatesInHistory */
+export function correctMisdatedPendingOccurrence(records) {
+  return correctOccurrenceDatesInHistory(records);
 }
 
 /** Assigner unapproves: flip the latest approved row back to pending (no duplicate row). */
@@ -466,38 +472,68 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
     update.approvedBy = approverId;
   }
 
-  const { start, end } = dueDateDayBounds(due);
-  const record = await TaskApprovalRecord.findOneAndUpdate(
-    {
+  async function findPendingForDue(targetDue) {
+    const { start, end } = dueDateDayBounds(targetDue);
+    let pending = await TaskApprovalRecord.findOne({
       taskId: task._id,
-      occurrenceDueDate: { $gte: start, $lt: end },
       status: "pending",
-    },
-    { $set: update },
-    { sort: { submittedAt: -1 }, new: true }
-  );
+      occurrenceDueDate: { $gte: start, $lt: end },
+    }).sort({ submittedAt: -1 });
+    if (pending) return pending;
 
-  if (record) return record;
+    if (task.taskType === "daily") {
+      const allPending = await TaskApprovalRecord.find({
+        taskId: task._id,
+        status: "pending",
+        kind: { $in: ["completion", "not_done"] },
+      }).sort({ submittedAt: -1 });
+      const targetKey = calendarDayKeyInTz(targetDue);
+      for (const p of allPending) {
+        const effKey = calendarDayKeyInTz(effectivePendingOccurrenceDue(p, task));
+        if (effKey === targetKey) return p;
+      }
+    }
+    return null;
+  }
 
-  return TaskApprovalRecord.create({
-    taskId: task._id,
-    taskTitle: task.title,
-    taskType: task.taskType,
-    centerId: task.centerId || null,
-    assignedBy: taskAssignerIdFromDoc(task),
-    assigneeId: (task.assignees || [])[0] || null,
-    occurrenceDueDate: due,
-    submittedAt: extra.submittedAt || task.updatedAt || new Date(),
-    submissionRemarks: task.submissionRemarks || "",
-    kind: extra.kind || "completion",
-    status,
-    approvedAt: update.approvedAt || null,
-    approvedBy: update.approvedBy || null,
-    rejectedAt: update.rejectedAt || null,
-    rejectedBy: update.rejectedBy || null,
-    rejectionRemarks: extra.rejectionRemarks || "",
-    rejectionMode: extra.rejectionMode || "",
-  });
+  const pending = await findPendingForDue(due);
+  if (!pending) {
+    if (extra.allowCreateWithoutPending) {
+      return TaskApprovalRecord.create({
+        taskId: task._id,
+        taskTitle: task.title,
+        taskType: task.taskType,
+        centerId: task.centerId || null,
+        assignedBy: taskAssignerIdFromDoc(task),
+        assigneeId: (task.assignees || [])[0] || null,
+        occurrenceDueDate: due,
+        submittedAt: extra.submittedAt || task.updatedAt || new Date(),
+        submissionRemarks: extra.submissionRemarks ?? task.submissionRemarks ?? "",
+        kind: extra.kind || "completion",
+        status,
+        approvedAt: update.approvedAt || null,
+        approvedBy: update.approvedBy || null,
+        rejectedAt: update.rejectedAt || null,
+        rejectedBy: update.rejectedBy || null,
+        rejectionRemarks: extra.rejectionRemarks || "",
+        rejectionMode: extra.rejectionMode || "",
+        submissionSource: extra.submissionSource || "assignee",
+      });
+    }
+    return null;
+  }
+
+  const setFields = { ...update };
+  const pendingDueKey = calendarDayKeyInTz(pending.occurrenceDueDate);
+  const targetDueKey = calendarDayKeyInTz(due);
+  if (pendingDueKey !== targetDueKey) {
+    setFields.occurrenceDueDate = due;
+  }
+  if (extra.submissionRemarks !== undefined) {
+    setFields.submissionRemarks = extra.submissionRemarks;
+  }
+
+  return TaskApprovalRecord.findOneAndUpdate({ _id: pending._id }, { $set: setFields }, { new: true });
 }
 
 export async function recordNotDoneSubmission({ task, assigneeId, remarks, occurrenceDueDate }) {
@@ -869,6 +905,97 @@ export async function repairMisdatedMissedRecords({ assigneeId }) {
   }
 
   return { fixed, removed };
+}
+
+function isInstantApproval(record) {
+  const subTime = new Date(record.submittedAt || 0).getTime();
+  const apprTime = new Date(record.approvedAt || record.submittedAt || 0).getTime();
+  if (!subTime || !apprTime) return false;
+  return Math.abs(subTime - apprTime) < 5000;
+}
+
+/** Approved row created without a real assignee submit (copied remarks / instant approve). */
+export function isPhantomApprovedRecord(record, priorSameTask) {
+  if (record.status !== "approved" && record.status !== "not_done_acknowledged") return false;
+  if (record.kind !== "completion") return false;
+  if (record.submissionSource === "assigner_reopen") return false;
+
+  const remarks = String(record.submissionRemarks || "").trim();
+  const priorRemarks = priorSameTask
+    ? String(priorSameTask.submissionRemarks || "").trim()
+    : "";
+  const duplicatePriorRemarks = Boolean(remarks && priorRemarks && remarks === priorRemarks);
+
+  if (isInstantApproval(record) && duplicatePriorRemarks) return true;
+  if (isInstantApproval(record) && !remarks) return true;
+  return false;
+}
+
+/** Remove DB rows: approved without assignee submission (duplicate prior-day remarks). */
+export async function repairPhantomApprovedRecords({ assigneeId }) {
+  const tasks = await Task.find({ deletedAt: null, assignees: assigneeId, taskType: "daily" })
+    .select("_id")
+    .lean();
+  if (!tasks.length) return { removed: 0 };
+
+  const approved = await TaskApprovalRecord.find({
+    taskId: { $in: tasks.map((t) => t._id) },
+    status: { $in: ["approved", "not_done_acknowledged"] },
+    kind: "completion",
+  }).sort({ occurrenceDueDate: 1, submittedAt: 1 });
+
+  const byTask = new Map();
+  for (const rec of approved) {
+    const tid = String(rec.taskId);
+    if (!byTask.has(tid)) byTask.set(tid, []);
+    byTask.get(tid).push(rec);
+  }
+
+  let removed = 0;
+  for (const rows of byTask.values()) {
+    rows.sort((a, b) =>
+      calendarDayKeyInTz(a.occurrenceDueDate).localeCompare(calendarDayKeyInTz(b.occurrenceDueDate))
+    );
+    for (let i = 0; i < rows.length; i++) {
+      const rec = rows[i];
+      const prior = i > 0 ? rows[i - 1] : null;
+      if (!isPhantomApprovedRecord(rec, prior)) continue;
+      await TaskApprovalRecord.deleteOne({ _id: rec._id });
+      removed += 1;
+      rows.splice(i, 1);
+      i -= 1;
+    }
+  }
+
+  return { removed };
+}
+
+/** Drop phantom approved rows from API responses. */
+export function sanitizeHistoryApprovedDisplay(records) {
+  const byTask = new Map();
+  for (const r of records) {
+    const tid = String(r.taskId || "");
+    if (!tid) continue;
+    if (!byTask.has(tid)) byTask.set(tid, []);
+    byTask.get(tid).push(r);
+  }
+
+  const dropIds = new Set();
+  for (const rows of byTask.values()) {
+    const approved = rows
+      .filter((r) => r.status === "approved" || r.status === "not_done_acknowledged")
+      .sort((a, b) =>
+        calendarDayKeyInTz(a.occurrenceDueDate).localeCompare(calendarDayKeyInTz(b.occurrenceDueDate))
+      );
+    for (let i = 0; i < approved.length; i++) {
+      const prior = i > 0 ? approved[i - 1] : null;
+      if (isPhantomApprovedRecord(approved[i], prior)) {
+        dropIds.add(String(approved[i]._id));
+      }
+    }
+  }
+
+  return dropIds.size ? records.filter((r) => !dropIds.has(String(r._id))) : records;
 }
 
 /** Hide today auto-missed (day not over) and normalize remarks in API responses. */

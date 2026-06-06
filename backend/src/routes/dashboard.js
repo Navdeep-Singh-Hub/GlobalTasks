@@ -17,7 +17,10 @@ import {
   dedupeApprovalRecords,
   collapseReopenedDuplicates,
   pruneDuplicatePendingPerTask,
+  correctOccurrenceDatesInHistory,
   correctMisdatedPendingOccurrence,
+  repairPhantomApprovedRecords,
+  sanitizeHistoryApprovedDisplay,
   fillMissingDailyOccurrenceHistory,
   sortRecordsByOccurrence,
   repairMisdatedMissedRecords,
@@ -369,6 +372,7 @@ router.get("/assignee-approval-history", async (req, res) => {
   if (req.query.sync === "true") {
     await syncRecurringTasksForAssignee(assigneeId);
     await repairMisdatedMissedRecords({ assigneeId });
+    await repairPhantomApprovedRecords({ assigneeId });
   }
 
   const q = await buildAssigneeHistoryQuery({
@@ -399,7 +403,7 @@ router.get("/assignee-approval-history", async (req, res) => {
 
   let records = collapseReopenedDuplicates(
     dedupeApprovalRecords(
-      correctMisdatedPendingOccurrence(
+      correctOccurrenceDatesInHistory(
         pruneDuplicatePendingPerTask(mergeAssigneeApprovalRows(stored, livePending))
       )
     )
@@ -414,6 +418,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     from: req.query.from,
     to: req.query.to,
   });
+  records = sanitizeHistoryApprovedDisplay(records);
   records = sanitizeHistoryMissedDisplay(records);
   records = sortRecordsByOccurrence(records);
 
