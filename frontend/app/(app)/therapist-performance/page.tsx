@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
 import { canViewClinicalPerformance, formatRoleLine, isCeo } from "@/lib/roles";
 import { formatCenterName } from "@/lib/utils";
+import { formatAppDate } from "@/lib/date-format";
 import { Activity, ChevronDown, ChevronRight, Pencil, Star, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
@@ -293,7 +294,7 @@ export default function TherapistPerformancePage() {
 
   async function deleteCeoSession(s: SessionItem, therapist: TherapistUser) {
     const ok = window.confirm(
-      `Delete session for "${s.patientName}" on ${s.sessionDate}? This removes it from all reports and cannot be undone.`
+      `Delete session for "${s.patientName}" on ${formatAppDate(s.sessionDate)}? This removes it from all reports and cannot be undone.`
     );
     if (!ok) return;
     setCeoDeletingId(s._id);
@@ -586,7 +587,7 @@ export default function TherapistPerformancePage() {
                                       className="border-t border-zinc-100 bg-white/80 dark:border-zinc-800 dark:bg-zinc-950/40"
                                       onClick={(e) => e.stopPropagation()}
                                     >
-                                      <td className="px-2 py-1.5">{s.sessionDate}</td>
+                                      <td className="px-2 py-1.5">{formatAppDate(s.sessionDate)}</td>
                                       <td className="px-2 py-1.5">{s.patientName}</td>
                                       <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
                                       <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
@@ -711,7 +712,7 @@ export default function TherapistPerformancePage() {
                     ) : null}
                     {(detail?.items || []).map((s) => (
                       <div key={s._id} className="rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
-                        <div className="font-medium">{s.sessionDate} · {s.patientName}</div>
+                        <div className="font-medium">{formatAppDate(s.sessionDate)} · {s.patientName}</div>
                         <div className="text-zinc-500">{s.startedAt || "—"} · {s.durationMinutes || 0} min · Marks {s.supervisorScore || 0}/5</div>
                         {s.remarks?.trim() ? (
                           <div className="mt-1 text-zinc-600 dark:text-zinc-300">
@@ -844,7 +845,7 @@ export default function TherapistPerformancePage() {
                   <div>
                     <div className="font-semibold">{s.therapistId?.name} - {s.patientName}</div>
                     <div className="text-xs text-zinc-500">
-                      {s.sessionDate} · {s.startedAt || "--"} to {s.endedAt || "--"} · {s.durationMinutes || 0} min
+                      {formatAppDate(s.sessionDate)} · {s.startedAt || "--"} to {s.endedAt || "--"} · {s.durationMinutes || 0} min
                     </div>
                     {s.remarks?.trim() ? (
                       <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">

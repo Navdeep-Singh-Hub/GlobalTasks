@@ -3,6 +3,7 @@
 import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/input";
+import { formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { api, ApiError, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { isCeo, isManagement } from "@/lib/roles";
@@ -347,7 +348,7 @@ export function TaskDetailDrawer({
             <InfoCard
               icon={CalendarDays}
               label={task && task.taskType !== "one_time" ? "Next due" : "Due date"}
-              value={task ? new Date(task.dueDate).toLocaleString() : ""}
+              value={task ? formatAppDateTime(task.dueDate) : ""}
               sub={task && task.taskType !== "one_time" ? "advances when completed" : undefined}
             />
             <InfoCard
@@ -368,7 +369,7 @@ export function TaskDetailDrawer({
               value={
                 task?.taskType === "one_time"
                   ? "One-time"
-                  : `${task?.taskType || ""}${task?.recurrence?.forever ? " · forever" : task?.recurrence?.endDate ? ` · until ${new Date(task.recurrence.endDate).toLocaleDateString()}` : ""}`
+                  : `${task?.taskType || ""}${task?.recurrence?.forever ? " · forever" : task?.recurrence?.endDate ? ` · until ${formatAppDate(task.recurrence.endDate)}` : ""}`
               }
               sub={task?.taskType !== "one_time" ? `Week off: ${task?.recurrence?.weekOff || "Sunday"}` : undefined}
             />
@@ -382,9 +383,9 @@ export function TaskDetailDrawer({
               <ul className="mt-2 list-disc space-y-1 pl-5 text-[11.5px] text-zinc-700 dark:text-zinc-200">
                 <li>
                   Cadence is <b>{task.taskType}</b>
-                  {task.recurrence?.forever ? " and runs forever." : task.recurrence?.endDate ? ` until ${new Date(task.recurrence.endDate).toLocaleDateString()}.` : "."}
+                  {task.recurrence?.forever ? " and runs forever." : task.recurrence?.endDate ? ` until ${formatAppDate(task.recurrence.endDate)}.` : "."}
                 </li>
-                <li>Current occurrence is due <b>{new Date(task.dueDate).toLocaleDateString()}</b>.</li>
+                <li>Current occurrence is due <b>{formatAppDate(task.dueDate)}</b>.</li>
                 <li>When marked completed, the due date automatically advances to the next occurrence.</li>
                 {task.taskType === "daily" && (
                   <li>
@@ -504,7 +505,7 @@ export function TaskDetailDrawer({
                 )}
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div className="text-[11px] text-zinc-500">
-                    Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
+                    Created {task.createdAt ? formatAppDateTime(task.createdAt) : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                     {canResubmit ? (
@@ -568,7 +569,7 @@ export function TaskDetailDrawer({
                         <>
                           <strong>Not done — waiting for assigner.</strong> An assignee reported this occurrence as not done
                           {task.notDoneApproval?.dueDate
-                            ? ` (due ${new Date(task.notDoneApproval.dueDate).toLocaleDateString()})`
+                            ? ` (due ${formatAppDate(task.notDoneApproval.dueDate)})`
                             : ""}
                           .
                           {task.taskType !== "one_time" ? " The task has moved to the next due date for the assignee." : ""}
@@ -618,7 +619,7 @@ export function TaskDetailDrawer({
                 ) : null}
                 <div ref={actionsRef} className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
                   <div className="text-[11px] text-zinc-500">
-                    Created {task.createdAt ? new Date(task.createdAt).toLocaleString() : "—"}
+                    Created {task.createdAt ? formatAppDateTime(task.createdAt) : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
                     {task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone ? (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
+import { formatAppDate } from "@/lib/date-format";
 
 type Member = {
   user: { _id: string; name: string };
@@ -72,11 +73,7 @@ export function TeamPending({ members }: { members: Member[] }) {
 
   function formatDue(iso: string | null) {
     if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-    } catch {
-      return "—";
-    }
+    return formatAppDate(iso);
   }
 
   return (

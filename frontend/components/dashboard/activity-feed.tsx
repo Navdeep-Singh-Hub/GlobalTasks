@@ -1,5 +1,7 @@
 "use client";
 
+import { formatAppDateTime } from "@/lib/date-format";
+
 type Item = {
   _id: string;
   actorName?: string;
@@ -42,15 +44,7 @@ export function ActivityFeed({ items }: { items: Item[] }) {
                     {it.taskType}
                   </span>
                 )}
-                <span>
-                  {new Date(it.createdAt).toLocaleString([], {
-                    month: "short",
-                    day: "numeric",
-                    hour: "numeric",
-                    minute: "2-digit",
-                    hour12: true,
-                  })}
-                </span>
+                <span>{formatAppDateTime(it.createdAt)}</span>
               </div>
             </div>
           </div>

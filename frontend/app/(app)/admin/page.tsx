@@ -7,6 +7,7 @@ import { Badge, roleTone } from "@/components/ui/badge";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
 import { formatCenterName } from "@/lib/utils";
+import { formatAppDate } from "@/lib/date-format";
 import {
   EXECUTOR_KIND_LABELS,
   EXECUTOR_KIND_OPTIONS,
@@ -302,7 +303,7 @@ export default function AdminPanelPage() {
                     <td className="p-3 text-zinc-700 dark:text-zinc-200">
                       {m.lastAccessAt ? (
                         <div>
-                          <div>{new Date(m.lastAccessAt).toLocaleDateString()}</div>
+                          <div>{formatAppDate(m.lastAccessAt)}</div>
                           <div className="text-[11px] text-zinc-500">{new Date(m.lastAccessAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
                         </div>
                       ) : (

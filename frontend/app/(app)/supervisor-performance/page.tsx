@@ -8,6 +8,7 @@ import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-re
 import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
 import { normalizeLegacySupervisorSheetEntries } from "@/lib/supervisor-sheet-remarks";
 import { cn, formatCenterName } from "@/lib/utils";
+import { formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { canViewClinicalPerformance, formatRoleLine } from "@/lib/roles";
 import { Activity, ChevronDown, ChevronRight } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -400,7 +401,7 @@ export default function SupervisorPerformancePage() {
                       <td className="px-2 py-2">{r.yesCount}</td>
                       <td className="px-2 py-2">{r.noCount}</td>
                       <td className="px-2 py-2">{r.remarksCount}</td>
-                      <td className="px-2 py-2">{r.lastUpdatedAt ? new Date(r.lastUpdatedAt).toLocaleString() : "—"}</td>
+                      <td className="px-2 py-2">{r.lastUpdatedAt ? formatAppDateTime(r.lastUpdatedAt) : "—"}</td>
                     </tr>
                   ))
                 : coordRows.map((r) => (
@@ -413,7 +414,7 @@ export default function SupervisorPerformancePage() {
                       <td className="px-2 py-2">{r.yesCount}</td>
                       <td className="px-2 py-2">{r.noCount}</td>
                       <td className="px-2 py-2">{r.remarksCount}</td>
-                      <td className="px-2 py-2">{r.lastUpdatedAt ? new Date(r.lastUpdatedAt).toLocaleString() : "—"}</td>
+                      <td className="px-2 py-2">{r.lastUpdatedAt ? formatAppDateTime(r.lastUpdatedAt) : "—"}</td>
                     </tr>
                   ))}
               {!rows.length && (
@@ -439,7 +440,7 @@ export default function SupervisorPerformancePage() {
                     <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Remarks: {r.remarksCount}</div>
                   </div>
                   <div className="mt-2 text-xs text-zinc-500">
-                    Last update: {r.lastUpdatedAt ? new Date(r.lastUpdatedAt).toLocaleString() : "—"}
+                    Last update: {r.lastUpdatedAt ? formatAppDateTime(r.lastUpdatedAt) : "—"}
                   </div>
                 </div>
               ))
@@ -454,7 +455,7 @@ export default function SupervisorPerformancePage() {
                     <div className="rounded-md bg-zinc-50 px-2 py-1 dark:bg-zinc-900">Remarks: {r.remarksCount}</div>
                   </div>
                   <div className="mt-2 text-xs text-zinc-500">
-                    Last update: {r.lastUpdatedAt ? new Date(r.lastUpdatedAt).toLocaleString() : "—"}
+                    Last update: {r.lastUpdatedAt ? formatAppDateTime(r.lastUpdatedAt) : "—"}
                   </div>
                 </div>
               ))}
@@ -520,7 +521,7 @@ export default function SupervisorPerformancePage() {
                                   {detail.sheets.map((sheet) => (
                                     <div key={sheet._id} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
                                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-                                        <span>{sheet.sheetDate}</span>
+                                        <span>{formatAppDate(sheet.sheetDate)}</span>
                                         {sheet.instanceKey && sheet.instanceKey !== "default" && (
                                           <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                                             {String(sheet.label || "").trim() || "Extra sheet"}
@@ -596,7 +597,7 @@ export default function SupervisorPerformancePage() {
                                 <div className="space-y-3">
                                   {detail.sheets.map((sheet) => (
                                     <div key={sheet._id} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
-                                      <div className="mb-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{sheet.sheetDate}</div>
+                                      <div className="mb-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{formatAppDate(sheet.sheetDate)}</div>
                                       <div className="overflow-x-auto">
                                         <table className="w-full text-xs">
                                           <thead className="text-left uppercase text-zinc-500">
@@ -668,7 +669,7 @@ export default function SupervisorPerformancePage() {
                           detail.sheets.map((sheet) => (
                             <div key={sheet._id} className="rounded-md border border-zinc-200/80 p-2 dark:border-zinc-800">
                               <div className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
-                                {sheet.sheetDate}
+                                {formatAppDate(sheet.sheetDate)}
                                 {sheet.instanceKey && sheet.instanceKey !== "default" ? ` · ${String(sheet.label || "").trim() || "Extra sheet"}` : ""}
                               </div>
                               <div className="space-y-1">
@@ -723,7 +724,7 @@ export default function SupervisorPerformancePage() {
                         ) : detail?.loaded && detail.sheets.length ? (
                           detail.sheets.map((sheet) => (
                             <div key={sheet._id} className="rounded-md border border-zinc-200/80 p-2 dark:border-zinc-800">
-                              <div className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{sheet.sheetDate}</div>
+                              <div className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300">{formatAppDate(sheet.sheetDate)}</div>
                               <div className="space-y-1">
                                 {sheet.entries.map((e, idx) => (
                                   <div key={`${sheet._id}-${e.taskKey}-${idx}`} className="rounded border border-zinc-100 bg-zinc-50/90 px-2 py-2 text-xs dark:border-zinc-800 dark:bg-zinc-900">

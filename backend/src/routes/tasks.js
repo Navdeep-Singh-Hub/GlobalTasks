@@ -26,6 +26,7 @@ import { getAssignableAssigneeIds } from "../services/hierarchy.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
+import { formatAppDate } from "../utils/dateFormat.js";
 import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
 import {
   recordTaskSubmission,
@@ -1098,7 +1099,7 @@ router.post("/:id/not-done", async (req, res) => {
       meta: { dueDate: occurrenceDue, remarks },
     });
 
-    const dueLabel = occurrenceDue ? new Date(occurrenceDue).toLocaleDateString() : "this occurrence";
+    const dueLabel = occurrenceDue ? formatAppDate(occurrenceDue) : "this occurrence";
     const snippet = remarks.slice(0, 240) + (remarks.length > 240 ? "…" : "");
     const approverId = taskAssignerId(task);
     await notifyMany([approverId || task.createdBy], {
@@ -1113,7 +1114,7 @@ router.post("/:id/not-done", async (req, res) => {
         type: "task_status",
         title: "Occurrence marked not done",
         message: advanced
-          ? `${task.title} — not done for ${dueLabel}. Next due ${new Date(task.dueDate).toLocaleDateString()}.`
+          ? `${task.title} — not done for ${dueLabel}. Next due ${formatAppDate(task.dueDate)}.`
           : `${task.title} — marked not done and sent to your assigner for review.`,
         link: "/pending-recurring",
       });

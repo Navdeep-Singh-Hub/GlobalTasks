@@ -1,6 +1,7 @@
 "use client";
 
 import { api } from "@/lib/api";
+import { formatAppDate } from "@/lib/date-format";
 import { useEffect, useState } from "react";
 
 type MissedRecord = {
@@ -11,10 +12,6 @@ type MissedRecord = {
   submissionRemarks?: string;
 };
 
-function fmt(dt: string) {
-  const d = new Date(dt);
-  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
-}
 
 export function MissedOccurrencesPanel() {
   const [records, setRecords] = useState<MissedRecord[]>([]);
@@ -41,7 +38,7 @@ export function MissedOccurrencesPanel() {
           >
             <div className="font-semibold text-zinc-800 dark:text-zinc-100">{r.taskTitle}</div>
             <div className="mt-0.5 text-zinc-500">
-              Due {fmt(r.occurrenceDueDate)} · {r.taskType}
+              Due {formatAppDate(r.occurrenceDueDate)} · {r.taskType}
             </div>
             {r.submissionRemarks ? (
               <div className="mt-1 text-violet-800 dark:text-violet-200">{r.submissionRemarks}</div>

@@ -5,6 +5,7 @@ import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
 import { formatRoleLine, isManagement } from "@/lib/roles";
 import { api } from "@/lib/api";
+import { formatAppDateTime } from "@/lib/date-format";
 import { Bell, LogOut, Menu, UserPlus } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
@@ -181,7 +182,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                           <div className="text-xs font-semibold">{n.title}</div>
                           <div className="text-[11px] text-zinc-500">{n.message}</div>
                           <div className="mt-1 text-[10px] text-zinc-400">
-                            {new Date(n.createdAt).toLocaleString()}
+                            {formatAppDateTime(n.createdAt)}
                           </div>
                         </div>
                       </div>

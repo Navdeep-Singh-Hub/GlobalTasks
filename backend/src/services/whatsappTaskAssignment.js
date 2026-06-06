@@ -13,6 +13,8 @@ import {
   isTemplateParamError,
 } from "./whatsappService.js";
 
+import { formatAppDateTime } from "../utils/dateFormat.js";
+
 const TZ = process.env.WHATSAPP_DIGEST_TIMEZONE || "Asia/Kolkata";
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TEMPLATE_DETAILS_CHARS = 900;
@@ -35,17 +37,7 @@ function formatLabel(value) {
 }
 
 function formatDueDate(d) {
-  if (!d) return "—";
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: TZ,
-    weekday: "short",
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(d));
+  return formatAppDateTime(d);
 }
 
 function recurrenceSummary(task) {

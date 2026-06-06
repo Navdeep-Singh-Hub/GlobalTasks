@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Users } from "lucide-react";
 import { ROLE_LABELS, USER_ROLES, type Role } from "@/lib/roles";
 import { ApiError, api } from "@/lib/api";
+import { formatAppDate } from "@/lib/date-format";
 
 type Member = {
   user: { _id: string; name: string; email: string; role: string; title?: string };
@@ -66,11 +67,7 @@ export function TeamFocus({ members }: { members: Member[] }) {
 
   function formatDue(iso: string | null) {
     if (!iso) return "—";
-    try {
-      return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-    } catch {
-      return "—";
-    }
+    return formatAppDate(iso);
   }
 
   return (

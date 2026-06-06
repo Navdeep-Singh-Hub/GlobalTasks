@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
 import { api, ApiError } from "@/lib/api";
+import { formatAppDate } from "@/lib/date-format";
 import { normalizeLegacySupervisorSheetEntries } from "@/lib/supervisor-sheet-remarks";
 import { isCeo } from "@/lib/roles";
 import { ClipboardCheck, Eye, Pencil, Plus, Trash2 } from "lucide-react";
@@ -551,7 +552,7 @@ export function PendingRecurringDailySessions() {
 
   const deleteUploaded = async (s: UploadedSession) => {
     if (!canDeleteUploaded(s)) return;
-    const ok = window.confirm(`Delete session for "${s.patientName}" on ${s.sessionDate}? This cannot be undone.`);
+    const ok = window.confirm(`Delete session for "${s.patientName}" on ${formatAppDate(s.sessionDate)}? This cannot be undone.`);
     if (!ok) return;
     setDeletingId(s._id);
     setMessage(null);
@@ -1305,7 +1306,7 @@ export function PendingRecurringDailySessions() {
                             className="h-8 min-w-[148px] px-2.5 text-xs"
                           />
                         ) : (
-                          s.sessionDate
+                          formatAppDate(s.sessionDate)
                         )}
                       </td>
                       <td className="px-2 py-1.5">
@@ -1474,7 +1475,7 @@ export function PendingRecurringDailySessions() {
                     <>
                       <div className="font-semibold text-zinc-800 dark:text-zinc-100">{s.patientName}</div>
                       <div className="text-xs text-zinc-500">
-                        {s.sessionDate} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
+                        {formatAppDate(s.sessionDate)} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
                       </div>
                       {s.remarks?.trim() ? (
                         <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">

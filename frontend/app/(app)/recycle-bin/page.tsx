@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { formatAppDateTime } from "@/lib/date-format";
 import { Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -41,7 +42,7 @@ export default function RecycleBinPage() {
             <div key={t._id} className="flex flex-col gap-3 rounded-xl border border-zinc-100 p-3 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-zinc-800">
               <div className="min-w-0">
                 <div className="font-semibold">{t.title}</div>
-                <div className="text-xs text-zinc-500">Deleted {t.deletedAt ? new Date(t.deletedAt).toLocaleString() : ""}</div>
+                <div className="text-xs text-zinc-500">Deleted {t.deletedAt ? formatAppDateTime(t.deletedAt) : ""}</div>
               </div>
               <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={async () => { await api(`/tasks/${t._id}/restore`, { method: "POST" }); load(); }}>Restore</Button>

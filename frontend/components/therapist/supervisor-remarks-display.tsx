@@ -5,6 +5,7 @@ import {
   parseStructuredSupervisorRemarks,
   structuredSupervisorRemarksIsEmpty,
 } from "@/lib/supervisor-sheet-remarks";
+import { formatAppDate } from "@/lib/date-format";
 
 /** Read-only remarks for supervisor sheet rows (plain text or structured JSON saved from daily sheet). */
 export function SupervisorRemarksDisplay({ remarks }: { remarks?: string }) {
@@ -47,7 +48,7 @@ export function SupervisorRemarksDisplay({ remarks }: { remarks?: string }) {
         {(df || dt) && (
           <div className="text-zinc-600 dark:text-zinc-300">
             <span className="font-semibold text-zinc-500">Period: </span>
-            {df || "—"} → {dt || "—"}
+            {df ? formatAppDate(df) : "—"} → {dt ? formatAppDate(dt) : "—"}
           </div>
         )}
         {therapyRows.length > 0 ? (

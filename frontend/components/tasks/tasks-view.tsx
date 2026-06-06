@@ -10,6 +10,7 @@ import { isCeo, isManagement } from "@/lib/roles";
 import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { calendarDayKeyInTz, formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { TaskDetailDrawer } from "./task-detail-drawer";
 import { TaskEditModal } from "./task-edit-modal";
 import { RejectTaskModal } from "./reject-task-modal";
@@ -70,27 +71,6 @@ function UserNameEmail({ name, email }: { name?: string; email?: string }) {
       {email ? <span className="block text-[10px] font-normal text-zinc-500">{email}</span> : null}
     </span>
   );
-}
-
-const APP_TIMEZONE = "Asia/Kolkata";
-
-function calendarDayKeyInTz(iso: string, now = new Date()) {
-  const d = iso ? new Date(iso) : now;
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: APP_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
-function formatDueDateInTz(iso: string) {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: APP_TIMEZONE,
-    day: "numeric",
-    month: "numeric",
-    year: "numeric",
-  }).format(new Date(iso));
 }
 
 const CADENCE_LABEL: Record<string, string> = {
@@ -355,7 +335,7 @@ export function TasksView({
   const displayedId = (i: number) => 1200 + i;
 
   const taskListDueLabel = (t: Task) =>
-    formatDueDateInTz(t.pendingOccurrenceDueDate || t.dueDate);
+    formatAppDate(t.pendingOccurrenceDueDate || t.dueDate);
 
   const taskStatusLabel = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return "Approved";
@@ -693,12 +673,12 @@ export function TasksView({
                     <span className="whitespace-pre-wrap">{t.notDoneApproval?.remarks || t.submissionRemarks}</span>
                     {(t as Task & { pendingSubmittedAt?: string }).pendingSubmittedAt ? (
                       <div className="mt-1 text-[10px] text-zinc-600 dark:text-zinc-400">
-                        Submitted {new Date((t as Task & { pendingSubmittedAt?: string }).pendingSubmittedAt!).toLocaleString()}
+                        Submitted {formatAppDateTime((t as Task & { pendingSubmittedAt?: string }).pendingSubmittedAt)}
                       </div>
                     ) : null}
                     {t.notDoneApproval?.dueDate ? (
                       <div className="mt-1 text-[10px] text-zinc-600 dark:text-zinc-400">
-                        Occurrence due {new Date(t.notDoneApproval.dueDate).toLocaleDateString()}
+                        Occurrence due {formatAppDate(t.notDoneApproval.dueDate)}
                       </div>
                     ) : null}
                   </div>
@@ -730,9 +710,9 @@ export function TasksView({
                 {masterAdminActions && t.masterDisplayStatus && t.masterLastClosedAt ? (
                   <div className="mt-2 text-[11px] text-zinc-500">
                     Last {t.masterDisplayStatus === "approved" ? "approved" : "rejected"}{" "}
-                    {new Date(t.masterLastClosedAt).toLocaleString()}
+                    {formatAppDateTime(t.masterLastClosedAt)}
                     {t.masterLastOccurrenceDue
-                      ? ` · occurrence ${new Date(t.masterLastOccurrenceDue).toLocaleDateString()}`
+                      ? ` · occurrence ${formatAppDate(t.masterLastOccurrenceDue)}`
                       : ""}
                     {t.masterHistoryCount && t.masterHistoryCount > 1 ? ` · ${t.masterHistoryCount} in history` : ""}
                   </div>
