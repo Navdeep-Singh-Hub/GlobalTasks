@@ -19,7 +19,13 @@ const TZ = process.env.WHATSAPP_DIGEST_TIMEZONE || "Asia/Kolkata";
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TEMPLATE_DETAILS_CHARS = 900;
 const ENABLED = String(process.env.WHATSAPP_TASK_ASSIGN_ENABLED ?? "true").toLowerCase() === "true";
-const TASK_TEMPLATE = String(process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "").trim();
+const TASK_TEMPLATE = String(
+  process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "globaltasks_task_assigned_v1"
+).trim();
+/** Same approved template as 09:45/10:00 morning digest — {{1}} name, {{2}} body. */
+const MORNING_TEMPLATE = String(
+  process.env.WHATSAPP_TEMPLATE_MORNING || "globaltasks_morning_digest_v1"
+).trim();
 const TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en").trim();
 const TEMPLATE_PARAM_MAX = 350;
 
@@ -118,38 +124,21 @@ export function buildTaskAssignedWhatsAppMessage({ task, assigneeName, assignedB
   return text;
 }
 
-function buildTaskDetailLines(task, assignedByName) {
+/** Core fields for WhatsApp: title, description, type, due (used in morning-style {{2}}). */
+function buildCoreTaskWhatsAppSummary(task, assignedByName) {
   const lines = [];
-  lines.push(`From ${assignedByName || "Admin"}`);
-  lines.push(`Title: ${task.title}`);
+  if (assignedByName) lines.push(`Assigned by: ${assignedByName}`);
+  lines.push(`Task: ${task.title}`);
   const desc = String(task.description || "").trim();
-  if (desc) lines.push(`Description: ${desc}`);
+  lines.push(`Description: ${desc || "—"}`);
   lines.push(`Type: ${formatLabel(task.taskType)}`);
-  lines.push(`Priority: ${formatLabel(task.priority)}`);
   lines.push(`Due: ${formatDueDate(task.dueDate)}`);
-  const dept = task.departmentId?.name || task.departmentId?.code;
-  const center = task.centerId?.name || task.centerId?.code;
-  const project = task.project?.name;
-  if (dept) lines.push(`Department: ${dept}`);
-  if (center) lines.push(`Center: ${center}`);
-  if (project) lines.push(`Project: ${project}`);
-  if (task.functionTag) lines.push(`Function: ${task.functionTag}`);
-  if (Array.isArray(task.tags) && task.tags.length) lines.push(`Tags: ${task.tags.join(", ")}`);
-  const recur = recurrenceSummary(task);
-  if (recur) lines.push(`Recurrence: ${recur}`);
-  if (task.requiresApproval) lines.push("Approval required: Yes");
-  const required = Array.isArray(task.requiredInputsSchema?.required) ? task.requiredInputsSchema.required : [];
-  if (required.length) lines.push(`Required inputs: ${required.join(", ")}`);
-  const attCount = Array.isArray(task.attachments) ? task.attachments.length : 0;
-  if (attCount) lines.push(`Attachments: ${attCount} file(s) - open app`);
-  if (task.voiceNoteUrl) lines.push("Voice note: yes - open app");
   lines.push(`Open: ${appBaseUrl()}/pending-single`);
-  return lines;
+  return sanitizeTemplateParam(lines.join("\n"), MAX_TEMPLATE_DETAILS_CHARS);
 }
 
-/** Legacy 2-variable template: all details in {{2}} with line breaks. */
-function buildMultilineTaskSummary(task, assignedByName) {
-  return sanitizeTemplateParam(buildTaskDetailLines(task, assignedByName).join("\n"), MAX_TEMPLATE_DETAILS_CHARS);
+function buildMorningStyleTemplateParams({ task, assigneeName, assignedByName }) {
+  return [assigneeName || "there", buildCoreTaskWhatsAppSummary(task, assignedByName)];
 }
 
 /**
@@ -177,6 +166,9 @@ function buildSplitTaskTemplateParams({ task, assigneeName, assignedByName }) {
 async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
   const phone = normalizePhone(user.phone);
   if (phone.length < 10) {
+    console.warn(
+      `[whatsapp] task assign skipped user=${user._id} name=${user.name || ""} reason=invalid_phone stored=${user.phone || "(empty)"}`
+    );
     return { userId: user._id, skipped: true, reason: "invalid_phone", phone: user.phone };
   }
 
@@ -190,21 +182,24 @@ async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
     assigneeName: user.name,
     assignedByName,
   });
-  const legacyParams = [
-    user.name || "there",
-    buildMultilineTaskSummary(task, assignedByName),
-  ];
+  const morningParams = buildMorningStyleTemplateParams({
+    task,
+    assigneeName: user.name,
+    assignedByName,
+  });
 
   if (!isWhatsAppConfigured()) {
     console.log(`[whatsapp:stub] task assign to=${phone} title=${task.title}`);
     return { userId: user._id, sent: true, stub: true };
   }
 
-  /** Do not use morning digest for tasks — it only supports one-line {{2}} and breaks formatting. */
+  /** Morning digest template first (already approved in Meta); then dedicated task template. */
   const templateAttempts = [];
-  if (TASK_TEMPLATE) {
+  if (MORNING_TEMPLATE) {
+    templateAttempts.push({ name: MORNING_TEMPLATE, params: morningParams, label: "morning_style" });
+  }
+  if (TASK_TEMPLATE && TASK_TEMPLATE !== MORNING_TEMPLATE) {
     templateAttempts.push({ name: TASK_TEMPLATE, params: splitParams, label: "task_split" });
-    templateAttempts.push({ name: TASK_TEMPLATE, params: legacyParams, label: "task_legacy" });
   }
 
   for (const attempt of templateAttempts) {
@@ -292,7 +287,7 @@ export async function notifyTaskAssignedWhatsApp({ taskId, assigneeIds, assigned
 
   const assignedByName = assigner?.name || task.createdBy?.name || "";
   console.log(
-    `[whatsapp] task assign sending task=${taskId} title="${task.title}" assignees=${assignees.length} configured=${isWhatsAppConfigured()} template=${TASK_TEMPLATE || "none"}`
+    `[whatsapp] task assign sending task=${taskId} title="${task.title}" assignees=${assignees.length} configured=${isWhatsAppConfigured()} morningTemplate=${MORNING_TEMPLATE || "none"} taskTemplate=${TASK_TEMPLATE || "none"}`
   );
 
   const results = [];

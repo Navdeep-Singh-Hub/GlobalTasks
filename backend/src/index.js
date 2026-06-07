@@ -158,7 +158,14 @@ connectDatabase(uri)
     const digestEnabled = String(process.env.WHATSAPP_DIGEST_SCHEDULER_ENABLED || "true").toLowerCase() === "true";
     if (digestEnabled) startWhatsAppTaskDigestScheduler();
     const waMode = isWhatsAppConfigured() ? "live" : "stub (set WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN)";
-    console.log(`[whatsapp] task assign on create/patch: enabled, mode=${waMode}`);
+    const waTemplate =
+      process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "globaltasks_task_assigned_v1 (default)";
+    console.log(`[whatsapp] task assign on create/patch: enabled, mode=${waMode}, template=${waTemplate}`);
+    if (isWhatsAppConfigured() && !process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED) {
+      console.warn(
+        "[whatsapp] WHATSAPP_TEMPLATE_TASK_ASSIGNED not set — using default globaltasks_task_assigned_v1. Approve it in Meta or set .env."
+      );
+    }
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   })
   .catch((e) => {
