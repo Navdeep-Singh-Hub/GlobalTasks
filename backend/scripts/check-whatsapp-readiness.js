@@ -1,12 +1,18 @@
 /**
- * Check WhatsApp task-assign readiness. Run: node scripts/check-whatsapp-readiness.js
+ * Check WhatsApp task-assign readiness. Run from backend/: node scripts/check-whatsapp-readiness.js
  */
 import dotenv from "dotenv";
-import mongoose from "mongoose";
-import { User } from "../src/models/User.js";
-import { isWhatsAppConfigured, normalizePhone } from "../src/services/whatsappService.js";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
-dotenv.config();
+const __dirname = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: join(__dirname, "../.env") });
+
+const { default: mongoose } = await import("mongoose");
+const { User } = await import("../src/models/User.js");
+const { isWhatsAppConfigured, whatsAppConfigStatus, normalizePhone } = await import(
+  "../src/services/whatsappService.js"
+);
 
 async function main() {
   const uri = process.env.MONGODB_URI || process.env.MONGO_URI;
@@ -28,13 +34,24 @@ async function main() {
     else okPhone.push(u);
   }
 
+  const cfg = whatsAppConfigStatus();
+
   console.log("\n=== WhatsApp configuration ===");
   console.log("API configured:", isWhatsAppConfigured() ? "yes (live)" : "no (stub only)");
+  console.log("WHATSAPP_PHONE_NUMBER_ID:", cfg.phoneNumberIdSet ? cfg.phoneNumberId : "(NOT SET)");
+  console.log(
+    "WHATSAPP_ACCESS_TOKEN:",
+    cfg.accessTokenSet ? `set (${cfg.accessTokenLength} chars)` : "(NOT SET)"
+  );
   console.log("WHATSAPP_TASK_ASSIGN_ENABLED:", process.env.WHATSAPP_TASK_ASSIGN_ENABLED ?? "true (default)");
   console.log(
-    "WHATSAPP_TEMPLATE_TASK_ASSIGNED:",
-    process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "(NOT SET — plain text may fail outside 24h window)"
+    "WHATSAPP_TEMPLATE_MORNING (task assign + 09:45 digest):",
+    process.env.WHATSAPP_TEMPLATE_MORNING || "globaltasks_morning_digest_v1 (default)"
   );
+
+  if (!cfg.configured) {
+    console.log("\nFix: set WHATSAPP_PHONE_NUMBER_ID and WHATSAPP_ACCESS_TOKEN in backend/.env, then restart the API.");
+  }
 
   console.log("\n=== Active users & phone ===");
   console.log(`Total active: ${users.length}`);
@@ -48,6 +65,13 @@ async function main() {
       console.log(`  - ${u.name} (${u.email}) [${u.role}]`);
     }
     if (noPhone.length > 15) console.log(`  ... and ${noPhone.length - 15} more`);
+  }
+
+  if (badPhone.length) {
+    console.log("\nUsers with invalid phone format:");
+    for (const u of badPhone.slice(0, 10)) {
+      console.log(`  - ${u.name} (${u.email}) stored="${u.phone}" normalized="${u.normalized}"`);
+    }
   }
 
   await mongoose.disconnect();

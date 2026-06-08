@@ -244,6 +244,56 @@ export async function enrichApprovalInboxTasks(tasks) {
   });
 }
 
+/** Read-only For Approval list: one batched pending lookup, no DB writes on list load. */
+export async function filterAndEnrichApprovalInboxTasks(taskDocs) {
+  if (!taskDocs.length) return [];
+
+  const todayKey = calendarDayKeyInTz(new Date());
+  const pendingRows = await TaskApprovalRecord.find({
+    taskId: { $in: taskDocs.map((t) => t._id || t.id) },
+    status: "pending",
+    kind: "completion",
+  })
+    .sort({ submittedAt: -1 })
+    .lean();
+
+  const pendingByTask = new Map();
+  for (const r of pendingRows) {
+    const tid = String(r.taskId);
+    if (!pendingByTask.has(tid)) pendingByTask.set(tid, r);
+  }
+
+  const kept = [];
+  for (const raw of taskDocs) {
+    const task = raw.toObject ? raw.toObject() : { ...raw };
+
+    if (task.notDoneApproval?.status === "pending") {
+      task.submissionRemarks = task.notDoneApproval?.remarks || "";
+      task.pendingOccurrenceDueDate = task.notDoneApproval?.dueDate || task.dueDate;
+      kept.push(task);
+      continue;
+    }
+
+    if (task.status !== "awaiting_approval" || task.approvalStatus !== "pending") continue;
+
+    const pending = pendingByTask.get(String(task._id));
+    if (!pending) continue;
+
+    const effectiveDue = effectivePendingOccurrenceDue(pending, task);
+    const occKey = calendarDayKeyInTz(effectiveDue);
+    if (task.taskType === "daily" && (occKey < todayKey || occKey > todayKey)) continue;
+
+    task.pendingOccurrenceDueDate = effectiveDue;
+    task.dueDate = effectiveDue;
+    task.submissionRemarks = pending.submissionRemarks;
+    task.pendingSubmittedAt = pending.submittedAt;
+    task.submissionSource = pending.submissionSource || "assignee";
+    kept.push(task);
+  }
+
+  return kept;
+}
+
 export async function resolveOccurrenceDueForApproval(task) {
   const pending = await TaskApprovalRecord.findOne({
     taskId: task._id,

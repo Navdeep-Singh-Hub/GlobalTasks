@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/input";
 import { formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { api, ApiError, assetUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { useCelebration } from "@/contexts/celebration-context";
 import { isCeo, isManagement } from "@/lib/roles";
 import {
   CalendarDays,
@@ -88,6 +89,7 @@ export function TaskDetailDrawer({
   onSendBackForApproval?: (taskId: string, occurrenceDueDate?: string) => void | Promise<void>;
 }) {
   const { user: me } = useAuth();
+  const { celebrate } = useCelebration();
   const myId = me?._id ? String(me._id) : "";
   const isCeoUser = isCeo(me?.role);
 
@@ -199,6 +201,7 @@ export function TaskDetailDrawer({
         method: "POST",
         body: JSON.stringify({ submissionRemarks: text }),
       });
+      celebrate("not_done");
       onUpdated?.();
       load();
       setSubmissionRemarksDraft("");
@@ -239,6 +242,7 @@ export function TaskDetailDrawer({
         method: "PATCH",
         body: JSON.stringify({ status: "completed", submissionRemarks: text }),
       });
+      celebrate(isCeoUser ? "complete" : "submit");
       onUpdated?.();
       load();
       setSubmissionRemarksDraft("");
@@ -295,9 +299,10 @@ export function TaskDetailDrawer({
         onClick={onClose}
       />
       <aside
-        className="ml-auto flex h-[100dvh] max-h-[100dvh] w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl animate-pop-in dark:bg-zinc-950"
+        className="ml-auto flex h-[100dvh] max-h-[100dvh] w-full max-w-[560px] flex-col overflow-hidden border-l border-white/20 bg-white/95 shadow-elevated backdrop-blur-xl animate-slide-in-right dark:border-zinc-800 dark:bg-zinc-950/95"
       >
-        <div className="flex items-start justify-between gap-3 border-b border-zinc-100 p-5 dark:border-zinc-800">
+        <div className="relative flex items-start justify-between gap-3 border-b border-zinc-100/80 bg-gradient-to-r from-brand-50/50 to-transparent p-5 dark:border-zinc-800 dark:from-brand-950/30">
+          <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-brand-gradient-soft blur-2xl" aria-hidden />
           <div className="min-w-0 flex-1">
             <div className="text-[10.5px] font-semibold uppercase tracking-[0.1em] text-zinc-400">Task detail</div>
             <div className="mt-1 truncate text-lg font-bold">{task?.title || (loading ? "Loading…" : "—")}</div>
@@ -636,6 +641,7 @@ export function TaskDetailDrawer({
                             className="w-full sm:w-auto"
                             onClick={async () => {
                               await api(`/tasks/${task._id}/approve`, { method: "POST" });
+                              celebrate("approve");
                               onUpdated?.();
                               load();
                             }}

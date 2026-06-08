@@ -1,6 +1,7 @@
 "use client";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { MobileNav } from "@/components/layout/mobile-nav";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { useAuth } from "@/contexts/auth-context";
 import { formatRoleLine, isManagement } from "@/lib/roles";
@@ -71,14 +72,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "" : "";
 
   return (
-    <div className="flex min-h-[100dvh] overflow-x-clip bg-surface-muted dark:bg-[#0b1220]">
+    <div className="app-mesh flex min-h-[100dvh] overflow-x-clip">
       <AppSidebar variant="desktop" />
       <AppSidebar variant="mobile" mobileOpen={navOpen} onCloseMobile={() => setNavOpen(false)} />
-      <main className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="safe-x sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-zinc-200 bg-white/80 py-2 pl-2 pr-3 backdrop-blur sm:gap-3 sm:px-5 dark:border-zinc-800 dark:bg-zinc-950/75">
+      <main className="relative z-[1] flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="safe-x glass-panel sticky top-0 z-30 flex min-h-16 items-center gap-2 border-b border-white/40 py-2 pl-2 pr-3 sm:gap-3 sm:px-5 dark:border-zinc-800/60">
           <button
             type="button"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-700 hover:border-brand-200 hover:text-brand-600 lg:hidden dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-zinc-200/80 bg-white/80 text-zinc-700 shadow-sm transition-all hover:border-brand-300 hover:text-brand-600 hover:shadow-glow lg:hidden dark:border-zinc-700 dark:bg-zinc-900/80 dark:text-zinc-200"
             aria-label="Open navigation"
             onClick={() => setNavOpen(true)}
           >
@@ -148,7 +149,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
 
             {open && (
-              <div className="absolute right-0 top-12 z-40 w-[min(calc(100vw-2rem),360px)] max-w-[360px] animate-pop-in rounded-2xl border border-zinc-200 bg-white p-0 shadow-2xl dark:border-zinc-800 dark:bg-zinc-950">
+              <div className="absolute right-0 top-12 z-40 w-[min(calc(100vw-2rem),360px)] max-w-[360px] animate-pop-in overflow-hidden rounded-2xl border border-white/30 bg-white/95 shadow-elevated backdrop-blur-xl dark:border-zinc-800 dark:bg-zinc-950/95">
                 <div className="flex items-center justify-between border-b border-zinc-100 p-4 dark:border-zinc-800">
                   <div>
                     <div className="text-sm font-semibold">Notifications</div>
@@ -194,10 +195,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <div className="safe-x safe-b min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-auto px-4 py-5 sm:px-5 sm:py-6 lg:px-8 [-webkit-overflow-scrolling:touch]">
+        <div className="safe-x min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-y-auto px-4 py-5 pb-24 sm:px-5 sm:py-6 lg:px-8 lg:pb-6 [-webkit-overflow-scrolling:touch]">
           <div className="mx-auto w-full max-w-[1400px] animate-fade-in">{children}</div>
         </div>
       </main>
+      <MobileNav />
     </div>
   );
 }

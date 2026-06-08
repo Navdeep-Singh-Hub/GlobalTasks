@@ -1,6 +1,8 @@
 "use client";
 
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import dynamic from "next/dynamic";
+import { motion } from "framer-motion";
 
 type Point = { label: string; planned: number; completed: number };
 
@@ -40,32 +42,38 @@ const AreaChartBlock = dynamic(
 );
 
 export function DeliveryCurve({ data, planned, completed }: { data: Point[]; planned: number; completed: number }) {
+  const pct = planned > 0 ? Math.round((completed / planned) * 100) : 0;
+
   return (
-    <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            Delivery curve
-          </div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Planned vs completed</h3>
-          <p className="mt-1 text-xs text-zinc-500">Six-month momentum view for the selected period.</p>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-2 text-center dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Completed</div>
-            <div className="mt-0.5 text-lg font-bold text-emerald-600">{completed}</div>
-          </div>
-          <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-2 text-center dark:border-zinc-800 dark:bg-zinc-900">
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Planned</div>
-            <div className="mt-0.5 text-lg font-bold text-brand-600">{planned}</div>
-          </div>
+    <SurfacePanel chip="Delivery curve" title="Planned vs completed" variant="elevated">
+      <p className="-mt-2 mb-4 text-xs text-zinc-500">Six-month momentum view for the selected period.</p>
+
+      <div className="mb-5 flex flex-wrap items-center gap-3">
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="rounded-xl border border-emerald-200/60 bg-emerald-50/80 px-4 py-2 text-center dark:border-emerald-900/40 dark:bg-emerald-950/30"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">Completed</div>
+          <div className="mt-0.5 text-lg font-bold text-emerald-600">{completed}</div>
+        </motion.div>
+        <motion.div
+          initial={{ scale: 0.9, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.05 }}
+          className="rounded-xl border border-brand-200/60 bg-brand-50/80 px-4 py-2 text-center dark:border-brand-900/40 dark:bg-brand-950/30"
+        >
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-brand-700 dark:text-brand-300">Planned</div>
+          <div className="mt-0.5 text-lg font-bold text-brand-600">{planned}</div>
+        </motion.div>
+        <div className="rounded-full bg-zinc-100 px-3 py-1 text-[11px] font-bold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+          {pct}% delivery rate
         </div>
       </div>
 
-      <div className="mt-5 h-[220px] w-full min-w-0 sm:h-[260px]">
+      <div className="h-[220px] w-full min-w-0 sm:h-[260px]">
         <AreaChartBlock data={data} />
       </div>
-    </div>
+    </SurfacePanel>
   );
 }

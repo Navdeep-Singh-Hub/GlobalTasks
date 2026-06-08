@@ -1,33 +1,54 @@
 "use client";
 
-import { LifeBuoy, BookOpen, ShieldCheck, Sparkles } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { SurfacePanel } from "@/components/ui/surface-panel";
+import { LifeBuoy, BookOpen, ShieldCheck, Sparkles, MessageCircle } from "lucide-react";
+import Link from "next/link";
 
 export default function HelpPage() {
   const guides = [
-    { icon: Sparkles, title: "Getting started", desc: "Sidebar, dashboard, and core flows in 5 minutes." },
-    { icon: BookOpen, title: "Task patterns", desc: "Single vs recurring, weekly offs, and voice notes." },
-    { icon: ShieldCheck, title: "Admin & permissions", desc: "Roles, approvals, and the Admin Panel." },
+    { icon: Sparkles, title: "Getting started", desc: "Sidebar, dashboard, and core flows in 5 minutes.", href: "/dashboard" },
+    { icon: BookOpen, title: "Task patterns", desc: "Single vs recurring, weekly offs, and voice notes.", href: "/pending-single" },
+    { icon: ShieldCheck, title: "Admin & permissions", desc: "Roles, approvals, and the Admin Panel.", href: "/admin" },
   ];
+
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <LifeBuoy className="h-3 w-3" /> Help center
-        </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Help & support</h1>
-        <p className="mt-1 text-sm text-zinc-500">Product tours, patterns, and support escalation.</p>
-      </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3">
-        {guides.map((g) => (
-          <div key={g.title} className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-gradient-soft text-brand-600">
-              <g.icon className="h-5 w-5" />
-            </div>
-            <div className="mt-3 text-sm font-bold">{g.title}</div>
-            <div className="mt-1 text-xs text-zinc-500">{g.desc}</div>
-          </div>
+    <div className="space-y-6">
+      <PageHeader
+        chip="Help center"
+        icon={LifeBuoy}
+        title="Help & support"
+        subtitle="Product tours, patterns, and support escalation."
+      />
+
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+        {guides.map((g, i) => (
+          <Link key={g.title} href={g.href}>
+            <SurfacePanel
+              variant="gradient-border"
+              className="interactive-card h-full cursor-pointer border-white/80 dark:border-zinc-800/80"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-brand-gradient text-white shadow-brand">
+                <g.icon className="h-5 w-5" />
+              </div>
+              <div className="mt-4 text-sm font-bold text-zinc-900 dark:text-zinc-50">{g.title}</div>
+              <div className="mt-1 text-xs leading-relaxed text-zinc-500">{g.desc}</div>
+            </SurfacePanel>
+          </Link>
         ))}
       </div>
+
+      <SurfacePanel chip="Need more help?" title="Chat with support" variant="elevated">
+        <p className="-mt-2 text-sm text-zinc-500">Reach out for account issues, workflow questions, or feature requests.</p>
+        <Link
+          href="/chat-support"
+          className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand-gradient px-4 py-2.5 text-sm font-semibold text-white shadow-brand transition hover:brightness-105"
+        >
+          <MessageCircle className="h-4 w-4" />
+          Open chat support
+        </Link>
+      </SurfacePanel>
     </div>
   );
 }

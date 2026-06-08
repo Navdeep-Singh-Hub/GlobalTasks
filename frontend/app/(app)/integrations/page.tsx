@@ -1,6 +1,9 @@
 "use client";
 
-import { Plug } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
+import { SurfacePanel } from "@/components/ui/surface-panel";
+import { Plug, Sparkles } from "lucide-react";
+import { motion } from "framer-motion";
 
 const INTEGRATIONS = [
   { name: "Slack", desc: "Post task activity to channels", color: "from-[#611f69] to-[#ecb22e]" },
@@ -13,30 +16,38 @@ const INTEGRATIONS = [
 
 export default function IntegrationsPage() {
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <Plug className="h-3 w-3" /> Connect
-        </div>
-        <h1 className="mt-3 flex flex-col gap-2 text-2xl font-bold tracking-tight sm:flex-row sm:flex-wrap sm:items-center">
-          <span>Integrations</span>
-          <span className="w-fit rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">New</span>
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">Ship tasks into the tools your team already uses.</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        chip="Connect"
+        icon={Plug}
+        title="Integrations"
+        subtitle="Ship tasks into the tools your team already uses."
+        meta={
+          <span className="inline-flex items-center gap-1 rounded-full bg-rose-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
+            <Sparkles className="h-3 w-3" /> New
+          </span>
+        }
+      />
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {INTEGRATIONS.map((it) => (
-          <div key={it.name} className="group rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card transition-all hover:-translate-y-0.5 hover:shadow-soft dark:border-zinc-800 dark:bg-zinc-950">
-            <div className={`flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br text-white ${it.color}`}>
-              <Plug className="h-5 w-5" />
-            </div>
-            <div className="mt-3 text-base font-bold">{it.name}</div>
-            <div className="mt-1 text-xs text-zinc-500">{it.desc}</div>
-            <button className="mt-4 rounded-full bg-brand-gradient px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white shadow-brand transition-transform group-hover:translate-y-0">
-              Connect
-            </button>
-          </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {INTEGRATIONS.map((it, i) => (
+          <motion.div
+            key={it.name}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: i * 0.05 }}
+          >
+            <SurfacePanel variant="gradient-border" className="interactive-card group h-full">
+              <div className={`flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br text-white shadow-soft ${it.color}`}>
+                <Plug className="h-5 w-5" />
+              </div>
+              <div className="mt-4 text-base font-bold text-zinc-900 dark:text-zinc-50">{it.name}</div>
+              <div className="mt-1 text-xs leading-relaxed text-zinc-500">{it.desc}</div>
+              <button className="mt-4 rounded-xl bg-brand-gradient px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-white shadow-brand transition-all group-hover:brightness-105 group-hover:shadow-glow">
+                Connect
+              </button>
+            </SurfacePanel>
+          </motion.div>
         ))}
       </div>
     </div>

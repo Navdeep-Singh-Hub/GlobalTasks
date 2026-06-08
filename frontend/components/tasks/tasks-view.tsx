@@ -5,11 +5,15 @@ import { Input, Select } from "@/components/ui/input";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Badge, cadenceTone, priorityTone, statusTone } from "@/components/ui/badge";
 import { Modal } from "@/components/ui/modal";
+import { PageHeader } from "@/components/ui/page-header";
+import { EmptyState } from "@/components/ui/empty-state";
 import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
+import { useCelebration } from "@/contexts/celebration-context";
 import { isCeo, isManagement } from "@/lib/roles";
-import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Layers, Mic, Paperclip, Pencil, Search, Trash2, XCircle } from "lucide-react";
+import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Mic, Paperclip, Pencil, Search, Trash2, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { calendarDayKeyInTz, formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { TaskDetailDrawer } from "./task-detail-drawer";
@@ -84,6 +88,19 @@ const CADENCE_LABEL: Record<string, string> = {
   yearly: "Yearly",
 };
 
+function taskStatusAccent(status: string) {
+  const key = status.replace(/-/g, "_");
+  const map: Record<string, string> = {
+    pending: "status-accent-pending",
+    in_progress: "status-accent-in_progress",
+    awaiting_approval: "status-accent-awaiting_approval",
+    completed: "status-accent-completed",
+    overdue: "status-accent-overdue",
+    cancelled: "status-accent-cancelled",
+  };
+  return map[key] || "status-accent-pending";
+}
+
 export function TasksView({
   title,
   subtitle,
@@ -99,6 +116,7 @@ export function TasksView({
   masterAdminActions?: boolean;
 }) {
   const { user } = useAuth();
+  const { celebrate } = useCelebration();
   const myId = user?._id ? String(user._id) : "";
   const taskAssignerId = (t: Task) => String(t.assignedBy?._id || t.createdBy?._id || "");
   const canEditTaskAsAssigner = (t: Task) =>
@@ -109,9 +127,9 @@ export function TasksView({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [view, setView] = useState<"cards">("cards");
   const [showFilters, setShowFilters] = useState(masterAdminActions);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState(preset.status || "all");
   const [priority, setPriority] = useState("all");
   const [taskType, setTaskType] = useState("all");
@@ -127,7 +145,13 @@ export function TasksView({
   const [masterRelation, setMasterRelation] = useState<"created" | "assigned">("created");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [myAssignees, setMyAssignees] = useState<{ _id: string; name: string; email: string }[]>([]);
+  const [flashIds, setFlashIds] = useState<string[]>([]);
   const canFilterByAssignee = Boolean(masterAdminActions && (isManagement(user?.role) || isCeo(user?.role)));
+
+  const flashCompleted = (ids: string[]) => {
+    setFlashIds(ids);
+    window.setTimeout(() => setFlashIds([]), 900);
+  };
 
   useEffect(() => {
     if (!canFilterByAssignee) return;
@@ -222,10 +246,15 @@ export function TasksView({
   const canPermanentBulk = isCeo(user?.role);
   const canPermanentSingle = isCeo(user?.role) || user?.role === "centre_head";
 
+  useEffect(() => {
+    const handle = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);
+    return () => window.clearTimeout(handle);
+  }, [search]);
+
   const load = useCallback(() => {
     setLoading(true);
     const qs = new URLSearchParams();
-    if (search) qs.set("search", search);
+    if (debouncedSearch) qs.set("search", debouncedSearch);
     if (status !== "all") qs.set("status", status);
     if (priority !== "all") qs.set("priority", priority);
     if (taskType !== "all") qs.set("taskType", taskType);
@@ -251,27 +280,11 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [search, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation, assigneeFilter]);
+  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation, assigneeFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const mq = window.matchMedia("(max-width: 767px)");
-      const sync = () => {
-        const mobile = mq.matches;
-        if (mobile) setView("cards");
-      };
-      sync();
-      mq.addEventListener("change", sync);
-      return () => mq.removeEventListener("change", sync);
-    } catch {
-      /* ignore */
-    }
-  }, []);
 
   const idList = useMemo(() => tasks.map((t) => t._id), [tasks]);
   const orderedTasks = useMemo(() => {
@@ -302,7 +315,9 @@ export function TasksView({
     if (isCeo(user?.role)) {
       void (async () => {
         await api("/tasks/bulk", { method: "POST", body: JSON.stringify({ ids: selected, status: "completed" }) });
+        flashCompleted(selected);
         setSelected([]);
+        celebrate("complete", `${selected.length} task${selected.length === 1 ? "" : "s"} completed!`);
         load();
       })();
       return;
@@ -315,6 +330,8 @@ export function TasksView({
 
   const approveTask = async (id: string) => {
     await api(`/tasks/${id}/approve`, { method: "POST" });
+    flashCompleted([id]);
+    celebrate("approve");
     load();
   };
 
@@ -369,73 +386,55 @@ export function TasksView({
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="chip border border-zinc-200 bg-white text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            {preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"}
-            {masterAdminActions ? " · Your tasks" : preset.approval ? " · Approval" : ""}
-          </div>
-          <h1 className="mt-3 text-xl font-bold tracking-tight sm:text-2xl">{title}</h1>
-          <p className="mt-1 text-sm text-zinc-500">{subtitle}</p>
-          {masterAdminActions && (
-            <div className="mt-3 inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
-              <button
-                type="button"
-                onClick={() => setMasterRelation("created")}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                  masterRelation === "created"
-                    ? "bg-brand-gradient text-white shadow-brand"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
-                )}
-              >
-                Assigned by me
-              </button>
-              <button
-                type="button"
-                onClick={() => setMasterRelation("assigned")}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                  masterRelation === "assigned"
-                    ? "bg-brand-gradient text-white shadow-brand"
-                    : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400"
-                )}
-              >
-                Assigned to me
+      <PageHeader
+        chip={`${preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"}${masterAdminActions ? " · Your tasks" : preset.approval ? " · Approval" : ""}`}
+        title={title}
+        subtitle={subtitle}
+        actions={
+          <>
+            <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setShowFilters((v) => !v)}>
+              <Filter className="h-4 w-4" /> {showFilters ? "Hide Filters" : "Show Filters"}
+            </Button>
+            <div className="segment-control w-full sm:w-auto">
+              <button type="button" className={cn("segment-btn segment-btn-active flex items-center gap-1.5 px-3 py-1.5")}>
+                <Grid3x3 className="h-3.5 w-3.5" /> Cards
               </button>
             </div>
-          )}
-          <p className="mt-2 text-[12px] text-zinc-500">
-            {loading ? "Loading…" : `${orderedTasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
-            {masterAdminActions
-              ? masterRelation === "created"
-                ? assigneeFilter !== "all"
-                  ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
-                  : " · only tasks you assigned"
-                : " · tasks assigned to you"
-              : ""}
-          </p>
-        </div>
-
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-          <Button variant="outline" className="w-full gap-2 sm:w-auto" onClick={() => setShowFilters((v) => !v)}>
-            <Filter className="h-4 w-4" /> {showFilters ? "Hide Filters" : "Show Filters"}
-          </Button>
-          <div className="inline-flex w-full rounded-xl border border-zinc-200 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-950 sm:w-auto">
+          </>
+        }
+      >
+        {masterAdminActions && (
+          <div className="segment-control mt-3">
             <button
               type="button"
-              onClick={() => setView("cards")}
-              className={cn("flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold", view === "cards" ? "bg-brand-gradient text-white shadow-brand" : "text-zinc-500")}
+              onClick={() => setMasterRelation("created")}
+              className={cn("segment-btn", masterRelation === "created" && "segment-btn-active")}
             >
-              <Grid3x3 className="h-3.5 w-3.5" /> Cards
+              Assigned by me
+            </button>
+            <button
+              type="button"
+              onClick={() => setMasterRelation("assigned")}
+              className={cn("segment-btn", masterRelation === "assigned" && "segment-btn-active")}
+            >
+              Assigned to me
             </button>
           </div>
-        </div>
-      </div>
+        )}
+        <p className="mt-2 text-[12px] text-zinc-500">
+          {loading ? "Loading…" : `${orderedTasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
+          {masterAdminActions
+            ? masterRelation === "created"
+              ? assigneeFilter !== "all"
+                ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
+                : " · only tasks you assigned"
+              : " · tasks assigned to you"
+            : ""}
+        </p>
+      </PageHeader>
 
       {showFilters && (
-        <div className="animate-fade-in rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-4">
+        <div className="filter-panel">
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
             <div className="relative sm:col-span-2">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
@@ -499,7 +498,18 @@ export function TasksView({
       )}
 
       {orderedTasks.length === 0 ? (
-        <EmptyState loading={loading} />
+        <EmptyState
+          loading={loading}
+          variant={preset.assigneeInbox && !loading ? "motivate" : "default"}
+          title={loading ? "Loading tasks…" : preset.assigneeInbox ? "Your inbox is clear" : "No tasks found"}
+          description={
+            loading
+              ? "Fetching from the API."
+              : preset.assigneeInbox
+                ? "Nothing pending right now — great job staying on top of things!"
+                : "Try adjusting your filters or create a new task from Assign Task."
+          }
+        />
       ) : false ? (
         <div className="min-w-0 overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
           <div className="overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
@@ -686,11 +696,18 @@ export function TasksView({
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {orderedTasks.map((t, idx) => (
-            <div
+            <motion.div
               key={t._id}
-              className="flex flex-col overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-card transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:shadow-soft dark:border-zinc-800 dark:bg-zinc-950"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.28, delay: Math.min(idx * 0.04, 0.32) }}
+              className={cn(
+                "interactive-card flex flex-col border-white/80 dark:border-zinc-800/80",
+                taskStatusAccent(t.masterDisplayStatus === "approved" ? "completed" : t.status),
+                flashIds.includes(t._id) && "task-complete-flash ring-2 ring-emerald-400/60"
+              )}
             >
-              <button type="button" onClick={() => setDetailId(t._id)} className="flex flex-1 flex-col p-4 text-left">
+              <button type="button" onClick={() => setDetailId(t._id)} className="relative flex flex-1 flex-col p-4 text-left">
                 <div className="flex items-start justify-between gap-2">
                   <span className="text-[10.5px] font-semibold uppercase tracking-[0.08em] text-zinc-400">#{displayedId(idx)}</span>
                   <Badge tone={cadenceTone(t.taskType)}>{CADENCE_LABEL[t.taskType] || t.taskType}</Badge>
@@ -784,7 +801,7 @@ export function TasksView({
               canManageOwnMasterTask(t) ||
               (preset.approval && canEditTaskAsAssigner(t)) ||
               (masterAdminActions && canSendBackForApproval(t)) ? (
-                <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100 bg-zinc-50/50 px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900/40">
+                <div className="flex flex-wrap justify-end gap-2 border-t border-zinc-100/80 bg-gradient-to-r from-zinc-50/80 to-transparent px-3 py-2 dark:border-zinc-800 dark:from-zinc-900/40">
                   {showApprovalQuickActions && rowNeedsApproval(t) && (
                     <>
                       <Button
@@ -849,7 +866,7 @@ export function TasksView({
                   )}
                 </div>
               ) : null}
-            </div>
+            </motion.div>
           ))}
         </div>
       )}
@@ -928,23 +945,10 @@ export function TasksView({
         onSuccess={() => {
           setSubmitBulkOpen(false);
           setSelected([]);
+          celebrate("submit");
           load();
         }}
       />
-    </div>
-  );
-}
-
-function EmptyState({ loading }: { loading: boolean }) {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-white p-10 text-center shadow-card dark:border-zinc-700 dark:bg-zinc-950 sm:rounded-2xl sm:p-16">
-      <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-100 dark:bg-zinc-800">
-        {loading ? <Layers className="h-6 w-6 text-zinc-400 animate-pulse" /> : <Inbox className="h-6 w-6 text-zinc-400" />}
-      </div>
-      <div className="mt-4 text-sm font-semibold text-zinc-600">{loading ? "Loading tasks…" : "No tasks found"}</div>
-      <p className="mt-1 max-w-sm text-xs text-zinc-500">
-        {loading ? "Fetching from the API." : "Try adjusting your filters or create a new task from Assign Task."}
-      </p>
     </div>
   );
 }

@@ -2,11 +2,13 @@
 
 import { AssigneeApprovalHistory } from "@/components/performance/assignee-approval-history";
 import { TeamThroughputChart } from "@/components/performance/team-throughput-chart";
+import { PageHeader } from "@/components/ui/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
 import { canViewUserTeamPerformance, formatRoleLine, isManagement } from "@/lib/roles";
 import { Zap } from "lucide-react";
 import dynamic from "next/dynamic";
+import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 
 const TeamThroughputChartClient = dynamic(() => Promise.resolve(TeamThroughputChart), {
@@ -59,20 +61,18 @@ export default function PerformancePage() {
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <Zap className="h-3 w-3" /> Analytics
-        </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">
-          {isOperationsView ? "User team performance" : "Performance"}
-        </h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {isOperationsView
+      <PageHeader
+        chip="Analytics"
+        title={isOperationsView ? "User team performance" : "Performance"}
+        subtitle={
+          isOperationsView
             ? "Task completion for users mapped to you as operations lead."
             : user?.role === "ceo"
-              ? "Team throughput below. Use Task approval history (above) to review submissions and approvals by person."
-              : "Throughput and reliability of each team member."}
-        </p>
+              ? "Team throughput below. Use Task approval history to review submissions and approvals by person."
+              : "Throughput and reliability of each team member."
+        }
+        icon={Zap}
+      >
         {showApprovalHistory && (
           <a
             href="#task-approval-history"
@@ -81,7 +81,7 @@ export default function PerformancePage() {
             Go to Task approval history →
           </a>
         )}
-      </div>
+      </PageHeader>
 
       {showApprovalHistory && (
         <div id="task-approval-history">
@@ -89,15 +89,21 @@ export default function PerformancePage() {
         </div>
       )}
 
-      <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
+      <div className="glass-card min-w-0 p-4 sm:p-5">
         <div className="h-[280px] min-w-0 sm:h-[340px]">
           <TeamThroughputChartClient data={chartData} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {data.map((m) => (
-          <div key={m.user._id} className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
+        {data.map((m, idx) => (
+          <motion.div
+            key={m.user._id}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: Math.min(idx * 0.05, 0.3) }}
+            className="interactive-card border-white/80 p-4 dark:border-zinc-800/80"
+          >
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-gradient text-sm font-bold text-white shadow-brand">
                 {m.user.name.charAt(0).toUpperCase()}
@@ -117,7 +123,7 @@ export default function PerformancePage() {
               <div className="h-full rounded-full bg-brand-gradient" style={{ width: `${m.completion}%` }} />
             </div>
             <div className="mt-1 text-right text-[10.5px] font-semibold text-zinc-500">{m.completion}% completion</div>
-          </div>
+          </motion.div>
         ))}
       </div>
     </div>

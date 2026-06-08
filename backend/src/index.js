@@ -159,11 +159,15 @@ connectDatabase(uri)
     if (digestEnabled) startWhatsAppTaskDigestScheduler();
     const waMode = isWhatsAppConfigured() ? "live" : "stub (set WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN)";
     const waTemplate =
-      process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "globaltasks_task_assigned_v1 (default)";
-    console.log(`[whatsapp] task assign on create/patch: enabled, mode=${waMode}, template=${waTemplate}`);
-    if (isWhatsAppConfigured() && !process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED) {
+      process.env.WHATSAPP_TEMPLATE_MORNING ||
+      process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED ||
+      "globaltasks_morning_digest_v1 (default)";
+    console.log(
+      `[whatsapp] task assign on create/patch: enabled, mode=${waMode}, template=${waTemplate} (same as morning digest)`
+    );
+    if (isWhatsAppConfigured() && !process.env.WHATSAPP_TEMPLATE_MORNING) {
       console.warn(
-        "[whatsapp] WHATSAPP_TEMPLATE_TASK_ASSIGNED not set — using default globaltasks_task_assigned_v1. Approve it in Meta or set .env."
+        "[whatsapp] WHATSAPP_TEMPLATE_MORNING not set — task assign uses globaltasks_morning_digest_v1. Set WHATSAPP_TEMPLATE_MORNING in .env."
       );
     }
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));

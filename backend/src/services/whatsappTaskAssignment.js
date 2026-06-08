@@ -13,28 +13,22 @@ import {
   isTemplateParamError,
 } from "./whatsappService.js";
 
-import { formatAppDateTime } from "../utils/dateFormat.js";
+import { formatAppDate } from "../utils/dateFormat.js";
 
-const TZ = process.env.WHATSAPP_DIGEST_TIMEZONE || "Asia/Kolkata";
 const MAX_MESSAGE_CHARS = 4000;
-const MAX_TEMPLATE_DETAILS_CHARS = 900;
+const MAX_TEMPLATE_DETAILS_CHARS = 512;
 const ENABLED = String(process.env.WHATSAPP_TASK_ASSIGN_ENABLED ?? "true").toLowerCase() === "true";
-const TASK_TEMPLATE = String(
-  process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED || "globaltasks_task_assigned_v1"
-).trim();
-/** Same approved template as 09:45/10:00 morning digest — {{1}} name, {{2}} body. */
-const MORNING_TEMPLATE = String(
-  process.env.WHATSAPP_TEMPLATE_MORNING || "globaltasks_morning_digest_v1"
-).trim();
 const TEMPLATE_LANG = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || "en").trim();
-const TEMPLATE_PARAM_MAX = 350;
 
-function appBaseUrl() {
-  const raw = (process.env.CLIENT_ORIGIN || process.env.CLIENT_ORIGINS || "http://localhost:3000")
-    .split(",")[0]
-    .trim();
-  return raw.replace(/\/+$/g, "");
-}
+/**
+ * Task assign uses the same Meta template as the 09:45 morning digest:
+ * globaltasks_morning_digest_v1 — {{1}} assignee name, {{2}} body (numbered list).
+ */
+const ASSIGN_TEMPLATE = String(
+  process.env.WHATSAPP_TEMPLATE_MORNING ||
+    process.env.WHATSAPP_TEMPLATE_TASK_ASSIGNED ||
+    "globaltasks_morning_digest_v1"
+).trim();
 
 function formatLabel(value) {
   return String(value || "")
@@ -43,18 +37,7 @@ function formatLabel(value) {
 }
 
 function formatDueDate(d) {
-  return formatAppDateTime(d);
-}
-
-function recurrenceSummary(task) {
-  if (!task?.recurrence || task.taskType === "one_time") return "";
-  const r = task.recurrence;
-  const parts = [];
-  if (r.forever) parts.push("repeats until stopped");
-  else if (r.endDate) parts.push(`until ${formatDueDate(r.endDate)}`);
-  if (r.weekOff) parts.push(`week off: ${r.weekOff}`);
-  if (r.includeSunday === false && r.weekOff === "Sunday") parts.push("excludes Sunday");
-  return parts.length ? parts.join("; ") : "";
+  return formatAppDate(d);
 }
 
 async function loadTaskDoc(taskOrId) {
@@ -72,95 +55,34 @@ async function loadTaskDoc(taskOrId) {
   return { ...task, departmentId, centerId, project, createdBy };
 }
 
-function buildTaskDetailsLines(task) {
-  const lines = [];
-  const desc = String(task.description || "").trim();
-  if (desc) {
-    lines.push("Description:");
-    lines.push(desc);
-    lines.push("");
-  }
-  lines.push(`Type: ${formatLabel(task.taskType)}`);
-  lines.push(`Priority: ${formatLabel(task.priority)}`);
-  lines.push(`Due: ${formatDueDate(task.dueDate)}`);
-  const dept = task.departmentId?.name || task.departmentId?.code;
-  const center = task.centerId?.name || task.centerId?.code;
-  const project = task.project?.name;
-  if (dept) lines.push(`Department: ${dept}`);
-  if (center) lines.push(`Center: ${center}`);
-  if (project) lines.push(`Project: ${project}`);
-  if (task.functionTag) lines.push(`Function: ${task.functionTag}`);
-  if (Array.isArray(task.tags) && task.tags.length) lines.push(`Tags: ${task.tags.join(", ")}`);
-  const recur = recurrenceSummary(task);
-  if (recur) lines.push(`Recurrence: ${recur}`);
-  if (task.requiresApproval) lines.push("Approval required: Yes");
-  const required = Array.isArray(task.requiredInputsSchema?.required) ? task.requiredInputsSchema.required : [];
-  if (required.length) lines.push(`Required inputs: ${required.join(", ")}`);
-  const attCount = Array.isArray(task.attachments) ? task.attachments.length : 0;
-  if (attCount) lines.push(`Attachments: ${attCount} file(s)`);
-  if (task.voiceNoteUrl) lines.push("Voice note: yes");
-  lines.push(`App: ${appBaseUrl()}/pending-single`);
-  return lines;
-}
-
 export function buildTaskAssignedWhatsAppMessage({ task, assigneeName, assignedByName }) {
-  const lines = [];
-  const by = assignedByName ? ` by ${assignedByName}` : "";
-  lines.push(`New task assigned${by}`);
-  if (assigneeName) {
-    lines.push("");
-    lines.push(`Hi ${assigneeName},`);
-  }
-  lines.push("");
-  lines.push(`Title: ${task.title}`);
-  if (task.taskIdDisplay) lines.push(`Task ID: ${task.taskIdDisplay}`);
-  lines.push("");
-  lines.push(...buildTaskDetailsLines(task));
-
-  let text = lines.join("\n");
+  const { text } = buildMorningStyleAssignContent({ task, assigneeName, assignedByName });
   if (text.length > MAX_MESSAGE_CHARS) {
-    text = `${text.slice(0, MAX_MESSAGE_CHARS - 20)}… (truncated)`;
+    return `${text.slice(0, MAX_MESSAGE_CHARS - 20)}… (truncated)`;
   }
   return text;
 }
 
-/** Core fields for WhatsApp: title, description, type, due (used in morning-style {{2}}). */
-function buildCoreTaskWhatsAppSummary(task, assignedByName) {
-  const lines = [];
-  if (assignedByName) lines.push(`Assigned by: ${assignedByName}`);
-  lines.push(`Task: ${task.title}`);
-  const desc = String(task.description || "").trim();
-  lines.push(`Description: ${desc || "—"}`);
-  lines.push(`Type: ${formatLabel(task.taskType)}`);
-  lines.push(`Due: ${formatDueDate(task.dueDate)}`);
-  lines.push(`Open: ${appBaseUrl()}/pending-single`);
-  return sanitizeTemplateParam(lines.join("\n"), MAX_TEMPLATE_DETAILS_CHARS);
-}
-
-function buildMorningStyleTemplateParams({ task, assigneeName, assignedByName }) {
-  return [assigneeName || "there", buildCoreTaskWhatsAppSummary(task, assignedByName)];
-}
-
 /**
- * Preferred Meta template: one variable per line (globaltasks_task_assigned_v1).
- * {{1}} name, {{2}} assigner, {{3}} title, {{4}} description, … {{10}} link
+ * {{2}} for globaltasks_morning_digest_v1 — one line with due date and assigner only.
  */
-function buildSplitTaskTemplateParams({ task, assigneeName, assignedByName }) {
-  const desc = String(task.description || "").trim() || "-";
-  const dept = task.departmentId?.name || task.departmentId?.code || "-";
-  const center = task.centerId?.name || task.centerId?.code || "-";
-  return [
-    assigneeName || "there",
-    assignedByName || "Admin",
-    task.title,
-    desc,
-    formatLabel(task.taskType),
-    formatLabel(task.priority),
-    formatDueDate(task.dueDate),
-    dept,
-    center,
-    `${appBaseUrl()}/pending-single`,
-  ].map((p) => sanitizeTemplateParam(p, TEMPLATE_PARAM_MAX));
+function buildTaskAssignMorningBody({ task, assignedByName }) {
+  const typeLabel = formatLabel(task.taskType);
+  const due = formatDueDate(task.dueDate);
+  let line = `1. ${task.title} (${typeLabel}) - Due: ${due}`;
+  if (assignedByName) line += ` - Assigned by: ${assignedByName}`;
+  return sanitizeTemplateParam(line, MAX_TEMPLATE_DETAILS_CHARS);
+}
+
+function buildMorningStyleAssignContent({ task, assigneeName, assignedByName }) {
+  const name = assigneeName || "there";
+  const body = buildTaskAssignMorningBody({ task, assignedByName });
+  const text = `Good morning ${name}. Daily checklist for today:\n\n${body}`;
+  return {
+    text,
+    templateName: ASSIGN_TEMPLATE,
+    templateParams: [name, body],
+  };
 }
 
 async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
@@ -172,72 +94,55 @@ async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
     return { userId: user._id, skipped: true, reason: "invalid_phone", phone: user.phone };
   }
 
-  const text = buildTaskAssignedWhatsAppMessage({
-    task,
-    assigneeName: user.name,
-    assignedByName,
-  });
-  const splitParams = buildSplitTaskTemplateParams({
-    task,
-    assigneeName: user.name,
-    assignedByName,
-  });
-  const morningParams = buildMorningStyleTemplateParams({
+  const content = buildMorningStyleAssignContent({
     task,
     assigneeName: user.name,
     assignedByName,
   });
 
   if (!isWhatsAppConfigured()) {
-    console.log(`[whatsapp:stub] task assign to=${phone} title=${task.title}`);
+    console.log(`[whatsapp:stub] task assign to=${phone} title=${task.title}\n${content.text}`);
     return { userId: user._id, sent: true, stub: true };
   }
 
-  /** Morning digest template first (already approved in Meta); then dedicated task template. */
-  const templateAttempts = [];
-  if (MORNING_TEMPLATE) {
-    templateAttempts.push({ name: MORNING_TEMPLATE, params: morningParams, label: "morning_style" });
-  }
-  if (TASK_TEMPLATE && TASK_TEMPLATE !== MORNING_TEMPLATE) {
-    templateAttempts.push({ name: TASK_TEMPLATE, params: splitParams, label: "task_split" });
-  }
-
-  for (const attempt of templateAttempts) {
+  if (ASSIGN_TEMPLATE) {
     try {
       const result = await sendWhatsAppTemplate({
         to: phone,
-        name: attempt.name,
+        name: ASSIGN_TEMPLATE,
         languageCode: TEMPLATE_LANG,
-        parameters: attempt.params,
+        parameters: content.templateParams,
       });
       if (!result?.skipped) {
         console.log(
-          `[whatsapp] task assign sent (${attempt.label}/${attempt.name}) user=${user._id} task=${taskId} to=${phone} msgId=${result.messageId || ""}`
+          `[whatsapp] task assign sent (morning template/${ASSIGN_TEMPLATE}) user=${user._id} task=${taskId} to=${phone} msgId=${result.messageId || ""}`
         );
         return {
           userId: user._id,
           sent: true,
-          channel: attempt.label,
-          template: attempt.name,
+          channel: "morning_template",
+          template: ASSIGN_TEMPLATE,
           messageId: result.messageId,
         };
       }
     } catch (e) {
       const retryable = isTemplateMissingError(e) || isTemplateParamError(e);
       console.warn(
-        `[whatsapp] task assign template ${attempt.name} failed user=${user._id}:`,
+        `[whatsapp] task assign template ${ASSIGN_TEMPLATE} failed user=${user._id}:`,
         e.message || e,
-        retryable ? "(trying next)" : ""
+        retryable ? "(falling back to plain text)" : ""
       );
-      if (!retryable) break;
+      if (!retryable) {
+        return { userId: user._id, failed: true, error: e.message };
+      }
     }
   }
 
   try {
-    const result = await sendWhatsAppText({ to: phone, text });
+    const result = await sendWhatsAppText({ to: phone, text: content.text });
     if (result?.skipped) return { userId: user._id, skipped: true, reason: result.reason };
     console.log(
-      `[whatsapp] task assign sent (text) user=${user._id} task=${taskId} to=${phone} msgId=${result.messageId || ""}`
+      `[whatsapp] task assign sent (text/morning format) user=${user._id} task=${taskId} to=${phone} msgId=${result.messageId || ""}`
     );
     return {
       userId: user._id,
@@ -251,14 +156,16 @@ async function sendTaskAssignedToUser({ user, task, assignedByName, taskId }) {
     console.error(
       `[whatsapp] task assign send failed user=${user._id} task=${taskId} phone=${phone}:`,
       e.message || e,
-      needsTemplate ? "→ Ask user to message your business WhatsApp once, or approve globaltasks_task_assigned_v1" : ""
+      needsTemplate
+        ? `→ Approve ${ASSIGN_TEMPLATE} in Meta or ask user to message your business WhatsApp once`
+        : ""
     );
     return { userId: user._id, failed: true, needsTemplate: Boolean(needsTemplate), error: e.message };
   }
 }
 
 /**
- * Send immediate WhatsApp to newly assigned users.
+ * Send immediate WhatsApp to newly assigned users (morning digest template).
  */
 export async function notifyTaskAssignedWhatsApp({ taskId, assigneeIds, assignedByUserId }) {
   if (!ENABLED) {
@@ -287,7 +194,7 @@ export async function notifyTaskAssignedWhatsApp({ taskId, assigneeIds, assigned
 
   const assignedByName = assigner?.name || task.createdBy?.name || "";
   console.log(
-    `[whatsapp] task assign sending task=${taskId} title="${task.title}" assignees=${assignees.length} configured=${isWhatsAppConfigured()} morningTemplate=${MORNING_TEMPLATE || "none"} taskTemplate=${TASK_TEMPLATE || "none"}`
+    `[whatsapp] task assign sending task=${taskId} title="${task.title}" assignees=${assignees.length} configured=${isWhatsAppConfigured()} template=${ASSIGN_TEMPLATE || "none"} (morning digest format)`
   );
 
   const results = [];
@@ -309,3 +216,5 @@ export function queueTaskAssignedWhatsApp(payload) {
     })
     .catch((e) => console.error("[whatsapp] task assign notify failed:", e.message || e));
 }
+
+export { ASSIGN_TEMPLATE, buildTaskAssignMorningBody, buildMorningStyleAssignContent };

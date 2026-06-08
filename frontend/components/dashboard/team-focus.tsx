@@ -1,10 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { AnimatedProgressBar } from "@/components/ui/progress-ring";
+import { EmptyState } from "@/components/ui/empty-state";
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import { ChevronDown, ChevronRight, Users } from "lucide-react";
 import { ROLE_LABELS, USER_ROLES, type Role } from "@/lib/roles";
 import { ApiError, api } from "@/lib/api";
 import { formatAppDate } from "@/lib/date-format";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Member = {
   user: { _id: string; name: string; email: string; role: string; title?: string };
@@ -71,27 +74,21 @@ export function TeamFocus({ members }: { members: Member[] }) {
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
-            <Users className="h-3 w-3" />
-            Team lens
-          </div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Team performance focus</h3>
-          <p className="mt-1 text-xs text-zinc-500">Switch between team members and inspect the current rhythm without leaving the dashboard.</p>
-        </div>
+    <SurfacePanel
+      chip="Team lens"
+      title="Team performance focus"
+      action={
         <div className="relative">
           <button
             type="button"
             onClick={() => setOpen((v) => !v)}
-            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold capitalize dark:border-zinc-700 dark:bg-zinc-900"
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2 text-xs font-semibold capitalize transition hover:border-brand-200 dark:border-zinc-700 dark:bg-zinc-900"
           >
             <Users className="h-3.5 w-3.5" /> {filter === "all" ? "All team" : ROLE_LABELS[filter]}
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
           {open && (
-            <div className="absolute right-0 top-11 z-20 min-w-[10rem] overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="absolute right-0 top-11 z-20 min-w-[10rem] overflow-hidden rounded-xl border border-zinc-200 bg-white py-1 shadow-elevated dark:border-zinc-800 dark:bg-zinc-900">
               {(["all", ...USER_ROLES] as const).map((k) => (
                 <button
                   key={k}
@@ -104,7 +101,9 @@ export function TeamFocus({ members }: { members: Member[] }) {
             </div>
           )}
         </div>
-      </div>
+      }
+    >
+      <p className="-mt-2 mb-4 text-xs text-zinc-500">Switch between team members and inspect the current rhythm without leaving the dashboard.</p>
 
       {loadErr && (
         <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2 py-1.5 text-[11px] text-rose-700 dark:border-rose-900/40 dark:bg-rose-950/40 dark:text-rose-200">
@@ -112,9 +111,9 @@ export function TeamFocus({ members }: { members: Member[] }) {
         </div>
       )}
 
-      <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
+      <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
         {sortedList.length === 0 && (
-          <div className="rounded-xl border border-dashed p-6 text-center text-xs text-zinc-500">No team members for this filter.</div>
+          <EmptyState title="No team members" description="No team members match this filter." variant="default" />
         )}
         {sortedList.map((m) => {
           const isOpen = expandedId === m.user._id;
@@ -146,9 +145,7 @@ export function TeamFocus({ members }: { members: Member[] }) {
                     {m.total} tasks · {m.completion}% completion
                     {m.completed > 0 && <span className="text-zinc-400"> · {m.completed} done</span>}
                   </div>
-                  <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                    <div className="h-full rounded-full bg-brand-gradient" style={{ width: `${Math.max(2, Math.min(100, m.completion))}%` }} />
-                  </div>
+                  <AnimatedProgressBar value={m.completion} tone="brand" className="mt-1.5" />
                 </div>
               </button>
               {isOpen && (
@@ -174,6 +171,6 @@ export function TeamFocus({ members }: { members: Member[] }) {
           );
         })}
       </div>
-    </div>
+    </SurfacePanel>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { MotionButton } from "@/components/ui/motion-button";
 import { Input } from "@/components/ui/input";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/auth-context";
@@ -101,9 +101,9 @@ export default function LoginPage() {
 
             {error && <p className="rounded-xl bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:bg-rose-950/40 dark:text-rose-300">{error}</p>}
 
-            <Button type="submit" variant="gradient" className="h-11 w-full text-base" disabled={loading}>
-              {loading ? "Signing in…" : "Sign in"}
-            </Button>
+            <MotionButton type="submit" variant="gradient" className="h-11 w-full text-base" loading={loading}>
+              Sign in
+            </MotionButton>
           </form>
 
           <p className="mt-5 text-center text-[11.5px] text-zinc-500">

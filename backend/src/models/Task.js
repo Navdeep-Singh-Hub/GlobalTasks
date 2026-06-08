@@ -79,5 +79,12 @@ taskSchema.index({ assignees: 1, status: 1 });
 taskSchema.index({ assignedBy: 1, status: 1 });
 taskSchema.index({ approvalStatus: 1, status: 1 });
 taskSchema.index({ deletedAt: 1 });
+/** Hot list paths (500+ users). */
+taskSchema.index({ deletedAt: 1, assignees: 1, status: 1, taskType: 1, dueDate: 1 });
+taskSchema.index({ deletedAt: 1, assignedBy: 1, status: 1, updatedAt: -1 });
+taskSchema.index({ deletedAt: 1, centerId: 1, status: 1, updatedAt: -1 });
+taskSchema.index({ deletedAt: 1, status: 1, approvalStatus: 1, updatedAt: -1 });
+taskSchema.index({ deletedAt: 1, assignees: 1, status: 1, approvalStatus: 1 });
+taskSchema.index({ title: "text", description: "text" });
 
 export const Task = mongoose.model("Task", taskSchema);

@@ -265,14 +265,22 @@ export async function syncRecurringTasksForAssignee(assigneeId, now = new Date()
     status: { $in: ["pending", "in_progress", "overdue", "awaiting_approval", "completed"] },
   });
 
+  const concurrency = Math.min(8, Math.max(2, Number(process.env.RECURRING_SYNC_CONCURRENCY) || 4));
   let totalMissed = 0;
   let synced = 0;
-  for (const task of tasks) {
+
+  for (let i = 0; i < tasks.length; i += concurrency) {
+    const chunk = tasks.slice(i, i + concurrency);
     // eslint-disable-next-line no-await-in-loop
-    const result = await syncRecurringTaskToToday(task, { assigneeId, now });
-    if (result.synced) synced += 1;
-    totalMissed += result.missed || 0;
+    const results = await Promise.all(
+      chunk.map((task) => syncRecurringTaskToToday(task, { assigneeId, now }))
+    );
+    for (const result of results) {
+      if (result.synced) synced += 1;
+      totalMissed += result.missed || 0;
+    }
   }
+
   return { synced, totalMissed };
 }
 

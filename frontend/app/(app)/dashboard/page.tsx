@@ -92,9 +92,9 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <section className="relative overflow-hidden rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-3xl sm:p-6 md:p-8">
-        <div className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-gradient-soft blur-3xl" />
-        <div className="pointer-events-none absolute -left-16 bottom-0 h-48 w-48 rounded-full bg-accent-cyan/10 blur-3xl" />
+      <section className="page-hero sm:p-8">
+        <div className="page-hero-blob -right-24 -top-24 h-72 w-72 bg-brand-gradient-soft" aria-hidden />
+        <div className="page-hero-blob -bottom-16 -left-16 h-48 w-48 bg-accent-cyan/15" style={{ animationDelay: "2s" }} aria-hidden />
 
         <div className="relative grid gap-5 sm:gap-6 md:grid-cols-[1.35fr_1fr] md:items-end">
           <div>
@@ -171,18 +171,18 @@ export default function DashboardPage() {
         <section className="grid gap-3 sm:grid-cols-2">
           <Link
             href="/pending-single"
-            className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card transition hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-950"
+            className="interactive-card group block border-white/80 p-4 dark:border-zinc-800/80"
           >
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">My pending single</div>
-            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{myPendingSingle}</div>
+            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-zinc-100">{myPendingSingle}</div>
             <div className="mt-1 text-xs text-zinc-500">Open single tasks assigned to you</div>
           </Link>
           <Link
             href="/pending-recurring"
-            className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-card transition hover:border-brand-300 dark:border-zinc-800 dark:bg-zinc-950"
+            className="interactive-card group block border-white/80 p-4 dark:border-zinc-800/80"
           >
             <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">My pending recurring</div>
-            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">{myPendingRecurring}</div>
+            <div className="mt-2 text-3xl font-bold tracking-tight text-zinc-900 transition-colors group-hover:text-brand-600 dark:text-zinc-100">{myPendingRecurring}</div>
             <div className="mt-1 text-xs text-zinc-500">Open recurring tasks assigned to you</div>
           </Link>
         </section>

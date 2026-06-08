@@ -103,7 +103,7 @@ export function AssigneeApprovalHistory() {
       .catch(() => setAssignees([]));
   }, [canUse]);
 
-  const loadHistory = useCallback(async () => {
+  const loadHistory = useCallback(async (withSync = false) => {
     if (!assigneeId) {
       setRecords([]);
       setSummary({ total: 0, pending: 0, approved: 0, rejected: 0, notDone: 0 });
@@ -111,7 +111,8 @@ export function AssigneeApprovalHistory() {
     }
     setLoading(true);
     try {
-      const qs = new URLSearchParams({ assigneeId, sync: "true" });
+      const qs = new URLSearchParams({ assigneeId });
+      if (withSync) qs.set("sync", "true");
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
       const d = await api<{ records: ApprovalRecord[]; summary: typeof summary }>(
@@ -127,16 +128,18 @@ export function AssigneeApprovalHistory() {
   }, [assigneeId, from, to]);
 
   useEffect(() => {
-    if (assigneeId) void loadHistory();
-  }, [assigneeId, loadHistory]);
+    if (!assigneeId) return;
+    const handle = window.setTimeout(() => void loadHistory(false), from || to ? 400 : 0);
+    return () => window.clearTimeout(handle);
+  }, [assigneeId, from, to, loadHistory]);
 
   if (!canUse) return null;
 
   const selected = assignees.find((a) => a._id === assigneeId);
 
   return (
-    <div className="rounded-xl border-2 border-brand-200/80 bg-white p-4 shadow-card dark:border-brand-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-      <h2 className="text-lg font-bold text-brand-800 dark:text-brand-200">Task approval history</h2>
+    <div className="glass-card rounded-2xl border-brand-200/40 p-4 sm:rounded-2xl sm:p-5 dark:border-brand-800/30">
+      <h2 className="bg-brand-gradient bg-clip-text text-lg font-bold text-transparent">Task approval history</h2>
       <p className="mt-1 text-sm text-zinc-500">
         {isCeoUser
           ? "Select any team member to see their full submit / approve / not-done history across the organisation."
@@ -207,8 +210,8 @@ export function AssigneeApprovalHistory() {
           </div>
 
           <div className="mt-3 flex justify-end">
-            <Button variant="outline" size="sm" onClick={() => void loadHistory()}>
-              Refresh
+            <Button variant="outline" size="sm" disabled={loading} onClick={() => void loadHistory(true)}>
+              {loading ? "Loading…" : "Refresh & sync"}
             </Button>
           </div>
 

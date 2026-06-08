@@ -1,14 +1,17 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { MotionButton } from "@/components/ui/motion-button";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/ui/page-header";
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import { MessageCircle, Send } from "lucide-react";
+import { motion } from "framer-motion";
 import { useState } from "react";
 
 type Msg = { from: "you" | "support"; text: string; at: string };
 
 const INITIAL: Msg[] = [
-  { from: "support", text: "Hi Ravish — this is the TMS concierge. How can we help today?", at: new Date().toISOString() },
+  { from: "support", text: "Hi — this is the TMS concierge. How can we help today?", at: new Date().toISOString() },
 ];
 
 export default function ChatSupportPage() {
@@ -29,24 +32,29 @@ export default function ChatSupportPage() {
   };
 
   return (
-    <div className="space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <MessageCircle className="h-3 w-3" /> Concierge
-        </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Chat support</h1>
-        <p className="mt-1 text-sm text-zinc-500">Direct line to your workspace success team.</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        chip="Concierge"
+        icon={MessageCircle}
+        title="Chat support"
+        subtitle="Direct line to your workspace success team."
+      />
 
-      <div className="flex min-h-[min(520px,70dvh)] max-h-[min(640px,78dvh)] flex-col overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl">
-        <div className="flex-1 space-y-3 overflow-y-auto bg-surface-muted/60 p-3 dark:bg-zinc-900/40 sm:p-5">
+      <SurfacePanel noPadding variant="gradient-border" className="flex min-h-[min(520px,70dvh)] max-h-[min(640px,78dvh)] flex-col overflow-hidden">
+        <div className="flex-1 space-y-3 overflow-y-auto bg-gradient-to-b from-brand-50/30 to-transparent p-3 dark:from-brand-950/20 sm:p-5">
           {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.from === "you" ? "justify-end" : "justify-start"}`}>
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 8, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              transition={{ duration: 0.25 }}
+              className={`flex ${m.from === "you" ? "justify-end" : "justify-start"}`}
+            >
               <div
-                className={`max-w-[min(92%,20rem)] rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
+                className={`max-w-[min(92%,20rem)] rounded-2xl px-4 py-2.5 text-sm shadow-soft ${
                   m.from === "you"
-                    ? "bg-brand-gradient text-white"
-                    : "bg-white text-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
+                    ? "bg-brand-gradient text-white shadow-brand"
+                    : "border border-zinc-100 bg-white text-zinc-800 dark:border-zinc-800 dark:bg-zinc-800 dark:text-zinc-100"
                 }`}
               >
                 {m.text}
@@ -54,14 +62,16 @@ export default function ChatSupportPage() {
                   {new Date(m.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
                 </div>
               </div>
-            </div>
+            </motion.div>
           ))}
         </div>
         <div className="safe-b flex items-center gap-2 border-t border-zinc-100 p-3 dark:border-zinc-800">
           <Input placeholder="Type a message…" value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-          <Button variant="gradient" className="shrink-0" onClick={send} aria-label="Send message"><Send className="h-4 w-4" /></Button>
+          <MotionButton variant="gradient" className="shrink-0" onClick={send} aria-label="Send message">
+            <Send className="h-4 w-4" />
+          </MotionButton>
         </div>
-      </div>
+      </SurfacePanel>
     </div>
   );
 }

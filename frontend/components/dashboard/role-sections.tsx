@@ -9,6 +9,8 @@ import { CadenceGrid } from "./cadence-grid";
 import { StatusDonut } from "./status-donut";
 import { ActivityFeed } from "./activity-feed";
 import { TeamPending } from "./team-pending";
+import { AnimatedProgressBar, ProgressRing } from "@/components/ui/progress-ring";
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import type {
   ActivityItem,
   CioSummary,
@@ -52,13 +54,26 @@ export function ExecutorDashboard({
 
       <section className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <ActivityFeed items={activity} />
-        <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">My completion</div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Your completion trend</h3>
-          <p className="mt-1 text-xs text-zinc-500">
-            {individual ? `${individual.completionPercent}% completion, ${individual.overdue} overdue task(s).` : "No performance data yet."}
-          </p>
-        </div>
+        <SurfacePanel chip="My completion" title="Your completion trend" variant="gradient-border">
+          <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start">
+            <ProgressRing
+              value={individual?.completionPercent ?? 0}
+              tone="emerald"
+              label="Completion rate"
+              sublabel={individual ? `${individual.completed} tasks done` : undefined}
+            />
+            <div className="flex-1 space-y-3 text-center sm:text-left">
+              <p className="text-sm text-zinc-600 dark:text-zinc-300">
+                {individual
+                  ? `${individual.completionPercent}% completion with ${individual.overdue} overdue task(s).`
+                  : "No performance data yet — complete your first task to start tracking."}
+              </p>
+              {individual && (
+                <AnimatedProgressBar value={individual.completionPercent} tone="emerald" showLabel />
+              )}
+            </div>
+          </div>
+        </SurfacePanel>
       </section>
     </>
   );

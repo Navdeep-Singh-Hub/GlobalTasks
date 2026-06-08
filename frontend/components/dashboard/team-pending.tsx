@@ -1,5 +1,7 @@
 "use client";
 
+import { AnimatedProgressBar } from "@/components/ui/progress-ring";
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Users } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
@@ -77,17 +79,8 @@ export function TeamPending({ members }: { members: Member[] }) {
   }
 
   return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-5 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            Team pending
-          </div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Pending work by member</h3>
-          <p className="mt-1 text-xs text-zinc-500">A quick view of today&apos;s pending and overdue items.</p>
-        </div>
-      </div>
+    <SurfacePanel chip="Team pending" title="Pending work by member" variant="elevated">
+      <p className="-mt-2 mb-4 text-xs text-zinc-500">A quick view of today&apos;s pending and overdue items.</p>
 
       <div className="mt-4 rounded-xl bg-gradient-to-r from-brand-50/70 to-accent-cyan/10 p-3 dark:from-brand-900/20 dark:to-accent-cyan/10">
         <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-wider text-zinc-600">
@@ -149,12 +142,7 @@ export function TeamPending({ members }: { members: Member[] }) {
                   </span>
                 </div>
                 <div className="mt-1 pl-9 text-[11px] text-zinc-500">{m.pending} pending, {m.overdue} overdue</div>
-                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                  <div
-                    className="h-full rounded-full bg-brand-gradient"
-                    style={{ width: `${Math.min(100, (m.pending + m.overdue) * 8)}%` }}
-                  />
-                </div>
+                <AnimatedProgressBar value={Math.min(100, (m.pending + m.overdue) * 8)} tone="amber" className="mt-3" />
                 <div className="mt-3 grid grid-cols-3 gap-2 text-center text-[10.5px]">
                   <div className="rounded-lg border border-zinc-100 p-1.5 dark:border-zinc-800">
                     <div className="font-semibold text-zinc-500">One-time</div>
@@ -247,6 +235,6 @@ export function TeamPending({ members }: { members: Member[] }) {
           <ChevronRight className="h-4 w-4" />
         </button>
       </div>
-    </div>
+    </SurfacePanel>
   );
 }

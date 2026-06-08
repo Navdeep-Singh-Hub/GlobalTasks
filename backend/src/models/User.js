@@ -42,6 +42,8 @@ const userSchema = new mongoose.Schema(
 userSchema.index({ role: 1, active: 1 });
 userSchema.index({ centerId: 1, role: 1 });
 userSchema.index({ reportsTo: 1 });
+userSchema.index({ name: 1 });
+userSchema.index({ name: "text", email: "text" });
 
 userSchema.methods.toJSON = function toJSON() {
   const obj = this.toObject();

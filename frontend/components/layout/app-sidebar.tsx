@@ -102,7 +102,7 @@ export function AppSidebar({
   const shell = (
     <aside
       className={cn(
-        "relative flex shrink-0 flex-col border-r border-zinc-200 bg-white transition-all duration-200 dark:border-zinc-800 dark:bg-zinc-950",
+        "relative flex shrink-0 flex-col border-r border-white/40 bg-white/75 backdrop-blur-xl transition-all duration-300 dark:border-zinc-800/60 dark:bg-zinc-950/80",
         variant === "desktop" && (collapsed ? "w-[68px]" : "w-[236px]"),
         variant === "mobile" && "h-full w-[min(88vw,300px)] border-r-0 shadow-2xl"
       )}
@@ -162,10 +162,10 @@ export function AppSidebar({
               href={item.href}
               onClick={() => onCloseMobile?.()}
               className={cn(
-                "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all",
+                "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-200",
                 active
                   ? "bg-brand-gradient text-white shadow-brand"
-                  : "text-zinc-600 hover:bg-brand-50 hover:text-brand-700 dark:text-zinc-300 dark:hover:bg-zinc-800/80 dark:hover:text-white",
+                  : "text-zinc-600 hover:bg-brand-50/80 hover:text-brand-700 hover:shadow-sm dark:text-zinc-300 dark:hover:bg-zinc-800/80 dark:hover:text-white",
                 collapsed && variant === "desktop" && "justify-center px-2"
               )}
               title={collapsed ? item.label : undefined}

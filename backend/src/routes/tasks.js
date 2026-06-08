@@ -34,17 +34,27 @@ import {
   finalizeApprovalRecord,
   reopenApprovalForAssigner,
   resubmitDailyRecurringTask,
-  enrichApprovalInboxTasks,
+  filterAndEnrichApprovalInboxTasks,
   repairAndFilterApprovalInboxTasks,
   repairAssigneeInboxApprovalState,
   resolveOccurrenceDueForApproval,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
+import {
+  invalidateAssigneeSync,
+  scheduleBackground,
+  shouldRunThrottled,
+  throttleKey,
+  REPAIR_TTL_MS,
+} from "../services/syncThrottle.js";
 
 const router = Router();
 router.use(authRequired);
 router.use(requireCenterAssigned);
+
+/** List views: skip heavy embedded form schema. */
+const TASK_LIST_SELECT = "-requiredInputsSchema -inputPayload -__v";
 
 async function actor(req) {
   if (req._actor) return req._actor;
@@ -156,6 +166,7 @@ async function applyTaskTextAndPersonSearch(filter, query) {
     $or: [{ name: regex }, { email: regex }],
   })
     .select("_id")
+    .limit(40)
     .lean();
   const userIds = matchingUsers.map((u) => u._id);
   if (userIds.length) {
@@ -519,12 +530,25 @@ router.get("/my-missed-occurrences", async (req, res) => {
 
 router.get("/", async (req, res) => {
   const me = await actor(req);
-  if (req.query.recurring === "true" && (req.query.workableToday === "true" || req.query.assigneeInbox === "true")) {
-    await syncRecurringTasksForAssignee(req.userId);
+  const forceSync = req.query.sync === "true";
+  const needsRecurringSync =
+    req.query.recurring === "true" && (req.query.workableToday === "true" || req.query.assigneeInbox === "true");
+
+  if (needsRecurringSync) {
+    const syncKey = throttleKey("recurring-sync", req.userId);
+    if (forceSync || shouldRunThrottled(syncKey)) {
+      await syncRecurringTasksForAssignee(req.userId);
+    }
   }
+
   if (req.query.assigneeInbox === "true") {
-    await repairAssigneeInboxApprovalState(req.userId);
+    scheduleBackground(
+      throttleKey("inbox-repair", req.userId),
+      () => repairAssigneeInboxApprovalState(req.userId),
+      REPAIR_TTL_MS
+    );
   }
+
   const filter = buildFilter(req.query, req.userId, req.userRole);
   await applyTaskTextAndPersonSearch(filter, req.query);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
@@ -534,24 +558,28 @@ router.get("/", async (req, res) => {
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
   const isMasterList = String(req.query.masterScope || "").toLowerCase() === "true";
-  const statusFilter = req.query.status && req.query.status !== "all" ? String(req.query.status) : "";
-  const [taskDocs, total] = await Promise.all([
-    Task.find(filter)
-      .populate("assignees", "name email avatarUrl role")
-      .populate("assignedBy", "name email")
-      .populate("createdBy", "name email")
-      .populate("project", "name")
-      .populate("departmentId", "name code")
-      .populate("centerId", "name code")
-      .sort(isMasterList ? { updatedAt: -1 } : { createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit),
-    Task.countDocuments(filter),
-  ]);
+  const isApprovalInbox = req.query.approval === "true";
+  const statusFilter = req.query.status && req.query.status !== "all" ? String(req.query.status) : "all";
 
-  let tasks = isMasterList
-    ? await enrichMasterTasksWithHistoryMeta(taskDocs, statusFilter)
-    : taskDocs.map((t) => (t.toObject ? t.toObject() : t));
+  const listQuery = Task.find(filter)
+    .select(TASK_LIST_SELECT)
+    .populate("assignees", "name email avatarUrl role")
+    .populate("assignedBy", "name email")
+    .populate("createdBy", "name email")
+    .populate("project", "name")
+    .populate("departmentId", "name code")
+    .populate("centerId", "name code")
+    .sort(isMasterList ? { updatedAt: -1 } : { createdAt: -1 })
+    .skip((page - 1) * limit)
+    .limit(limit)
+    .lean();
+
+  const [taskDocs, total] = await Promise.all([listQuery, Task.countDocuments(filter)]);
+
+  let tasks =
+    isMasterList && (statusFilter === "completed" || statusFilter === "cancelled")
+      ? await enrichMasterTasksWithHistoryMeta(taskDocs, statusFilter)
+      : taskDocs;
 
   if (req.query.workableToday === "true" && req.query.recurring === "true") {
     tasks = tasks.filter((t) =>
@@ -559,9 +587,12 @@ router.get("/", async (req, res) => {
     );
   }
 
-  const isApprovalInbox = req.query.approval === "true";
   if (isApprovalInbox) {
-    tasks = await repairAndFilterApprovalInboxTasks(tasks);
+    if (forceSync || req.query.repair === "true") {
+      tasks = await repairAndFilterApprovalInboxTasks(tasks);
+    } else {
+      tasks = await filterAndEnrichApprovalInboxTasks(tasks);
+    }
   }
 
   if (req.query.assigneeInbox === "true") {
@@ -671,6 +702,7 @@ router.post("/", async (req, res, next) => {
         assigneeIds: notifyIds,
         assignedByUserId: req.userId,
       });
+      for (const id of task.assignees) invalidateAssigneeSync(id);
     }
     await logActivity({
       actor: req.userId,
@@ -912,6 +944,11 @@ router.patch("/:id", async (req, res, next) => {
           assignedByUserId: req.userId,
         });
       }
+      for (const id of new Set([...newAssigneeIds, ...prevAssigneeIds])) invalidateAssigneeSync(id);
+    }
+
+    if (justSubmitted || assignerReopened || prevStatus !== task.status) {
+      for (const id of task.assignees || []) invalidateAssigneeSync(id);
     }
 
     res.json({ task });
@@ -1150,6 +1187,7 @@ router.post("/:id/not-done", async (req, res) => {
       });
     }
 
+    for (const id of task.assignees || []) invalidateAssigneeSync(id);
     res.json({ task });
   } catch (e) {
     res.status(500).json({ message: e.message || "Could not mark task as not done" });
@@ -1190,6 +1228,7 @@ router.post("/:id/approve", async (req, res) => {
         link: isRecurring(task.taskType) ? "/pending-recurring" : "/pending-single",
       });
     }
+    for (const id of task.assignees || []) invalidateAssigneeSync(id);
     return res.json({ task });
   }
 
@@ -1244,6 +1283,7 @@ router.post("/:id/approve", async (req, res) => {
       link: "/pending-single",
     });
   }
+  for (const id of task.assignees || []) invalidateAssigneeSync(id);
   res.json({ task });
 });
 
@@ -1321,6 +1361,7 @@ router.post("/:id/reject", async (req, res) => {
       });
     }
 
+    for (const id of task.assignees || []) invalidateAssigneeSync(id);
     res.json({ task });
   } catch (e) {
     res.status(500).json({ message: e.message || "Reject failed" });

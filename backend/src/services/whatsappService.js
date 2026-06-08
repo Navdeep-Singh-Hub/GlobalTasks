@@ -1,7 +1,19 @@
-const PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || "";
-const ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN || "";
-const ADMIN_PHONE = process.env.WHATSAPP_ADMIN_PHONE || "";
-const API_URL = PHONE_NUMBER_ID ? `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages` : "";
+function phoneNumberId() {
+  return String(process.env.WHATSAPP_PHONE_NUMBER_ID || "").trim();
+}
+
+function accessToken() {
+  return String(process.env.WHATSAPP_ACCESS_TOKEN || "").trim();
+}
+
+function adminPhoneRaw() {
+  return String(process.env.WHATSAPP_ADMIN_PHONE || "").trim();
+}
+
+function apiUrl() {
+  const id = phoneNumberId();
+  return id ? `https://graph.facebook.com/v20.0/${id}/messages` : "";
+}
 
 export function normalizePhone(phone) {
   const raw = String(phone || "").replace(/[^\d+]/g, "");
@@ -28,7 +40,20 @@ function parseMetaErrorBody(errText) {
 }
 
 export function isWhatsAppConfigured() {
-  return Boolean(API_URL && ACCESS_TOKEN);
+  return Boolean(apiUrl() && accessToken());
+}
+
+/** For diagnostics scripts — never logs the token itself. */
+export function whatsAppConfigStatus() {
+  const id = phoneNumberId();
+  const token = accessToken();
+  return {
+    phoneNumberIdSet: Boolean(id),
+    phoneNumberId: id ? `${id.slice(0, 4)}…${id.slice(-4)}` : "",
+    accessTokenSet: Boolean(token),
+    accessTokenLength: token.length,
+    configured: Boolean(id && token),
+  };
 }
 
 /** Normalize template variable text; keeps line breaks (one detail per line). */
@@ -54,16 +79,18 @@ export function isTemplateParamError(err) {
 }
 
 async function sendPayload(phone, payload, stubLogText) {
-  if (!API_URL || !ACCESS_TOKEN) {
+  const url = apiUrl();
+  const token = accessToken();
+  if (!url || !token) {
     console.log(`[whatsapp:stub] to=${phone} ${stubLogText}`);
     return { ok: true, stub: true };
   }
 
-  const res = await fetch(API_URL, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${ACCESS_TOKEN}`,
+      Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify(payload),
   });
@@ -91,7 +118,7 @@ async function sendPayload(phone, payload, stubLogText) {
 
 export async function sendWhatsAppText({ to, text, fallbackToAdmin = false }) {
   let phone = normalizePhone(to);
-  if (!phone && fallbackToAdmin) phone = normalizePhone(ADMIN_PHONE);
+  if (!phone && fallbackToAdmin) phone = normalizePhone(adminPhoneRaw());
   if (!phone || !text) return { ok: false, skipped: true, reason: "missing_phone_or_text" };
 
   return sendPayload(
@@ -108,7 +135,7 @@ export async function sendWhatsAppText({ to, text, fallbackToAdmin = false }) {
 
 export async function sendWhatsAppTemplate({ to, name, languageCode = "en", parameters = [], fallbackToAdmin = false }) {
   let phone = normalizePhone(to);
-  if (!phone && fallbackToAdmin) phone = normalizePhone(ADMIN_PHONE);
+  if (!phone && fallbackToAdmin) phone = normalizePhone(adminPhoneRaw());
   if (!phone || !name) return { ok: false, skipped: true, reason: "missing_phone_or_template" };
 
   return sendPayload(
@@ -134,4 +161,3 @@ export async function sendWhatsAppTemplate({ to, name, languageCode = "en", para
     `template=${name} params=${JSON.stringify(parameters)}`
   );
 }
-

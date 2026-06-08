@@ -5,6 +5,9 @@ export async function connectDatabase(uri) {
   try {
     await mongoose.connect(uri, {
       serverSelectionTimeoutMS: 12_000,
+      maxPoolSize: Math.min(100, Math.max(10, Number(process.env.MONGODB_MAX_POOL_SIZE) || 50)),
+      minPoolSize: Math.max(0, Number(process.env.MONGODB_MIN_POOL_SIZE) || 5),
+      maxIdleTimeMS: 30_000,
     });
   } catch (err) {
     const msg = String(err?.message || err);

@@ -1,6 +1,9 @@
 "use client";
 
+import { AnimatedProgressBar } from "@/components/ui/progress-ring";
+import { SurfacePanel } from "@/components/ui/surface-panel";
 import dynamic from "next/dynamic";
+import { motion } from "framer-motion";
 
 const COLORS: Record<string, string> = {
   pending: "#f5b614",
@@ -30,7 +33,7 @@ const StatusDonutChart = dynamic(
                 dataKey="value"
                 innerRadius={62}
                 outerRadius={88}
-                paddingAngle={data.length > 1 ? 2 : 0}
+                paddingAngle={data.length > 1 ? 3 : 0}
                 strokeWidth={0}
               >
                 {(data.length ? data : [{ name: "empty", value: 1 }]).map((d, i) => (
@@ -49,53 +52,55 @@ const StatusDonutChart = dynamic(
 export function StatusDonut({ data }: { data: { name: string; value: number }[] }) {
   const total = data.reduce((a, b) => a + b.value, 0) || 1;
   return (
-    <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-      <div className="flex items-start justify-between">
-        <div>
-          <div className="chip border border-zinc-200 bg-zinc-50 text-zinc-500">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-            Status breakdown
-          </div>
-          <h3 className="mt-3 text-[20px] font-bold tracking-tight">Live task states</h3>
-        </div>
+    <SurfacePanel
+      chip="Status breakdown"
+      title="Live task states"
+      variant="gradient-border"
+      action={
         <div className="rounded-full bg-zinc-50 px-3 py-1 text-[11px] font-semibold text-zinc-500 dark:bg-zinc-900">
           {total} total
         </div>
-      </div>
-
-      <div className="mt-4 grid min-w-0 items-center gap-4 md:grid-cols-[220px_1fr]">
+      }
+    >
+      <div className="grid min-w-0 items-center gap-4 md:grid-cols-[220px_1fr]">
         <div className="relative mx-auto h-[200px] w-full max-w-[240px] min-w-0 md:mx-0 md:max-w-none">
           <StatusDonutChart data={data} />
-          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+          <motion.div
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 200, damping: 20 }}
+            className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"
+          >
             <div className="text-2xl font-bold tracking-tight">{total}</div>
             <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Tasks</div>
-          </div>
+          </motion.div>
         </div>
 
         <div className="space-y-2">
-          {(data.length ? data : []).map((d) => {
+          {(data.length ? data : []).map((d, i) => {
             const pct = Math.round((d.value / total) * 1000) / 10;
             return (
-              <div key={d.name} className="rounded-xl border border-zinc-100 p-2.5 dark:border-zinc-800">
+              <motion.div
+                key={d.name}
+                initial={{ opacity: 0, x: 8 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: i * 0.05 }}
+                className="rounded-xl border border-zinc-100 p-2.5 dark:border-zinc-800"
+              >
                 <div className="flex items-center justify-between text-[12px] font-semibold">
                   <span className="flex items-center gap-2">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[d.name] || "#94a3b8" }} />
+                    <span className="h-2.5 w-2.5 rounded-full shadow-sm" style={{ background: COLORS[d.name] || "#94a3b8" }} />
                     {LABELS[d.name] || d.name}
                   </span>
                   <span>{d.value}</span>
                 </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
-                  <div
-                    className="h-full rounded-full"
-                    style={{ width: `${pct}%`, background: COLORS[d.name] || "#94a3b8" }}
-                  />
-                </div>
+                <AnimatedProgressBar value={pct} tone={d.name === "completed" ? "emerald" : d.name === "overdue" ? "rose" : "brand"} className="mt-1.5" />
                 <div className="mt-1 text-[10px] text-zinc-500">{pct}% of status total</div>
-              </div>
+              </motion.div>
             );
           })}
         </div>
       </div>
-    </div>
+    </SurfacePanel>
   );
 }

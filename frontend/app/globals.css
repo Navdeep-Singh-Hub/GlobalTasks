@@ -3,26 +3,30 @@
 @tailwind utilities;
 
 :root {
-  --background: #f6f8fb;
+  --background: #f4f7fc;
   --foreground: #0f172a;
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.85);
+  --mesh-opacity: 1;
 }
 
 .dark {
-  --background: #0b1220;
+  --background: #070d18;
   --foreground: #e5e7eb;
+  --glass-bg: rgba(15, 23, 42, 0.75);
+  --glass-border: rgba(51, 65, 85, 0.6);
+  --mesh-opacity: 0.85;
 }
 
 * {
-  border-color: rgb(226 232 240 / 0.9);
+  border-color: rgb(226 232 240 / 0.85);
 }
 
 .dark * {
-  border-color: rgb(39 46 62 / 0.9);
+  border-color: rgb(39 46 62 / 0.85);
 }
 
-/* Use min-height instead of height:100% so the document can grow past the
-   viewport; fixed 100% height + overflow-x hidden breaks iOS Safari scrolling. */
 html {
   min-height: 100dvh;
   background: var(--background);
@@ -39,6 +43,199 @@ body {
   overflow-x: hidden;
 }
 
+/* Ambient mesh background for app shell */
+.app-mesh {
+  position: relative;
+  background-color: var(--background);
+}
+.app-mesh::before {
+  content: "";
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  opacity: var(--mesh-opacity);
+  background-image:
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(30, 142, 225, 0.13), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 10%, rgba(34, 196, 212, 0.11), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(139, 92, 246, 0.08), transparent 55%),
+    radial-gradient(ellipse 40% 30% at 80% 80%, rgba(245, 185, 66, 0.07), transparent 50%);
+}
+.dark .app-mesh::before {
+  background-image:
+    radial-gradient(ellipse 80% 60% at 10% 0%, rgba(30, 142, 225, 0.16), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 90% 10%, rgba(34, 196, 212, 0.12), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 50% 100%, rgba(139, 92, 246, 0.10), transparent 55%);
+}
+
+/* Glass morphism panels */
+@layer components {
+  .glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid var(--glass-border);
+  }
+
+  .glass-card {
+    @apply rounded-2xl border border-white/80 bg-white/80 backdrop-blur-md;
+    @apply dark:border-zinc-800/80 dark:bg-zinc-950/75;
+    box-shadow: 0 8px 32px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  }
+
+  .page-hero {
+    @apply relative overflow-hidden rounded-2xl border border-white/70 bg-white/75 p-4 shadow-soft backdrop-blur-md sm:rounded-3xl sm:p-6;
+    @apply dark:border-zinc-800/70 dark:bg-zinc-950/70;
+  }
+
+  .page-hero::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(30, 142, 225, 0.06) 0%, rgba(34, 196, 212, 0.04) 50%, rgba(139, 92, 246, 0.04) 100%);
+  }
+
+  .page-hero-blob {
+    pointer-events: none;
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(48px);
+    animation: glow-pulse 4s ease-in-out infinite;
+  }
+
+  .interactive-card {
+    @apply relative overflow-hidden rounded-2xl border bg-white shadow-card transition-all duration-300;
+    @apply hover:-translate-y-1 hover:shadow-soft dark:bg-zinc-950;
+  }
+
+  .interactive-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.3s;
+    background: linear-gradient(135deg, rgba(30, 142, 225, 0.04), rgba(34, 196, 212, 0.03));
+    pointer-events: none;
+  }
+  .interactive-card:hover::after {
+    opacity: 1;
+  }
+
+  .btn-shimmer {
+    background-size: 200% 100%;
+    background-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 100%
+    );
+  }
+
+  .status-accent-pending {
+    @apply border-l-[3px] border-l-amber-400;
+  }
+  .status-accent-in_progress {
+    @apply border-l-[3px] border-l-sky-400;
+  }
+  .status-accent-awaiting_approval {
+    @apply border-l-[3px] border-l-violet-500;
+  }
+  .status-accent-completed {
+    @apply border-l-[3px] border-l-emerald-500;
+  }
+  .status-accent-overdue {
+    @apply border-l-[3px] border-l-rose-500;
+  }
+  .status-accent-cancelled {
+    @apply border-l-[3px] border-l-zinc-400;
+  }
+
+  .filter-panel {
+    @apply animate-fade-in rounded-2xl border border-white/80 bg-white/90 p-3 shadow-card backdrop-blur-sm sm:p-4;
+    @apply dark:border-zinc-800/80 dark:bg-zinc-950/90;
+  }
+
+  .segment-control {
+    @apply inline-flex rounded-xl border border-zinc-200/80 bg-zinc-100/80 p-1 backdrop-blur-sm dark:border-zinc-700 dark:bg-zinc-900/80;
+  }
+
+  .segment-btn-active {
+    @apply rounded-lg bg-brand-gradient text-white shadow-brand;
+  }
+
+  .segment-btn {
+    @apply rounded-lg px-3 py-1.5 text-xs font-semibold text-zinc-600 transition-all duration-200 dark:text-zinc-400;
+  }
+  .segment-btn:hover:not(.segment-btn-active) {
+    @apply text-zinc-900 dark:text-zinc-200;
+  }
+
+  .surface-gradient-border {
+    position: relative;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+  }
+  .surface-gradient-border::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, rgba(30, 142, 225, 0.35), rgba(34, 196, 212, 0.25), rgba(139, 92, 246, 0.2));
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  .page-mood-warm::before {
+    background-image:
+      radial-gradient(ellipse 70% 50% at 20% 0%, rgba(245, 185, 66, 0.12), transparent 55%),
+      radial-gradient(ellipse 60% 40% at 90% 20%, rgba(30, 142, 225, 0.10), transparent 50%);
+  }
+
+  .task-complete-flash {
+    animation: task-complete-flash 0.9s ease-out forwards;
+  }
+
+  .floating-orb {
+    pointer-events: none;
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(40px);
+    animation: float 6s ease-in-out infinite;
+  }
+}
+
+@keyframes task-complete-flash {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.55);
+    transform: scale(1);
+  }
+  40% {
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0.25);
+    transform: scale(1.01);
+  }
+  100% {
+    box-shadow: none;
+    transform: scale(1);
+  }
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(203 213 225 / 0.7);
+  border-radius: 999px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgb(55 65 81 / 0.7);
+}
+
 /* iOS/Android safe areas */
 .safe-x {
   padding-left: max(1rem, env(safe-area-inset-left));
@@ -48,27 +245,33 @@ body {
   padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
-/* Custom scrollbars */
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: rgb(203 213 225 / .7); border-radius: 999px; }
-.dark ::-webkit-scrollbar-thumb { background: rgb(55 65 81 / .7); }
-
 /* Fullcalendar polish */
-.fc { font-family: var(--font-sans); }
-.fc .fc-toolbar-title { font-size: 1.1rem; font-weight: 600; }
-.fc .fc-button-primary { background: #1e8ee1; border-color: #1e8ee1; }
-.fc .fc-button-primary:not(:disabled):hover { background: #1377c5; border-color: #1377c5; }
+.fc {
+  font-family: var(--font-sans);
+}
+.fc .fc-toolbar-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.fc .fc-button-primary {
+  background: #1e8ee1;
+  border-color: #1e8ee1;
+}
+.fc .fc-button-primary:not(:disabled):hover {
+  background: #1377c5;
+  border-color: #1377c5;
+}
 
-/* Utility */
+/* Utility chips */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
+  padding: 4px 12px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -76,4 +279,33 @@ body {
   font-size: 1.125rem;
   font-weight: 700;
   letter-spacing: -0.01em;
+}
+
+/* Celebration confetti particles */
+@keyframes confetti-fall {
+  0% {
+    transform: translateY(0) rotate(0deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(100vh) rotate(720deg);
+    opacity: 0;
+  }
+}
+
+@keyframes confetti-burst {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.confetti-particle {
+  position: fixed;
+  pointer-events: none;
+  z-index: 9999;
+  border-radius: 2px;
 }

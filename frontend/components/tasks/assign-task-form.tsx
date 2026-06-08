@@ -16,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
+import { useCelebration } from "@/contexts/celebration-context";
 import { isCeo, isManagement } from "@/lib/roles";
 import { useEffect, useMemo, useState } from "react";
 
@@ -175,6 +176,7 @@ async function uploadVoice(blob: Blob): Promise<string> {
 
 export function AssignTaskForm() {
   const { user } = useAuth();
+  const { celebrate } = useCelebration();
   const [drafts, setDrafts] = useState<Draft[]>([emptyDraft(1)]);
   const [users, setUsers] = useState<UserLite[]>([]);
   const [centers, setCenters] = useState<CenterLite[]>([]);
@@ -275,6 +277,7 @@ export function AssignTaskForm() {
         });
       }
       setMessage({ type: "success", text: `Created ${drafts.length} task${drafts.length > 1 ? "s" : ""} successfully.` });
+      celebrate("assign", `${drafts.length} task${drafts.length > 1 ? "s" : ""} assigned!`);
       resetAll();
     } catch (e) {
       setMessage({
@@ -287,7 +290,7 @@ export function AssignTaskForm() {
   };
 
   return (
-    <div className="space-y-4 sm:space-y-5">
+    <div className="glass-card space-y-4 p-4 sm:space-y-5 sm:p-5">
       {drafts.map((d, idx) => (
         <DraftCard
           key={d.id}

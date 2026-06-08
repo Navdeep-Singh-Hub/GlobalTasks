@@ -26,6 +26,12 @@ import {
   sanitizeHistoryMissedDisplay,
 } from "../services/taskApprovalHistory.js";
 import { syncRecurringTasksForAssignee } from "../services/recurringOccurrenceSync.js";
+import {
+  shouldRunThrottled,
+  scheduleBackground,
+  throttleKey,
+  REPAIR_TTL_MS,
+} from "../services/syncThrottle.js";
 
 const router = Router();
 router.use(authRequired);
@@ -369,9 +375,19 @@ router.get("/assignee-approval-history", async (req, res) => {
   }
 
   if (req.query.sync === "true") {
-    await syncRecurringTasksForAssignee(assigneeId);
-    await repairAssigneeHistoryRecords({ assigneeId });
+    const repairKey = throttleKey("history-repair", assigneeId);
+    if (shouldRunThrottled(repairKey, REPAIR_TTL_MS)) {
+      await syncRecurringTasksForAssignee(assigneeId);
+      await repairAssigneeHistoryRecords({ assigneeId });
+    } else {
+      scheduleBackground(
+        throttleKey("recurring-sync", assigneeId),
+        () => syncRecurringTasksForAssignee(assigneeId)
+      );
+    }
   }
+
+  const recordLimit = Math.min(1500, Math.max(50, Number(req.query.limit) || 800));
 
   const q = await buildAssigneeHistoryQuery({
     userId: req.userId,
@@ -387,7 +403,7 @@ router.get("/assignee-approval-history", async (req, res) => {
       .populate("approvedBy", "name email")
       .populate("rejectedBy", "name email")
       .sort({ occurrenceDueDate: -1, submittedAt: -1 })
-      .limit(2000)
+      .limit(recordLimit)
       .lean(),
     fetchLivePendingApprovals({
       userId: req.userId,
