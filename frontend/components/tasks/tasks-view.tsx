@@ -945,7 +945,6 @@ export function TasksView({
         onSuccess={() => {
           setSubmitBulkOpen(false);
           setSelected([]);
-          celebrate("submit");
           load();
         }}
       />

@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { api, ApiError } from "@/lib/api";
+import { useCelebration } from "@/contexts/celebration-context";
 import { useEffect, useState } from "react";
 
 export function SubmitForApprovalModal({
@@ -20,6 +21,7 @@ export function SubmitForApprovalModal({
   onClose: () => void;
   onSuccess?: () => void;
 }) {
+  const { celebrate } = useCelebration();
   const [remarks, setRemarks] = useState("");
   const [err, setErr] = useState("");
   const [working, setWorking] = useState(false);
@@ -53,6 +55,7 @@ export function SubmitForApprovalModal({
           body: JSON.stringify({ status: "completed", submissionRemarks: text }),
         });
       }
+      celebrate("submit");
       onSuccess?.();
       onClose();
     } catch (e) {
