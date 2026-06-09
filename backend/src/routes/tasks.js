@@ -807,6 +807,7 @@ router.patch("/:id", async (req, res, next) => {
     }
 
     const requestedComplete = "status" in req.body && req.body.status === "completed";
+    const submissionRemarks = String(req.body.submissionRemarks || "").trim();
     if (requestedComplete && (task.assignees || []).some((id) => String(id) === String(req.userId))) {
       const meUser = await User.findById(req.userId).select("_id weekOffDays").lean();
       if (isWeekOffToday(meUser?.weekOffDays || [])) {
@@ -814,22 +815,36 @@ router.patch("/:id", async (req, res, next) => {
       }
     }
     const requiredFields = Array.isArray(task.requiredInputsSchema?.required) ? task.requiredInputsSchema.required : [];
-    const payloadKeys = task.inputPayload && typeof task.inputPayload === "object" ? Object.keys(task.inputPayload) : [];
-    const filledRequired = requiredFields.filter((k) => payloadKeys.includes(k) && task.inputPayload[k] !== "" && task.inputPayload[k] !== null)
-      .length;
+    if (!task.inputPayload || typeof task.inputPayload !== "object") task.inputPayload = {};
+    // Approval submit: remarks satisfy legacy required-input fields (drawer has no separate payload UI).
+    if (requestedComplete && submissionRemarks && requiredFields.length) {
+      for (const field of requiredFields) {
+        const val = task.inputPayload[field];
+        if (val === "" || val === null || val === undefined) {
+          task.inputPayload[field] = submissionRemarks;
+        }
+      }
+    }
+    const payloadKeys = Object.keys(task.inputPayload);
+    const filledRequired = requiredFields.filter(
+      (k) => payloadKeys.includes(k) && task.inputPayload[k] !== "" && task.inputPayload[k] !== null
+    ).length;
     task.inputCompletionPercent = requiredFields.length ? Math.round((filledRequired / requiredFields.length) * 100) : 100;
     if (requestedComplete && requiredFields.length && filledRequired < requiredFields.length) {
+      const missing = requiredFields.filter(
+        (k) => !payloadKeys.includes(k) || task.inputPayload[k] === "" || task.inputPayload[k] === null
+      );
       return res.status(400).json({
-        message: "Required inputs missing",
-        errors: requiredFields
-          .filter((k) => !payloadKeys.includes(k) || task.inputPayload[k] === "" || task.inputPayload[k] === null)
-          .map((field) => ({ field, issue: "required" })),
+        message:
+          missing.length === 1
+            ? `Required input missing: ${missing[0]}`
+            : "Required inputs missing",
+        errors: missing.map((field) => ({ field, issue: "required" })),
       });
     }
     if (requestedComplete && !isCeo(req.userRole)) {
       const workableErr = assertOccurrenceWorkableForAssignee(task);
       if (workableErr) return res.status(400).json({ message: workableErr });
-      const submissionRemarks = String(req.body.submissionRemarks || "").trim();
       if (!submissionRemarks) {
         return res.status(400).json({ message: "Remarks are required when submitting for approval" });
       }
@@ -947,6 +962,8 @@ router.patch("/:id", async (req, res, next) => {
       for (const id of new Set([...newAssigneeIds, ...prevAssigneeIds])) invalidateAssigneeSync(id);
     }
 
+    const justSubmitted =
+      !assignerReopened && prevStatus !== "awaiting_approval" && task.status === "awaiting_approval";
     if (justSubmitted || assignerReopened || prevStatus !== task.status) {
       for (const id of task.assignees || []) invalidateAssigneeSync(id);
     }
