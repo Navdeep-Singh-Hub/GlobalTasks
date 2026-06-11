@@ -55,9 +55,9 @@ export function SubmitForApprovalModal({
           body: JSON.stringify({ status: "completed", submissionRemarks: text }),
         });
       }
-      celebrate("submit");
-      onSuccess?.();
       onClose();
+      onSuccess?.();
+      window.requestAnimationFrame(() => celebrate("submit"));
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : "Could not submit for approval.");
     } finally {

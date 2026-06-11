@@ -1,6 +1,7 @@
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { Task } from "../models/Task.js";
 import { TaskEvent } from "../models/TaskEvent.js";
+import { userAssigneeIdsForOperationsLead } from "./taskApprovalRouting.js";
 import { APP_TIMEZONE, calendarDayKeyInTz, startOfNextCalendarDayInTz, isRecurring, isOccurrencePastDue, resolveOccurrenceDueForSubmitTime } from "../utils/recurrence.js";
 
 export function taskAssignerIdFromDoc(task) {
@@ -130,7 +131,7 @@ async function resetTaskToAssigneePendingWork(
   await task.save();
 }
 
-/** Reset phantom/stale approval state so assignee pending inbox can show the task again. */
+/** Reset phantom/stale approval state — never auto-mark a real submission as missed. */
 export async function repairAssigneeInboxApprovalState(assigneeId) {
   const candidates = await Task.find({
     deletedAt: null,
@@ -139,10 +140,37 @@ export async function repairAssigneeInboxApprovalState(assigneeId) {
       { status: "awaiting_approval", approvalStatus: "pending" },
       { approvalStatus: "pending", status: { $nin: ["awaiting_approval", "completed", "cancelled"] } },
     ],
-  }).select("_id");
+  });
   if (!candidates.length) return { repaired: 0 };
-  await repairAndFilterApprovalInboxTasks(candidates);
-  return { repaired: candidates.length };
+
+  const todayKey = calendarDayKeyInTz(new Date());
+  let repaired = 0;
+
+  for (const task of candidates) {
+    if (task.approvalStatus === "pending" && !["awaiting_approval", "completed", "cancelled"].includes(task.status)) {
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      await task.save();
+      await TaskApprovalRecord.deleteMany({ taskId: task._id, status: "pending", kind: "completion" });
+      repaired += 1;
+      continue;
+    }
+
+    if (task.status !== "awaiting_approval" || task.approvalStatus !== "pending") continue;
+
+    const pending = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+    }).sort({ submittedAt: -1 });
+
+    if (!pending) {
+      await resetTaskToAssigneePendingWork(task, { todayKey });
+      repaired += 1;
+    }
+  }
+
+  return { repaired };
 }
 
 /** For Approval inbox: repair phantom/stale rows and return only valid submissions. */
@@ -298,7 +326,8 @@ export async function filterAndEnrichApprovalInboxTasks(taskDocs) {
 
     const effectiveDue = effectivePendingOccurrenceDue(pending, task);
     const occKey = calendarDayKeyInTz(effectiveDue);
-    if (task.taskType === "daily" && (occKey < todayKey || occKey > todayKey)) continue;
+    // Hide only future daily occurrences; past/today submissions stay in For Approval.
+    if (task.taskType === "daily" && occKey > todayKey) continue;
 
     task.pendingOccurrenceDueDate = effectiveDue;
     task.dueDate = effectiveDue;
@@ -657,10 +686,24 @@ export function assignerScopeClause(userId) {
   };
 }
 
+/** For Approval + performance: tasks you assigned, or (operations) tasks for your mapped user-role team. */
+export async function approvalVisibilityClause({ userId, role, centerId, isCeoRole }) {
+  if (isCeoRole || role === "ceo") return null;
+  const assigner = assignerScopeClause(userId);
+  if (role === "operations") {
+    const teamIds = await userAssigneeIdsForOperationsLead(userId, centerId);
+    if (!teamIds.length) return assigner;
+    return {
+      $or: [...assigner.$or, { assignees: { $in: teamIds } }],
+    };
+  }
+  return assigner;
+}
+
 /**
  * Everyone this user has ever assigned a task to (active + deleted tasks, plus approval history).
  */
-export async function listMyAssignees({ userId, centerId, isCeoRole }) {
+export async function listMyAssignees({ userId, centerId, isCeoRole, role }) {
   if (isCeoRole) {
     const [fromTasks, fromHistory] = await Promise.all([
       Task.distinct("assignees", { deletedAt: null }),
@@ -672,12 +715,19 @@ export async function listMyAssignees({ userId, centerId, isCeoRole }) {
     return [...ids];
   }
 
-  const assignerFilter = assignerScopeClause(userId);
-  const taskFilter = { ...assignerFilter };
+  const visibility = (await approvalVisibilityClause({ userId, role, centerId, isCeoRole })) || assignerScopeClause(userId);
+  const taskFilter = { ...visibility };
   if (centerId) taskFilter.centerId = centerId;
 
   const historyFilter = { assignedBy: userId };
   if (centerId) historyFilter.centerId = centerId;
+  if (role === "operations") {
+    const teamIds = await userAssigneeIdsForOperationsLead(userId, centerId);
+    if (teamIds.length) {
+      historyFilter.$or = [{ assignedBy: userId }, { assigneeId: { $in: teamIds } }];
+      delete historyFilter.assignedBy;
+    }
+  }
 
   const [fromTasks, fromHistory, taskIdsForHistory] = await Promise.all([
     Task.distinct("assignees", taskFilter),
@@ -697,21 +747,27 @@ export async function listMyAssignees({ userId, centerId, isCeoRole }) {
 }
 
 /** Match history for tasks you assigned even if record.assignedBy was stored before backfill. */
-export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, isCeoRole, from, to }) {
+export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, isCeoRole, role, from, to }) {
   let q = { assigneeId };
 
   if (!isCeoRole) {
+    const visibility =
+      (await approvalVisibilityClause({ userId, role, centerId, isCeoRole })) || assignerScopeClause(userId);
     const taskFilter = {
       deletedAt: null,
       assignees: assigneeId,
-      ...assignerScopeClause(userId),
+      ...visibility,
     };
     if (centerId) taskFilter.centerId = centerId;
     const taskIds = await Task.distinct("_id", taskFilter);
-    q = {
-      assigneeId,
-      $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }],
-    };
+    const orClause = [{ assignedBy: userId }, { taskId: { $in: taskIds } }];
+    if (role === "operations") {
+      const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
+      if (teamIds.includes(String(assigneeId))) {
+        orClause.push({ assigneeId });
+      }
+    }
+    q = { assigneeId, $or: orClause };
   }
   if (from || to) {
     q.occurrenceDueDate = {};
@@ -857,14 +913,16 @@ function isDailyOccurrenceScheduled(task, dayKey) {
   return true;
 }
 
-async function dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole }) {
+async function dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole, role }) {
   const taskFilter = {
     deletedAt: null,
     taskType: "daily",
     assignees: assigneeId,
   };
   if (!isCeoRole) {
-    Object.assign(taskFilter, assignerScopeClause(userId));
+    const visibility =
+      (await approvalVisibilityClause({ userId, role, centerId, isCeoRole })) || assignerScopeClause(userId);
+    Object.assign(taskFilter, visibility);
     if (centerId) taskFilter.centerId = centerId;
   }
   return Task.find(taskFilter).select("_id title taskType createdAt recurrence dueDate").lean();
@@ -877,10 +935,11 @@ export async function fillMissingDailyOccurrenceHistory({
   userId,
   centerId,
   isCeoRole,
+  role,
   from,
   to,
 }) {
-  const tasks = await dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole });
+  const tasks = await dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCeoRole, role });
   if (!tasks.length) return sortRecordsByOccurrence(records);
 
   const todayKey = calendarDayKeyInTz(new Date());
@@ -890,6 +949,11 @@ export async function fillMissingDailyOccurrenceHistory({
 
   const recordKeys = new Set(
     records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
+  );
+  const pendingKeys = new Set(
+    records
+      .filter((r) => r.status === "pending")
+      .map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
   );
 
   const synth = [];
@@ -912,7 +976,7 @@ export async function fillMissingDailyOccurrenceHistory({
 
       const recKey = `${task._id}-${dayKey}`;
       const dueDt = occurrenceDueOnDay(task.dueDate, dayKey);
-      if (!recordKeys.has(recKey) && isOccurrencePastDue(dueDt, new Date())) {
+      if (!recordKeys.has(recKey) && !pendingKeys.has(recKey) && isOccurrencePastDue(dueDt, new Date())) {
         synth.push({
           _id: `gap-${task._id}-${dayKey}`,
           taskId: task._id,
@@ -1174,7 +1238,7 @@ export function sortRecordsByOccurrence(records) {
 }
 
 /** Tasks currently waiting in For Approval (includes rows without a history record yet). */
-export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, isCeoRole, from, to }) {
+export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, isCeoRole, role, from, to }) {
   const taskFilter = {
     deletedAt: null,
     assignees: assigneeId,
@@ -1189,7 +1253,9 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     ],
   };
   if (!isCeoRole) {
-    taskFilter.$and.push(assignerScopeClause(userId));
+    const visibility =
+      (await approvalVisibilityClause({ userId, role, centerId, isCeoRole })) || assignerScopeClause(userId);
+    taskFilter.$and.push(visibility);
     if (centerId) taskFilter.centerId = centerId;
   }
 

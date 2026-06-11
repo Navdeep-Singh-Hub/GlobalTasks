@@ -304,9 +304,8 @@ body {
 }
 
 .confetti-particle {
-  position: fixed;
+  position: absolute;
   pointer-events: none;
-  z-index: 9998;
   border-radius: 2px;
 }
 

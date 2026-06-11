@@ -246,10 +246,11 @@ export function TaskDetailDrawer({
         body: JSON.stringify({ status: "completed", submissionRemarks: text }),
       });
       setSubmitSuccess(true);
-      celebrate(isCeoUser ? "complete" : "submit");
       setSubmissionRemarksDraft("");
       onUpdated?.();
       await load();
+      onClose();
+      window.requestAnimationFrame(() => celebrate(isCeoUser ? "complete" : "submit"));
       window.setTimeout(() => setSubmitSuccess(false), 2400);
     } catch (e) {
       setSubmitErr(e instanceof ApiError ? e.message : "Could not submit for approval.");

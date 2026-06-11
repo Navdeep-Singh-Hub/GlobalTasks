@@ -121,7 +121,9 @@ export function TasksView({
   const taskAssignerId = (t: Task) => String(t.assignedBy?._id || t.createdBy?._id || "");
   const canEditTaskAsAssigner = (t: Task) =>
     Boolean(myId && taskAssignerId(t) === myId && (isManagement(user?.role) || isCeo(user?.role)));
-  const canManageOwnMasterTask = (t: Task) => Boolean(masterAdminActions && canEditTaskAsAssigner(t));
+  const isCeoMasterView = Boolean(masterAdminActions && isCeo(user?.role));
+  const canManageOwnMasterTask = (t: Task) =>
+    Boolean(masterAdminActions && (isCeoMasterView || canEditTaskAsAssigner(t)));
   const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
 
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -267,12 +269,14 @@ export function TasksView({
     if (preset.assigneeInbox) qs.set("assigneeInbox", "true");
     if (masterAdminActions) {
       qs.set("masterScope", "true");
-      qs.set("masterRelation", masterRelation);
-      if (masterRelation === "created" && assigneeFilter !== "all") {
+      if (!isCeoMasterView) {
+        qs.set("masterRelation", masterRelation);
+      }
+      if ((isCeoMasterView || masterRelation === "created") && assigneeFilter !== "all") {
         qs.set("assignee", assigneeFilter);
       }
     }
-    qs.set("limit", masterAdminActions ? "100" : "50");
+    qs.set("limit", isCeoMasterView ? "200" : masterAdminActions ? "100" : "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
       .then((d) => {
         setTasks(d.tasks);
@@ -280,7 +284,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, masterRelation, assigneeFilter]);
+  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, isCeoMasterView, masterRelation, assigneeFilter]);
 
   useEffect(() => {
     load();
@@ -375,19 +379,33 @@ export function TasksView({
   const taskStatusLabel = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return "Approved";
     if (t.masterDisplayStatus === "rejected") return "Rejected";
+    if (
+      t.taskType === "daily" &&
+      t.status === "overdue" &&
+      calendarDayKeyInTz(t.dueDate) === calendarDayKeyInTz(new Date().toISOString())
+    ) {
+      return "Due today";
+    }
     return t.status.replace(/_/g, " ");
   };
 
   const taskStatusBadgeTone = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return statusTone("completed");
     if (t.masterDisplayStatus === "rejected") return statusTone("cancelled");
+    if (
+      t.taskType === "daily" &&
+      t.status === "overdue" &&
+      calendarDayKeyInTz(t.dueDate) === calendarDayKeyInTz(new Date().toISOString())
+    ) {
+      return statusTone("pending");
+    }
     return statusTone(t.status);
   };
 
   return (
     <div className="space-y-4 sm:space-y-5">
       <PageHeader
-        chip={`${preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"}${masterAdminActions ? " · Your tasks" : preset.approval ? " · Approval" : ""}`}
+        chip={`${preset.recurring ? "Recurring" : preset.recurring === false ? "One-time" : "All"}${isCeoMasterView ? " · All team" : masterAdminActions ? " · Your tasks" : preset.approval ? " · Approval" : ""}`}
         title={title}
         subtitle={subtitle}
         actions={
@@ -403,7 +421,7 @@ export function TasksView({
           </>
         }
       >
-        {masterAdminActions && (
+        {masterAdminActions && !isCeoMasterView && (
           <div className="segment-control mt-3">
             <button
               type="button"
@@ -423,13 +441,17 @@ export function TasksView({
         )}
         <p className="mt-2 text-[12px] text-zinc-500">
           {loading ? "Loading…" : `${orderedTasks.length} of ${total} task${total === 1 ? "" : "s"} found`}
-          {masterAdminActions
-            ? masterRelation === "created"
-              ? assigneeFilter !== "all"
-                ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
-                : " · only tasks you assigned"
-              : " · tasks assigned to you"
-            : ""}
+          {isCeoMasterView
+            ? assigneeFilter !== "all"
+              ? ` · filtered to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
+              : " · all team members across every center"
+            : masterAdminActions
+              ? masterRelation === "created"
+                ? assigneeFilter !== "all"
+                  ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
+                  : " · only tasks you assigned"
+                : " · tasks assigned to you"
+              : ""}
         </p>
       </PageHeader>
 
@@ -462,7 +484,7 @@ export function TasksView({
                 {Object.entries(CADENCE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>
             )}
-            {canFilterByAssignee && masterRelation === "created" && (
+            {canFilterByAssignee && (isCeoMasterView || masterRelation === "created") && (
               <SearchableSelect
                 value={assigneeFilter}
                 onChange={setAssigneeFilter}

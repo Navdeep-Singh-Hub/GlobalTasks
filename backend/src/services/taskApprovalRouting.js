@@ -55,11 +55,27 @@ export async function userAssigneeIdsForOperationsLead(operationsLeadId, centerI
 }
 
 function taskAssignerId(task) {
-  return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy || "");
+  return String(
+    task?.assignedBy?._id || task?.assignedBy || task?.createdBy?._id || task?.createdBy || ""
+  );
+}
+
+/** Tasks an operations lead may see in For Approval / performance for their mapped user-role team. */
+export async function operationsTeamTaskClause(operationsLeadId, centerId) {
+  const teamIds = await userAssigneeIdsForOperationsLead(operationsLeadId, centerId);
+  if (!teamIds.length) return null;
+  return { assignees: { $in: teamIds } };
 }
 
 export async function canApproveTaskForUser({ userId, userRole, task }) {
   if (!task) return false;
   if (userRole === "ceo") return true;
-  return taskAssignerId(task) === String(userId || "");
+  if (taskAssignerId(task) === String(userId || "")) return true;
+  if (userRole === "operations") {
+    const centerId = task.centerId?._id || task.centerId || null;
+    const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
+    const assignees = (task.assignees || []).map((a) => String(a._id || a));
+    return assignees.some((id) => teamIds.includes(id));
+  }
+  return false;
 }

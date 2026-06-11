@@ -24,7 +24,8 @@ import {
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
-import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
+import { canApproveTaskForUser, userAssigneeIdsForOperationsLead } from "../services/taskApprovalRouting.js";
+import { approvalVisibilityClause } from "../services/taskApprovalHistory.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
 import { formatAppDate } from "../utils/dateFormat.js";
@@ -469,12 +470,21 @@ async function enrichMasterTasksWithHistoryMeta(tasks, statusFilter) {
   });
 }
 
+async function applyApprovalListScope(filter, { userId, role, centerId }) {
+  if (isCeo(role)) return;
+  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole: false });
+  if (visibility) mergeClauseIntoFilter(filter, visibility);
+}
+
 function applyListScopeForRole(filter, { userId, role, query }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
-    const masterRelation =
-      String(query.masterRelation || "").toLowerCase() === "assigned" ? "assigned" : "created";
-    applyMasterScopeFilter(filter, userId, masterRelation);
+    // CEO / admin@globaltasks.demo: Master Recurring & Master Single show every task in the workspace.
+    if (!isCeo(role)) {
+      const masterRelation =
+        String(query.masterRelation || "").toLowerCase() === "assigned" ? "assigned" : "created";
+      applyMasterScopeFilter(filter, userId, masterRelation);
+    }
     return;
   }
   if (isCeo(role)) return;
@@ -498,11 +508,16 @@ function applyMutationScopeForRole(query, userId, role) {
   }
 }
 
-function userCanAccessTaskDoc(task, userId, role) {
+async function userCanAccessTaskDoc(task, userId, role, centerId) {
   const uid = String(userId || "");
   if (isCeo(role)) return true;
   if (taskAssignerId(task) === uid) return true;
   if (userIsAssigneeOnTask(task, uid)) return true;
+  if (role === "operations") {
+    const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
+    const assignees = (task.assignees || []).map((a) => String(a._id || a));
+    if (assignees.some((id) => teamIds.includes(id))) return true;
+  }
   return false;
 }
 
@@ -574,7 +589,15 @@ router.get("/", async (req, res) => {
   const filter = buildFilter(req.query, req.userId, req.userRole);
   await applyTaskTextAndPersonSearch(filter, req.query);
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
-  applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
+  if (req.query.approval === "true") {
+    await applyApprovalListScope(filter, {
+      userId: req.userId,
+      role: req.userRole,
+      centerId: me?.centerId || null,
+    });
+  } else {
+    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
+  }
   await applyMasterHistoricalStatusFilter(filter, req.query);
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
@@ -622,13 +645,29 @@ router.get("/", async (req, res) => {
   }
 
   if (req.query.assigneeInbox === "true") {
+    const todayKey = calendarDayKeyInTz(new Date());
+    const overdueDailyTodayIds = [];
     tasks = tasks.map((t) => {
       const doc = withEffectiveTaskStatus(t);
+      if (
+        doc.taskType === "daily" &&
+        doc.status === "overdue" &&
+        calendarDayKeyInTz(doc.dueDate) === todayKey
+      ) {
+        doc.status = "pending";
+        overdueDailyTodayIds.push(doc._id);
+      }
       if (["pending", "in_progress", "overdue"].includes(doc.status) && doc.approvalStatus !== "pending") {
         doc.submissionRemarks = "";
       }
       return doc;
     });
+    if (overdueDailyTodayIds.length) {
+      void Task.updateMany(
+        { _id: { $in: overdueDailyTodayIds }, status: "overdue" },
+        { $set: { status: "pending" } }
+      );
+    }
   } else {
     tasks = tasks.map((t) => withEffectiveTaskStatus(t));
   }
@@ -669,7 +708,7 @@ router.get("/:id", async (req, res) => {
   if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
-  if (!userCanAccessTaskDoc(task, req.userId, req.userRole)) {
+  if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
   res.json({ task: withEffectiveTaskStatus(task.toObject ? task.toObject() : task) });
@@ -757,7 +796,7 @@ router.patch("/:id", async (req, res, next) => {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
     const isAssignerEdit = managementCreatorOwnsTask(req, task) || (isCeo(req.userRole) && taskCreatedByUser(task, req.userId));
-    if (!isAssignerEdit && !userCanAccessTaskDoc(task, req.userId, req.userRole)) {
+    if (!isAssignerEdit && !(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
       return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
     }
 
