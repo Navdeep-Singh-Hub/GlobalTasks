@@ -450,9 +450,12 @@ async function enrichMasterTasksWithHistoryMeta(tasks, statusFilter) {
 function applyListScopeForRole(filter, { userId, role, query }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
-    const masterRelation =
-      String(query.masterRelation || "").toLowerCase() === "assigned" ? "assigned" : "created";
-    applyMasterScopeFilter(filter, userId, masterRelation);
+    // CEO / admin@globaltasks.demo: Master Recurring & Master Single show every task in the workspace.
+    if (!isCeo(role)) {
+      const masterRelation =
+        String(query.masterRelation || "").toLowerCase() === "assigned" ? "assigned" : "created";
+      applyMasterScopeFilter(filter, userId, masterRelation);
+    }
     return;
   }
   if (isCeo(role)) return;
