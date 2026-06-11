@@ -345,6 +345,7 @@ router.get("/my-assignees", async (req, res) => {
     userId: req.userId,
     centerId: me?.centerId || null,
     isCeoRole: isCeo(req.userRole),
+    role: req.userRole,
   });
   if (!ids.length) return res.json({ assignees: [] });
   const users = await User.find({ _id: { $in: ids } })
@@ -368,6 +369,7 @@ router.get("/assignee-approval-history", async (req, res) => {
       userId: req.userId,
       centerId: me?.centerId || null,
       isCeoRole: false,
+      role: req.userRole,
     });
     if (!allowedIds.includes(assigneeId)) {
       return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
@@ -394,6 +396,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     assigneeId,
     centerId: me?.centerId || null,
     isCeoRole: isCeo(req.userRole),
+    role: req.userRole,
     from: req.query.from,
     to: req.query.to,
   });
@@ -410,6 +413,7 @@ router.get("/assignee-approval-history", async (req, res) => {
       assigneeId,
       centerId: me?.centerId || null,
       isCeoRole: isCeo(req.userRole),
+      role: req.userRole,
       from: req.query.from,
       to: req.query.to,
     }),
@@ -429,6 +433,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     userId: req.userId,
     centerId: me?.centerId || null,
     isCeoRole: isCeo(req.userRole),
+    role: req.userRole,
     from: req.query.from,
     to: req.query.to,
   });
