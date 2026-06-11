@@ -2,6 +2,7 @@ import { Task } from "../models/Task.js";
 import { User } from "../models/User.js";
 import { Escalation } from "../models/Escalation.js";
 import { notifyMany } from "../services/notificationService.js";
+import { calendarDayKeyInTz } from "../utils/recurrence.js";
 
 const HOUR_MS = 3600_000;
 
@@ -28,6 +29,15 @@ async function userChain(userId) {
 }
 
 async function escalateTask(task) {
+  const now = new Date();
+  // Daily recurring due today stays workable until the calendar day ends.
+  if (task.taskType === "daily" && calendarDayKeyInTz(task.dueDate) === calendarDayKeyInTz(now)) {
+    if (task.status === "overdue") {
+      await Task.updateOne({ _id: task._id }, { $set: { status: "pending" } });
+    }
+    return;
+  }
+
   const hours = Math.floor((Date.now() - new Date(task.dueDate).getTime()) / HOUR_MS);
   const level = escalationLevelForAge(hours);
   if (!level) return;
@@ -67,7 +77,7 @@ export async function runEscalationSweep() {
     status: { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] },
     dueDate: { $lt: new Date() },
   };
-  const tasks = await Task.find(q).select("_id title dueDate status assignees").lean();
+  const tasks = await Task.find(q).select("_id title dueDate status assignees taskType").lean();
   for (const t of tasks) {
     // eslint-disable-next-line no-await-in-loop
     await escalateTask(t);

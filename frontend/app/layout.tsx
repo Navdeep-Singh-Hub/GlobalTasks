@@ -29,6 +29,7 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${inter.className} min-h-[100dvh] min-h-screen font-sans antialiased`}>
         <Providers>{children}</Providers>
+        <div id="celebration-portal-root" />
       </body>
     </html>
   );

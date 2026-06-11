@@ -599,13 +599,29 @@ router.get("/", async (req, res) => {
   }
 
   if (req.query.assigneeInbox === "true") {
+    const todayKey = calendarDayKeyInTz(new Date());
+    const overdueDailyTodayIds = [];
     tasks = tasks.map((t) => {
       const doc = { ...t };
+      if (
+        doc.taskType === "daily" &&
+        doc.status === "overdue" &&
+        calendarDayKeyInTz(doc.dueDate) === todayKey
+      ) {
+        doc.status = "pending";
+        overdueDailyTodayIds.push(doc._id);
+      }
       if (["pending", "in_progress", "overdue"].includes(doc.status) && doc.approvalStatus !== "pending") {
         doc.submissionRemarks = "";
       }
       return doc;
     });
+    if (overdueDailyTodayIds.length) {
+      void Task.updateMany(
+        { _id: { $in: overdueDailyTodayIds }, status: "overdue" },
+        { $set: { status: "pending" } }
+      );
+    }
   }
 
   res.json({

@@ -71,6 +71,11 @@ export function isAssigneeRecurringWorkable(task, now = new Date()) {
   return calendarDayKeyInTz(task.dueDate) <= todayKey;
 }
 
+/** Daily task due today is still workable until midnight — not overdue mid-day. */
+export function isDailySameDayStillWorkable(task, now = new Date()) {
+  return task?.taskType === "daily" && isOccurrenceDueToday(task.dueDate, now);
+}
+
 export async function recordMissedOccurrence({ task, occurrenceDueDate, assigneeId, remarks, now = new Date() }) {
   const assignedBy = taskAssignerIdFromDoc(task);
   if (!assignedBy || !assigneeId) return null;

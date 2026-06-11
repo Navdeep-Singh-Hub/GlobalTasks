@@ -379,12 +379,26 @@ export function TasksView({
   const taskStatusLabel = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return "Approved";
     if (t.masterDisplayStatus === "rejected") return "Rejected";
+    if (
+      t.taskType === "daily" &&
+      t.status === "overdue" &&
+      calendarDayKeyInTz(t.dueDate) === calendarDayKeyInTz(new Date().toISOString())
+    ) {
+      return "Due today";
+    }
     return t.status.replace(/_/g, " ");
   };
 
   const taskStatusBadgeTone = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return statusTone("completed");
     if (t.masterDisplayStatus === "rejected") return statusTone("cancelled");
+    if (
+      t.taskType === "daily" &&
+      t.status === "overdue" &&
+      calendarDayKeyInTz(t.dueDate) === calendarDayKeyInTz(new Date().toISOString())
+    ) {
+      return statusTone("pending");
+    }
     return statusTone(t.status);
   };
 
