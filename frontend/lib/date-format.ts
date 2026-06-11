@@ -52,3 +52,14 @@ export function calendarDayKeyInTz(value?: string | Date | null, now = new Date(
     day: "2-digit",
   }).format(d);
 }
+
+/** True when the due date-time has passed (earlier day, or same day after due time). */
+export function isOccurrencePastDue(value?: string | Date | null, now = new Date()): boolean {
+  const d = parseDate(value);
+  if (!d) return false;
+  const dueKey = calendarDayKeyInTz(d);
+  const todayKey = calendarDayKeyInTz(now);
+  if (dueKey < todayKey) return true;
+  if (dueKey === todayKey) return d.getTime() < now.getTime();
+  return false;
+}

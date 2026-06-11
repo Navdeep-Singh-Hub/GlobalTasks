@@ -7,7 +7,7 @@ import { api } from "@/lib/api";
 import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
 import { useAuth } from "@/contexts/auth-context";
 import { useCallback, useEffect, useState } from "react";
-import { formatAppDate, formatAppDateTime } from "@/lib/date-format";
+import { formatAppDateTime } from "@/lib/date-format";
 
 type Assignee = { _id: string; name: string; email: string; role: string; executorKind?: string; active?: boolean };
 
@@ -52,9 +52,35 @@ function statusLabel(r: ApprovalRecord) {
   return r.status;
 }
 
+function isAutoMissedRemarkText(text: string) {
+  const t = text.trim();
+  return (
+    t === "Not completed before the day ended — marked as not done automatically." ||
+    t === "Not completed before the due time — marked as not done automatically." ||
+    t === "No submission recorded for this day." ||
+    t.startsWith("Submitted for approval but the day ended") ||
+    t.startsWith("Submitted for approval but the due time passed")
+  );
+}
+
+function autoMissedSubmittedLabel(r: ApprovalRecord) {
+  const due = formatAppDateTime(r.occurrenceDueDate);
+  const remarks = r.submissionRemarks?.trim() || "";
+  if (remarks.startsWith("Submitted for approval but the due time passed")) {
+    return `Auto — due time passed (${due})`;
+  }
+  if (remarks === "Not completed before the due time — marked as not done automatically.") {
+    return `Auto — due time passed (${due})`;
+  }
+  if (remarks.startsWith("Submitted for approval but the day ended")) {
+    return `Auto — day ended (${due})`;
+  }
+  return `Auto — not done (${due})`;
+}
+
 function submittedLabel(r: ApprovalRecord) {
   if (r.status === "missed" && (!r.submissionRemarks?.trim() || isAutoMissedRemarkText(r.submissionRemarks))) {
-    return `Auto — day ended (${formatAppDate(r.occurrenceDueDate)})`;
+    return autoMissedSubmittedLabel(r);
   }
   return formatAppDateTime(r.submittedAt);
 }
@@ -64,18 +90,17 @@ function remarksDisplay(r: ApprovalRecord) {
     if (r.submissionRemarks?.trim() && !isAutoMissedRemarkText(r.submissionRemarks)) {
       return r.submissionRemarks.trim();
     }
-    return r.submissionRemarks?.trim() || "Not completed before the day ended.";
+    const remarks = r.submissionRemarks?.trim();
+    if (remarks === "Not completed before the due time — marked as not done automatically.") {
+      return remarks;
+    }
+    return remarks || "Not completed before the day ended.";
   }
   return r.submissionRemarks?.trim() || "—";
 }
 
-function isAutoMissedRemarkText(text: string) {
-  const t = text.trim();
-  return (
-    t === "Not completed before the day ended — marked as not done automatically." ||
-    t === "No submission recorded for this day." ||
-    t.startsWith("Submitted for approval but the day ended")
-  );
+function occurrenceDueLabel(r: ApprovalRecord) {
+  return formatAppDateTime(r.occurrenceDueDate);
 }
 
 function closedLabel(r: ApprovalRecord) {
@@ -233,7 +258,7 @@ export function AssigneeApprovalHistory() {
                   <tr key={r._id} className="border-t border-zinc-100 dark:border-zinc-800">
                     <td className="px-2 py-2 font-medium">{r.taskTitle}</td>
                     <td className="px-2 py-2">{TASK_TYPE_LABELS[r.taskType] || r.taskType}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{formatAppDate(r.occurrenceDueDate)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{occurrenceDueLabel(r)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{submittedLabel(r)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{closedLabel(r)}</td>
                     <td className="px-2 py-2">
@@ -275,7 +300,7 @@ export function AssigneeApprovalHistory() {
                   {TASK_TYPE_LABELS[r.taskType] || r.taskType} · {statusLabel(r)}
                 </div>
                 <div className="mt-2 grid gap-1 text-zinc-600 dark:text-zinc-300">
-                  <div>Due: {formatAppDate(r.occurrenceDueDate)}</div>
+                  <div>Due: {occurrenceDueLabel(r)}</div>
                   <div>Submitted: {submittedLabel(r)}</div>
                   <div>Approved/rejected: {closedLabel(r)}</div>
                   {remarksDisplay(r) !== "—" ? <div>Remarks: {remarksDisplay(r)}</div> : null}

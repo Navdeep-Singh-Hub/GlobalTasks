@@ -64,6 +64,7 @@ async function escalateTask(task) {
 export async function runEscalationSweep() {
   const q = {
     deletedAt: null,
+    taskType: { $ne: "daily" },
     status: { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] },
     dueDate: { $lt: new Date() },
   };

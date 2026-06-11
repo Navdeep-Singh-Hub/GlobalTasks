@@ -11,6 +11,7 @@ import {
   computeNextDueDate,
   calendarDayKeyInTz,
   APP_TIMEZONE,
+  isOccurrencePastDue,
 } from "../utils/recurrence.js";
 import {
   applyTodayOnlyDueFilter,
@@ -240,11 +241,32 @@ function buildFilter(query, userId, role) {
 }
 
 function assertOccurrenceWorkableForAssignee(task) {
-  if (!isRecurring(task.taskType)) return null;
+  if (!isRecurring(task.taskType)) {
+    if (isOccurrencePastDue(task.dueDate)) {
+      return "This task is past its due date and time.";
+    }
+    return null;
+  }
   if (!isOccurrenceDueToday(task.dueDate)) {
     return "You can only work on today's occurrence. Past days are marked not done automatically.";
   }
+  if (isOccurrencePastDue(task.dueDate)) {
+    return "Today's due time has passed. This occurrence will be marked not done automatically.";
+  }
   return null;
+}
+
+function withEffectiveTaskStatus(task, now = new Date()) {
+  const doc = { ...task };
+  if (
+    doc.taskType !== "daily" &&
+    ["pending", "in_progress", "awaiting_approval"].includes(doc.status) &&
+    doc.dueDate &&
+    isOccurrencePastDue(doc.dueDate, now)
+  ) {
+    doc.status = "overdue";
+  }
+  return doc;
 }
 
 /** Assigner reopened or reset a task after approve / reject / complete. */
@@ -583,7 +605,11 @@ router.get("/", async (req, res) => {
 
   if (req.query.workableToday === "true" && req.query.recurring === "true") {
     tasks = tasks.filter((t) =>
-      req.query.assigneeInbox === "true" ? isAssigneeRecurringWorkable(t) : isOccurrenceDueToday(t.dueDate)
+      req.query.assigneeInbox === "true"
+        ? isAssigneeRecurringWorkable(t)
+        : t.taskType === "daily"
+          ? isOccurrenceDueToday(t.dueDate) && !isOccurrencePastDue(t.dueDate)
+          : isOccurrenceDueToday(t.dueDate)
     );
   }
 
@@ -597,12 +623,14 @@ router.get("/", async (req, res) => {
 
   if (req.query.assigneeInbox === "true") {
     tasks = tasks.map((t) => {
-      const doc = { ...t };
+      const doc = withEffectiveTaskStatus(t);
       if (["pending", "in_progress", "overdue"].includes(doc.status) && doc.approvalStatus !== "pending") {
         doc.submissionRemarks = "";
       }
       return doc;
     });
+  } else {
+    tasks = tasks.map((t) => withEffectiveTaskStatus(t));
   }
 
   res.json({
@@ -644,7 +672,7 @@ router.get("/:id", async (req, res) => {
   if (!userCanAccessTaskDoc(task, req.userId, req.userRole)) {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
-  res.json({ task });
+  res.json({ task: withEffectiveTaskStatus(task.toObject ? task.toObject() : task) });
 });
 
 router.post("/", async (req, res, next) => {

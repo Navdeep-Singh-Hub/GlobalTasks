@@ -13,7 +13,7 @@ import {
   isTemplateParamError,
 } from "./whatsappService.js";
 
-import { formatAppDate } from "../utils/dateFormat.js";
+import { formatAppDateTime } from "../utils/dateFormat.js";
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TEMPLATE_DETAILS_CHARS = 512;
@@ -37,7 +37,7 @@ function formatLabel(value) {
 }
 
 function formatDueDate(d) {
-  return formatAppDate(d);
+  return formatAppDateTime(d);
 }
 
 async function loadTaskDoc(taskOrId) {

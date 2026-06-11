@@ -50,6 +50,7 @@ type Draft = {
   assignees: string[];
   requiresApproval: boolean;
   dueDate: string;
+  dueTime: string;
   centerId: string;
   departmentId: string;
   forever: boolean;
@@ -95,6 +96,7 @@ function emptyDraft(id: number): Draft {
     assignees: [],
     requiresApproval: false,
     dueDate: "",
+    dueTime: "23:59",
     centerId: "",
     departmentId: "",
     forever: true,
@@ -110,6 +112,15 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function defaultDueTime() {
+  return "23:59";
+}
+
+function combineDueDateTime(date: string, time: string): Date {
+  const normalizedTime = String(time || defaultDueTime()).trim() || defaultDueTime();
+  return new Date(`${date}T${normalizedTime}:00+05:30`);
+}
+
 function normalizeDraft(d: Draft): Draft {
   const normalizedAssignees = Array.from(
     new Set(
@@ -120,6 +131,7 @@ function normalizeDraft(d: Draft): Draft {
   );
   const recurring = d.taskType !== "one_time";
   const normalizedDueDate = String(d.dueDate || "").trim() || (recurring && d.forever ? todayIsoDate() : "");
+  const normalizedDueTime = String(d.dueTime || "").trim() || defaultDueTime();
   return {
     ...d,
     title: String(d.title || "").trim(),
@@ -127,6 +139,7 @@ function normalizeDraft(d: Draft): Draft {
     centerId: String(d.centerId || "").trim(),
     departmentId: String(d.departmentId || "").trim(),
     dueDate: normalizedDueDate,
+    dueTime: normalizedDueTime,
     assignees: normalizedAssignees,
   };
 }
@@ -244,9 +257,9 @@ export function AssignTaskForm() {
           uploadAttachments(d.attachments),
           d.voiceBlob ? uploadVoice(d.voiceBlob) : Promise.resolve(""),
         ]);
-        const dueDateObj = new Date(`${d.dueDate}T00:00:00`);
+        const dueDateObj = combineDueDateTime(d.dueDate, d.dueTime);
         if (Number.isNaN(dueDateObj.getTime())) {
-          throw new Error(`Task #${d.id}: invalid due date`);
+          throw new Error(`Task #${d.id}: invalid due date or time`);
         }
         const dueDateIso = dueDateObj.toISOString();
         await api("/tasks", {
@@ -571,8 +584,15 @@ function DraftCard({
                 <Calendar className="pointer-events-none absolute right-3 top-2.5 h-4 w-4 text-zinc-400" />
               </div>
             </Field>
+            <Field label="Due Time" required>
+              <Input
+                type="time"
+                value={draft.dueTime}
+                onChange={(e) => onChange({ dueTime: e.target.value })}
+              />
+            </Field>
             {isRecurring && (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:col-span-2">
                 <label className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 text-xs font-medium dark:border-zinc-700 dark:bg-zinc-900">
                   <input
                     type="checkbox"

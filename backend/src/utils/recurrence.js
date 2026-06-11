@@ -92,6 +92,30 @@ export function calendarDayKeyInTz(date, timeZone = APP_TIMEZONE) {
   }).format(new Date(date));
 }
 
+/** True when current time is strictly after the due date-time. */
+export function isDueDateTimePassed(dueDate, now = new Date()) {
+  if (!dueDate) return false;
+  return new Date(dueDate).getTime() < now.getTime();
+}
+
+/** Same calendar day as now in app timezone. */
+export function isOccurrenceDueToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
+  if (!dueDate) return false;
+  return calendarDayKeyInTz(dueDate, timeZone) === calendarDayKeyInTz(now, timeZone);
+}
+
+/**
+ * Occurrence deadline has passed: due on an earlier calendar day, or same day after due time.
+ */
+export function isOccurrencePastDue(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
+  if (!dueDate) return false;
+  const dueKey = calendarDayKeyInTz(dueDate, timeZone);
+  const todayKey = calendarDayKeyInTz(now, timeZone);
+  if (dueKey < todayKey) return true;
+  if (dueKey === todayKey) return isDueDateTimePassed(dueDate, now, timeZone);
+  return false;
+}
+
 /** Start of next calendar day in app timezone (India: +05:30). */
 export function startOfNextCalendarDayInTz(now = new Date(), timeZone = APP_TIMEZONE) {
   const todayKey = calendarDayKeyInTz(now, timeZone);
@@ -101,10 +125,9 @@ export function startOfNextCalendarDayInTz(now = new Date(), timeZone = APP_TIME
   return new Date(`${nextKey}T00:00:00+05:30`);
 }
 
-/** @deprecated Use isOccurrenceDueToday from recurringOccurrenceSync / applyTodayOnlyDueFilter */
+/** @deprecated Use isOccurrenceDueToday from utils/recurrence.js */
 export function isOccurrenceWorkableToday(dueDate, now = new Date(), timeZone = APP_TIMEZONE) {
-  if (!dueDate) return false;
-  return calendarDayKeyInTz(dueDate, timeZone) === calendarDayKeyInTz(now, timeZone);
+  return isOccurrenceDueToday(dueDate, now, timeZone);
 }
 
 export function computeNextDueDate(task) {

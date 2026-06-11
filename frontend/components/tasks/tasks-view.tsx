@@ -15,7 +15,7 @@ import { CheckCircle2, Eye, Filter, Grid3x3, Inbox, Mic, Paperclip, Pencil, Sear
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
-import { calendarDayKeyInTz, formatAppDate, formatAppDateTime } from "@/lib/date-format";
+import { calendarDayKeyInTz, formatAppDate, formatAppDateTime, isOccurrencePastDue } from "@/lib/date-format";
 import { TaskDetailDrawer } from "./task-detail-drawer";
 import { TaskEditModal } from "./task-edit-modal";
 import { RejectTaskModal } from "./reject-task-modal";
@@ -292,7 +292,7 @@ export function TasksView({
     const list = preset.workableToday
       ? tasks.filter((t) =>
           t.taskType === "daily"
-            ? calendarDayKeyInTz(t.dueDate) === todayKey
+            ? calendarDayKeyInTz(t.dueDate) === todayKey && !isOccurrencePastDue(t.dueDate)
             : calendarDayKeyInTz(t.dueDate) <= todayKey
         )
       : tasks;
@@ -370,7 +370,7 @@ export function TasksView({
   const displayedId = (i: number) => 1200 + i;
 
   const taskListDueLabel = (t: Task) =>
-    formatAppDate(t.pendingOccurrenceDueDate || t.dueDate);
+    formatAppDateTime(t.pendingOccurrenceDueDate || t.dueDate);
 
   const taskStatusLabel = (t: Task) => {
     if (t.masterDisplayStatus === "approved") return "Approved";
