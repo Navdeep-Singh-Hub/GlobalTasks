@@ -66,15 +66,10 @@ export function applyAssigneeRecurringWorkableFilter(filter, now = new Date()) {
 export function isAssigneeRecurringWorkable(task, now = new Date()) {
   if (!task?.dueDate) return false;
   if (task.taskType === "daily") {
-    return isOccurrenceDueToday(task.dueDate, now) && !isOccurrencePastDue(task.dueDate, now);
+    return isOccurrenceDueToday(task.dueDate, now);
   }
   const todayKey = calendarDayKeyInTz(now);
   return calendarDayKeyInTz(task.dueDate) <= todayKey;
-}
-
-/** Daily task due today is still workable until midnight — not overdue mid-day. */
-export function isDailySameDayStillWorkable(task, now = new Date()) {
-  return task?.taskType === "daily" && isOccurrenceDueToday(task.dueDate, now);
 }
 
 export async function recordMissedOccurrence({ task, occurrenceDueDate, assigneeId, remarks, now = new Date() }) {
@@ -84,7 +79,10 @@ export async function recordMissedOccurrence({ task, occurrenceDueDate, assignee
   const todayKey = calendarDayKeyInTz(now);
   const occKey = calendarDayKeyInTz(occurrenceDueDate);
   if (!occKey || occKey > todayKey) return null;
-  if (occKey === todayKey && !isOccurrencePastDue(occurrenceDueDate, now)) return null;
+  if (occKey === todayKey) {
+    if (task?.taskType === "daily") return null;
+    if (!isOccurrencePastDue(occurrenceDueDate, now)) return null;
+  }
 
   const autoRemarks = remarks || autoMissedRemarksForOccurrence(occurrenceDueDate, now);
   const { start, end } = dueDateDayBounds(occurrenceDueDate);
@@ -152,6 +150,32 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
     return { synced: false, missed: 0 };
   }
 
+  if (task.taskType === "daily" && dueKey === todayKey) {
+    if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
+      const pending = await TaskApprovalRecord.findOne({
+        taskId: task._id,
+        status: "pending",
+        kind: "completion",
+      })
+        .sort({ submittedAt: -1 })
+        .lean();
+      if (pending) {
+        const effectiveDue = effectivePendingOccurrenceDue(pending, task);
+        if (effectiveDue && calendarDayKeyInTz(task.dueDate) !== calendarDayKeyInTz(effectiveDue)) {
+          task.dueDate = effectiveDue;
+          await task.save();
+        }
+        return { synced: false, missed: 0 };
+      }
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.submissionRemarks = "";
+      await task.save();
+      return { synced: true, missed: 0 };
+    }
+    return { synced: false, missed: 0 };
+  }
+
   if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
     const pending = await TaskApprovalRecord.findOne({
       taskId: task._id,
@@ -189,46 +213,6 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
 
   const primaryAssignee = assigneeId || (task.assignees || [])[0];
   if (!primaryAssignee) return { synced: false, missed: 0 };
-
-  if (dueKey === todayKey && pastDue && task.taskType === "daily") {
-    if (task.status === "completed" || task.status === "awaiting_approval" || task.approvalStatus === "pending") {
-      return { synced: false, missed: 0 };
-    }
-
-    let missed = 0;
-    const rec = await recordMissedOccurrence({
-      task,
-      occurrenceDueDate: task.dueDate,
-      assigneeId: primaryAssignee,
-      now,
-    });
-    if (rec && rec.status === "missed") missed += 1;
-
-    const next = computeNextDueDate(task);
-    task.dueDate = next || setDueDateToCalendarDay(task.dueDate, todayKey);
-    task.status = "pending";
-    task.approvalStatus = "none";
-    task.submissionRemarks = "";
-    task.notDoneApproval = undefined;
-    task.completedAt = null;
-    task.rejectionRemarks = "";
-    task.rejectionMode = "";
-    await task.save();
-
-    if (missed > 0) {
-      await logActivity({
-        actor: primaryAssignee,
-        type: "task_occurrence_missed",
-        message: `${task.title} marked not done after due time; advanced to next occurrence`,
-        task: task._id,
-        taskTitle: task.title,
-        taskType: task.taskType,
-        meta: { missed, todayKey },
-      });
-    }
-
-    return { synced: true, missed };
-  }
 
   let missed = 0;
   let cursor = new Date(task.dueDate);

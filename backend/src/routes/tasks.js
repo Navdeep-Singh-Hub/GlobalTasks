@@ -251,9 +251,6 @@ function assertOccurrenceWorkableForAssignee(task) {
   if (!isOccurrenceDueToday(task.dueDate)) {
     return "You can only work on today's occurrence. Past days are marked not done automatically.";
   }
-  if (isOccurrencePastDue(task.dueDate)) {
-    return "Today's due time has passed. This occurrence will be marked not done automatically.";
-  }
   return null;
 }
 
@@ -643,7 +640,7 @@ router.get("/", async (req, res) => {
       req.query.assigneeInbox === "true"
         ? isAssigneeRecurringWorkable(t)
         : t.taskType === "daily"
-          ? isOccurrenceDueToday(t.dueDate) && !isOccurrencePastDue(t.dueDate)
+          ? isOccurrenceDueToday(t.dueDate)
           : isOccurrenceDueToday(t.dueDate)
     );
   }

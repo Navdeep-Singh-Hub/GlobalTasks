@@ -239,6 +239,9 @@ export async function finalizePendingAsAutoMissed(pendingDoc, task, { now = new 
     await TaskApprovalRecord.deleteOne({ _id: pendingDoc._id });
     return "deleted";
   }
+  if (occKey === todayKey && task?.taskType === "daily") {
+    return "skipped";
+  }
   if (occKey === todayKey && !isOccurrencePastDue(effectiveDue, now)) {
     await TaskApprovalRecord.deleteOne({ _id: pendingDoc._id });
     return "deleted";
@@ -1124,7 +1127,7 @@ export async function fillMissingDailyOccurrenceHistory({
 
       const recKey = `${task._id}-${dayKey}`;
       const dueDt = occurrenceDueOnDay(task.dueDate, dayKey);
-      if (!recordKeys.has(recKey) && !pendingKeys.has(recKey) && isOccurrencePastDue(dueDt, new Date())) {
+      if (!recordKeys.has(recKey) && !pendingKeys.has(recKey) && dayKey < todayKey) {
         synth.push({
           _id: `gap-${task._id}-${dayKey}`,
           taskId: task._id,
