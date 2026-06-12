@@ -23,8 +23,8 @@ export const ASSIGNEE_ONLY_ROLES = ["user", "executor"];
 /** Everyone except field staff: team task views, assign work, masters, recycle, etc. */
 export const MANAGEMENT_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
 
-/** Therapist / supervisor / coordinator sheet performance (operations excluded). */
-export const CLINICAL_PERFORMANCE_ROLES = ["ceo", "centre_head", "coordinator", "supervisor"];
+/** Therapist / supervisor / coordinator sheet performance. */
+export const CLINICAL_PERFORMANCE_ROLES = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
 
 export const EXECUTOR_KINDS = ["", "therapist", "doctor", "reception", "marketing", "support", "security"];
 

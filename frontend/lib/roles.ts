@@ -5,8 +5,8 @@ export type Role = (typeof USER_ROLES)[number];
 
 export const MANAGEMENT_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
 
-/** Therapist / supervisor / coordinator performance views (operations excluded). */
-export const CLINICAL_PERFORMANCE_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor"];
+/** Therapist / supervisor / coordinator performance views. */
+export const CLINICAL_PERFORMANCE_ROLES: Role[] = ["ceo", "centre_head", "coordinator", "supervisor", "operations"];
 
 /** Field staff — own tasks only (like executor). */
 export const ASSIGNEE_ONLY_ROLES: Role[] = ["user", "executor"];

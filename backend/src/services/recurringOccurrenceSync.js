@@ -9,7 +9,7 @@ import {
   isOccurrencePastDue,
   startOfNextCalendarDayInTz,
 } from "../utils/recurrence.js";
-import { taskAssignerIdFromDoc, effectivePendingOccurrenceDue, finalizePendingAsAutoMissed, autoMissedRemarksForOccurrence } from "./taskApprovalHistory.js";
+import { taskAssignerIdFromDoc, effectivePendingOccurrenceDue, autoMissedRemarksForOccurrence } from "./taskApprovalHistory.js";
 import { notifyMany } from "./notificationService.js";
 import { logActivity } from "./activityService.js";
 
@@ -160,33 +160,22 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
     })
       .sort({ submittedAt: -1 })
       .lean();
-    if (!pending && dueKey === todayKey && !pastDue) {
+
+    if (pending) {
+      const effectiveDue = effectivePendingOccurrenceDue(pending, task);
+      if (effectiveDue && calendarDayKeyInTz(task.dueDate) !== calendarDayKeyInTz(effectiveDue)) {
+        task.dueDate = effectiveDue;
+        await task.save();
+      }
+      return { synced: false, missed: 0 };
+    }
+
+    if (dueKey === todayKey && !pastDue) {
       task.status = "pending";
       task.approvalStatus = "none";
       task.submissionRemarks = "";
       await task.save();
       return { synced: true, missed: 0 };
-    }
-    if (pending) {
-      const effectiveDue = effectivePendingOccurrenceDue(pending, task);
-      const occKey = calendarDayKeyInTz(effectiveDue);
-      const pendingPastDue = isOccurrencePastDue(effectiveDue, now);
-      const shouldAutoMiss =
-        occKey < todayKey || (occKey === todayKey && pendingPastDue && task.taskType === "daily");
-      if (shouldAutoMiss) {
-        await finalizePendingAsAutoMissed(pending, task, { now });
-        task.status = "pending";
-        task.approvalStatus = "none";
-        task.submissionRemarks = "";
-        if (task.taskType === "daily" && occKey === todayKey && pendingPastDue) {
-          const next = computeNextDueDate(task);
-          task.dueDate = next || setDueDateToCalendarDay(task.dueDate, todayKey);
-        } else {
-          task.dueDate = setDueDateToCalendarDay(task.dueDate, todayKey);
-        }
-        await task.save();
-        return { synced: true, missed: 1 };
-      }
     }
   }
 
@@ -202,21 +191,15 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
   if (!primaryAssignee) return { synced: false, missed: 0 };
 
   if (dueKey === todayKey && pastDue && task.taskType === "daily") {
-    if (task.status === "completed") {
+    if (task.status === "completed" || task.status === "awaiting_approval" || task.approvalStatus === "pending") {
       return { synced: false, missed: 0 };
     }
 
     let missed = 0;
-    const missedRemarks =
-      task.status === "awaiting_approval" || task.approvalStatus === "pending"
-        ? "Submitted for approval but the due time passed before completion."
-        : undefined;
-
     const rec = await recordMissedOccurrence({
       task,
       occurrenceDueDate: task.dueDate,
       assigneeId: primaryAssignee,
-      remarks: missedRemarks,
       now,
     });
     if (rec && rec.status === "missed") missed += 1;
@@ -267,6 +250,17 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
   }
 
   if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
+    const pendingApproval = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+    })
+      .sort({ submittedAt: -1 })
+      .lean();
+    if (pendingApproval) {
+      return { synced: false, missed: 0 };
+    }
+
     const rec = await recordMissedOccurrence({
       task,
       occurrenceDueDate: task.dueDate,

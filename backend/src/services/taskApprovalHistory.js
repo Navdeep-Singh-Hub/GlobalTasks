@@ -71,6 +71,163 @@ export function isAutoMissedRemarks(text) {
   );
 }
 
+export function isWronglyAutoMissedSubmissionRemarks(text) {
+  const t = String(text || "").trim();
+  return (
+    t.startsWith("Submitted for approval but the day ended") ||
+    t.startsWith("Submitted for approval but the due time passed")
+  );
+}
+
+async function occurrenceHasTerminalOutcome(taskId, occurrenceDueDate, excludeId = null) {
+  const { start, end } = dueDateDayBounds(occurrenceDueDate);
+  const base = {
+    taskId,
+    occurrenceDueDate: { $gte: start, $lt: end },
+    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+  };
+  const terminal = await TaskApprovalRecord.findOne({
+    ...base,
+    status: { $in: ["approved", "rejected", "not_done_acknowledged"] },
+  }).lean();
+  if (terminal) return true;
+  const pending = await TaskApprovalRecord.findOne({
+    ...base,
+    status: "pending",
+    kind: "completion",
+  }).lean();
+  return Boolean(pending);
+}
+
+/** Submit event for this occurrence with no matching approve/reject outcome. */
+async function findUnresolvedSubmitEvent(taskId, occurrenceDueDate, taskType) {
+  const occKey = calendarDayKeyInTz(occurrenceDueDate);
+  const submitEvents = await TaskEvent.find({
+    taskId,
+    eventType: "updated",
+    "meta.status": "awaiting_approval",
+  })
+    .sort({ createdAt: 1 })
+    .lean();
+
+  for (const e of submitEvents) {
+    const subKey = calendarDayKeyInTz(e.createdAt);
+    if (taskType === "daily" && subKey !== occKey) continue;
+
+    const { start, end } = dueDateDayBounds(occurrenceDueDate);
+    const resolvedRecord = await TaskApprovalRecord.findOne({
+      taskId,
+      occurrenceDueDate: { $gte: start, $lt: end },
+      status: { $in: ["approved", "rejected", "not_done_acknowledged"] },
+    }).lean();
+    if (resolvedRecord) continue;
+
+    const terminalEvent = await TaskEvent.findOne({
+      taskId,
+      eventType: { $in: ["approved", "rejected"] },
+      createdAt: { $gt: e.createdAt },
+    })
+      .sort({ createdAt: 1 })
+      .lean();
+    if (terminalEvent) {
+      const termOcc = terminalEvent.meta?.occurrenceDueDate;
+      if (termOcc && calendarDayKeyInTz(termOcc) === occKey) continue;
+    }
+    return e;
+  }
+  return null;
+}
+
+const RESTORED_SUBMISSION_REMARKS = "Submission restored — awaiting assigner approval.";
+
+/**
+ * Restore approval rows that were wrongly auto-marked not done after the calendar day changed,
+ * even though the assignee had submitted for approval.
+ */
+export async function repairWronglyAutoMissedSubmissions({ assigneeId }) {
+  const tasks = await Task.find({
+    deletedAt: null,
+    assignees: assigneeId,
+    $or: [{ requiresApproval: true }, { approvalStatus: { $in: ["pending", "approved", "rejected"] } }],
+  })
+    .select("_id title taskType dueDate status approvalStatus requiresApproval")
+    .lean();
+  if (!tasks.length) return { restoredRecords: 0, restoredTasks: 0, skipped: 0 };
+
+  const taskById = new Map(tasks.map((t) => [String(t._id), t]));
+  const missedRows = await TaskApprovalRecord.find({
+    taskId: { $in: tasks.map((t) => t._id) },
+    status: "missed",
+  }).sort({ submittedAt: -1 });
+
+  let restoredRecords = 0;
+  let restoredTasks = 0;
+  let skipped = 0;
+  const taskIdsRestored = new Set();
+
+  for (const rec of missedRows) {
+    const task = taskById.get(String(rec.taskId));
+    if (!task) {
+      skipped += 1;
+      continue;
+    }
+
+    const explicitWrong = isWronglyAutoMissedSubmissionRemarks(rec.submissionRemarks);
+    const submitEvent = await findUnresolvedSubmitEvent(task._id, rec.occurrenceDueDate, task.taskType);
+    if (!explicitWrong && !submitEvent) {
+      skipped += 1;
+      continue;
+    }
+
+    if (await occurrenceHasTerminalOutcome(task._id, rec.occurrenceDueDate, rec._id)) {
+      skipped += 1;
+      continue;
+    }
+
+    const occKey = calendarDayKeyInTz(rec.occurrenceDueDate);
+    const occurrenceDue = occurrenceDueOnDay(rec.occurrenceDueDate, occKey);
+    const submittedAt = submitEvent?.createdAt || rec.submittedAt || occurrenceDue;
+    const remarks = explicitWrong
+      ? RESTORED_SUBMISSION_REMARKS
+      : String(rec.submissionRemarks || "").trim() || RESTORED_SUBMISSION_REMARKS;
+
+    await TaskApprovalRecord.updateOne(
+      { _id: rec._id },
+      {
+        $set: {
+          status: "pending",
+          kind: "completion",
+          occurrenceDueDate: occurrenceDue,
+          submittedAt,
+          submissionRemarks: remarks,
+          submissionSource: rec.submissionSource || "assignee",
+        },
+      }
+    );
+    restoredRecords += 1;
+
+    const tid = String(task._id);
+    if (taskIdsRestored.has(tid) || ["completed", "cancelled"].includes(task.status)) continue;
+
+    const taskDoc = await Task.findById(task._id);
+    if (!taskDoc || taskDoc.deletedAt) continue;
+
+    taskDoc.status = "awaiting_approval";
+    taskDoc.approvalStatus = "pending";
+    taskDoc.dueDate = occurrenceDue;
+    taskDoc.submissionRemarks = remarks;
+    taskDoc.completedAt = null;
+    taskDoc.rejectionRemarks = "";
+    taskDoc.rejectionMode = "";
+    taskDoc.notDoneApproval = undefined;
+    await taskDoc.save();
+    taskIdsRestored.add(tid);
+    restoredTasks += 1;
+  }
+
+  return { restoredRecords, restoredTasks, skipped };
+}
+
 /** Convert stale pending to missed on the correct past day, or delete if today/future/duplicate. */
 export async function finalizePendingAsAutoMissed(pendingDoc, task, { now = new Date() } = {}) {
   if (!pendingDoc?._id) return "skipped";
@@ -215,15 +372,6 @@ export async function repairAndFilterApprovalInboxTasks(taskDocs) {
 
     const effectiveDue = effectivePendingOccurrenceDue(pending, task);
     const occKey = calendarDayKeyInTz(effectiveDue);
-
-    if (task.taskType === "daily" && occKey < todayKey) {
-      await resetTaskToAssigneePendingWork(task, {
-        todayKey,
-        dropPending: pending,
-        markPendingMissed: true,
-      });
-      continue;
-    }
 
     if (task.taskType === "daily" && occKey > todayKey) {
       await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending });
@@ -1185,11 +1333,12 @@ export async function repairNotDoneMissedConflicts({ assigneeId }) {
 
 /** Run all history repairs for one assignee (org-wide on refresh). */
 export async function repairAssigneeHistoryRecords({ assigneeId }) {
+  const restoredSubmissions = await repairWronglyAutoMissedSubmissions({ assigneeId });
   const misdatedApproved = await repairMisdatedApprovedRecords({ assigneeId });
   const phantoms = await repairPhantomApprovedRecords({ assigneeId });
   const missed = await repairMisdatedMissedRecords({ assigneeId });
   const notDoneConflicts = await repairNotDoneMissedConflicts({ assigneeId });
-  return { misdatedApproved, phantoms, missed, notDoneConflicts };
+  return { misdatedApproved, phantoms, missed, notDoneConflicts, restoredSubmissions };
 }
 
 /** Drop phantom approved rows from API responses. */

@@ -24,7 +24,7 @@ async function main() {
     deletedAt: null,
     taskType: { $in: ["daily", "weekly", "fortnightly", "monthly", "quarterly", "yearly"] },
   });
-  let totals = { fixed: 0, removed: 0, notDoneConflicts: 0 };
+  let totals = { fixed: 0, removed: 0, notDoneConflicts: 0, restoredRecords: 0, restoredTasks: 0 };
 
   for (const assigneeId of assigneeIds) {
     const result = await repairAssigneeHistoryRecords({ assigneeId });
@@ -34,10 +34,12 @@ async function main() {
       (result.phantoms?.removed || 0) +
       (result.missed?.removed || 0);
     totals.notDoneConflicts += result.notDoneConflicts?.removed || 0;
+    totals.restoredRecords += result.restoredSubmissions?.restoredRecords || 0;
+    totals.restoredTasks += result.restoredSubmissions?.restoredTasks || 0;
   }
 
   console.log(
-    `Repair complete for ${assigneeIds.length} assignee(s): ${totals.fixed} occurrence date(s) fixed, ${totals.removed} bad row(s) removed, ${totals.notDoneConflicts} auto-missed conflict(s) cleared.`
+    `Repair complete for ${assigneeIds.length} assignee(s): ${totals.fixed} occurrence date(s) fixed, ${totals.removed} bad row(s) removed, ${totals.notDoneConflicts} auto-missed conflict(s) cleared, ${totals.restoredRecords} submission row(s) restored, ${totals.restoredTasks} task(s) back in For Approval.`
   );
   await mongoose.disconnect();
 }
