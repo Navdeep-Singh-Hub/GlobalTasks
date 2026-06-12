@@ -270,6 +270,18 @@ function withEffectiveTaskStatus(task, now = new Date()) {
   return doc;
 }
 
+/** For Approval inbox: match occurrence due date (pending record), not rolled task dueDate. */
+function filterApprovalInboxByOccurrenceDue(tasks, approvalDueDate) {
+  const raw = String(approvalDueDate || "").trim();
+  if (!raw) return tasks;
+  const key = calendarDayKeyInTz(new Date(`${raw}T12:00:00+05:30`));
+  if (!key) return tasks;
+  return tasks.filter((t) => {
+    const due = t.pendingOccurrenceDueDate || t.notDoneApproval?.dueDate || t.dueDate;
+    return due && calendarDayKeyInTz(due) === key;
+  });
+}
+
 /** Assigner reopened or reset a task after approve / reject / complete. */
 function applyAssignerLifecycleReset(task, prevStatus, body, isAssignerEdit) {
   if (!isAssignerEdit) return;
@@ -641,6 +653,9 @@ router.get("/", async (req, res) => {
       tasks = await repairAndFilterApprovalInboxTasks(tasks);
     } else {
       tasks = await filterAndEnrichApprovalInboxTasks(tasks);
+    }
+    if (req.query.approvalDueDate) {
+      tasks = filterApprovalInboxByOccurrenceDue(tasks, req.query.approvalDueDate);
     }
   }
 

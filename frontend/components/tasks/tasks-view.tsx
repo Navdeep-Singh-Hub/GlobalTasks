@@ -125,11 +125,12 @@ export function TasksView({
   const canManageOwnMasterTask = (t: Task) =>
     Boolean(masterAdminActions && (isCeoMasterView || canEditTaskAsAssigner(t)));
   const showApprovalQuickActions = Boolean(preset.approval && isManagement(user?.role));
+  const showApprovalFilters = Boolean(preset.approval && (isManagement(user?.role) || isCeo(user?.role)));
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [showFilters, setShowFilters] = useState(masterAdminActions);
+  const [showFilters, setShowFilters] = useState(masterAdminActions || Boolean(preset.approval));
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState(preset.status || "all");
@@ -146,9 +147,13 @@ export function TasksView({
   const [submitBulkOpen, setSubmitBulkOpen] = useState(false);
   const [masterRelation, setMasterRelation] = useState<"created" | "assigned">("created");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [approvalDueDate, setApprovalDueDate] = useState("");
+  const [approvalAssignee, setApprovalAssignee] = useState("all");
   const [myAssignees, setMyAssignees] = useState<{ _id: string; name: string; email: string }[]>([]);
   const [flashIds, setFlashIds] = useState<string[]>([]);
-  const canFilterByAssignee = Boolean(masterAdminActions && (isManagement(user?.role) || isCeo(user?.role)));
+  const canFilterByAssignee = Boolean(
+    (masterAdminActions || showApprovalFilters) && (isManagement(user?.role) || isCeo(user?.role))
+  );
 
   const flashCompleted = (ids: string[]) => {
     setFlashIds(ids);
@@ -264,6 +269,8 @@ export function TasksView({
     if (preset.recurring === false) qs.set("recurring", "false");
     if (preset.statusGroup) qs.set("statusGroup", preset.statusGroup);
     if (preset.approval) qs.set("approval", "true");
+    if (preset.approval && approvalDueDate) qs.set("approvalDueDate", approvalDueDate);
+    if (preset.approval && approvalAssignee !== "all") qs.set("assignee", approvalAssignee);
     if (preset.workableToday) qs.set("workableToday", "true");
     if (preset.myTasks) qs.set("myTasks", "true");
     if (preset.assigneeInbox) qs.set("assigneeInbox", "true");
@@ -284,7 +291,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, isCeoMasterView, masterRelation, assigneeFilter]);
+  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, isCeoMasterView, masterRelation, assigneeFilter, approvalDueDate, approvalAssignee]);
 
   useEffect(() => {
     load();
@@ -451,13 +458,75 @@ export function TasksView({
                   ? ` · tasks you assigned to ${myAssignees.find((a) => a._id === assigneeFilter)?.name || "selected person"}`
                   : " · only tasks you assigned"
                 : " · tasks assigned to you"
-              : ""}
+              : preset.approval
+                ? [
+                    approvalDueDate ? ` · due ${formatAppDate(approvalDueDate)}` : "",
+                    approvalAssignee !== "all"
+                      ? ` · ${myAssignees.find((a) => a._id === approvalAssignee)?.name || "selected person"}`
+                      : "",
+                  ].join("")
+                : ""}
         </p>
       </PageHeader>
 
       {showFilters && (
         <div className="filter-panel">
           <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+            {showApprovalFilters ? (
+              <>
+                <label className="space-y-1">
+                  <span className="text-xs font-semibold text-zinc-500">Due date (occurrence)</span>
+                  <Input
+                    type="date"
+                    value={approvalDueDate}
+                    onChange={(e) => setApprovalDueDate(e.target.value)}
+                  />
+                </label>
+                <label className="space-y-1 sm:col-span-2">
+                  <span className="text-xs font-semibold text-zinc-500">Team member</span>
+                  <SearchableSelect
+                    value={approvalAssignee}
+                    onChange={setApprovalAssignee}
+                    placeholder="All team members"
+                    searchPlaceholder="Search name or email…"
+                    options={[
+                      { value: "all", label: "All team members", searchText: "all" },
+                      ...myAssignees.map((a) => ({
+                        value: a._id,
+                        label: `${a.name}${a.email ? ` (${a.email})` : ""}`,
+                        searchText: `${a.name} ${a.email || ""}`,
+                      })),
+                    ]}
+                  />
+                </label>
+                <div className="relative sm:col-span-2 md:col-span-4">
+                  <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
+                  <Input
+                    placeholder="Search task title or description…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {(approvalDueDate || approvalAssignee !== "all" || search) && (
+                  <div className="sm:col-span-2 md:col-span-4">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setApprovalDueDate("");
+                        setApprovalAssignee("all");
+                        setSearch("");
+                      }}
+                    >
+                      Clear filters
+                    </Button>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
             <div className="relative sm:col-span-2">
               <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
               <Input placeholder="Search tasks, people, description…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
@@ -515,6 +584,8 @@ export function TasksView({
                 </>
               )}
             </div>
+              </>
+            )}
           </div>
         </div>
       )}
