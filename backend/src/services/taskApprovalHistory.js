@@ -336,78 +336,7 @@ export async function repairAssigneeInboxApprovalState(assigneeId) {
 /** For Approval inbox: repair phantom/stale rows and return only valid submissions. */
 export async function repairAndFilterApprovalInboxTasks(taskDocs) {
   if (!taskDocs.length) return [];
-
-  const todayKey = calendarDayKeyInTz(new Date());
-  const kept = [];
-
-  for (const raw of taskDocs) {
-    const task = await Task.findById(raw._id || raw.id);
-    if (!task || task.deletedAt) continue;
-
-    if (task.notDoneApproval?.status === "pending") {
-      const doc = task.toObject();
-      doc.submissionRemarks = task.notDoneApproval?.remarks || "";
-      doc.pendingOccurrenceDueDate = task.notDoneApproval?.dueDate || task.dueDate;
-      kept.push(doc);
-      continue;
-    }
-
-    if (task.status !== "awaiting_approval" || task.approvalStatus !== "pending") {
-      if (task.approvalStatus === "pending") {
-        task.approvalStatus = "none";
-        task.submissionRemarks = "";
-        await task.save();
-        await TaskApprovalRecord.deleteMany({ taskId: task._id, status: "pending", kind: "completion" });
-      }
-      continue;
-    }
-
-    const pending = await TaskApprovalRecord.findOne({
-      taskId: task._id,
-      status: "pending",
-      kind: "completion",
-    }).sort({ submittedAt: -1 });
-
-    if (!pending) {
-      await resetTaskToAssigneePendingWork(task, { todayKey });
-      continue;
-    }
-
-    const effectiveDue = effectivePendingOccurrenceDue(pending, task);
-    const occKey = calendarDayKeyInTz(effectiveDue);
-
-    if (task.taskType === "daily" && occKey > todayKey) {
-      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending });
-      continue;
-    }
-
-    const lastApproved = await TaskApprovalRecord.findOne({
-      taskId: task._id,
-      status: "approved",
-      kind: "completion",
-    })
-      .sort({ approvedAt: -1 })
-      .lean();
-    if (
-      lastApproved &&
-      pending.submissionSource !== "assigner_reopen" &&
-      String(pending.submissionRemarks || "").trim() === String(lastApproved.submissionRemarks || "").trim() &&
-      calendarDayKeyInTz(lastApproved.occurrenceDueDate) !== occKey
-    ) {
-      await resetTaskToAssigneePendingWork(task, { todayKey, dropPending: pending });
-      continue;
-    }
-
-    const doc = task.toObject();
-    doc.pendingOccurrenceDueDate = effectiveDue;
-    doc.dueDate = effectiveDue;
-    doc.submissionRemarks = pending.submissionRemarks;
-    doc.pendingSubmittedAt = pending.submittedAt;
-    doc.submissionSource = pending.submissionSource || "assignee";
-    kept.push(doc);
-  }
-
-  return kept;
+  return filterAndEnrichApprovalInboxTasks(taskDocs);
 }
 
 /** For Approval inbox: display occurrence from pending record (read-only, no DB writes). */
@@ -440,52 +369,126 @@ export async function enrichApprovalInboxTasks(tasks) {
   });
 }
 
-/** Read-only For Approval list: one batched pending lookup, no DB writes on list load. */
+/** Tasks in scope that have a live submission waiting for review. */
+export async function approvalInboxTaskMatchClause({ userId, role, centerId, isCeoRole }) {
+  const visibilityTaskFilter = { deletedAt: null, status: { $nin: ["cancelled"] } };
+  if (!isCeoRole && centerId) visibilityTaskFilter.centerId = centerId;
+  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole });
+  if (visibility) Object.assign(visibilityTaskFilter, visibility);
+
+  const visibleTaskIds = await Task.distinct("_id", visibilityTaskFilter);
+  const pendingTaskIds =
+    visibleTaskIds.length > 0
+      ? await TaskApprovalRecord.distinct("taskId", {
+          status: "pending",
+          kind: { $in: ["completion", "not_done"] },
+          taskId: { $in: visibleTaskIds },
+        })
+      : [];
+
+  const or = [
+    { status: "awaiting_approval", approvalStatus: "pending" },
+    { "notDoneApproval.status": "pending" },
+  ];
+  if (pendingTaskIds.length) or.push({ _id: { $in: pendingTaskIds } });
+  return { $or: or };
+}
+
+/** Align task.status with pending approval records so For Approval matches history. */
+export async function repairApprovalInboxPendingTaskState({ userId, role, centerId, isCeoRole }) {
+  const visibilityTaskFilter = { deletedAt: null, status: { $nin: ["cancelled"] } };
+  if (!isCeoRole && centerId) visibilityTaskFilter.centerId = centerId;
+  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole });
+  if (visibility) Object.assign(visibilityTaskFilter, visibility);
+
+  const visibleTaskIds = await Task.distinct("_id", visibilityTaskFilter);
+  if (!visibleTaskIds.length) return { repaired: 0 };
+
+  const pendingTaskIds = await TaskApprovalRecord.distinct("taskId", {
+    status: "pending",
+    kind: "completion",
+    taskId: { $in: visibleTaskIds },
+  });
+  if (!pendingTaskIds.length) return { repaired: 0 };
+
+  let repaired = 0;
+  const tasks = await Task.find({ _id: { $in: pendingTaskIds } });
+  for (const task of tasks) {
+    if (task.status === "awaiting_approval" && task.approvalStatus === "pending") continue;
+    task.status = "awaiting_approval";
+    task.approvalStatus = "pending";
+    task.requiresApproval = true;
+    await task.save();
+    repaired += 1;
+  }
+  return { repaired };
+}
+
+function enrichApprovalInboxRow(base, pending, { todayKey }) {
+  const effectiveDue = effectivePendingOccurrenceDue(pending, base);
+  const occKey = calendarDayKeyInTz(effectiveDue);
+  if (base.taskType === "daily" && occKey > todayKey) return null;
+  return {
+    ...base,
+    pendingRecordId: String(pending._id),
+    inboxRowKey: `${String(base._id)}-${occKey}`,
+    pendingOccurrenceDueDate: effectiveDue,
+    dueDate: effectiveDue,
+    submissionRemarks: pending.submissionRemarks,
+    pendingSubmittedAt: pending.submittedAt,
+    submissionSource: pending.submissionSource || "assignee",
+    status: "awaiting_approval",
+    approvalStatus: "pending",
+  };
+}
+
+/** Read-only For Approval list: one row per pending occurrence (incl. restored history rows). */
 export async function filterAndEnrichApprovalInboxTasks(taskDocs) {
   if (!taskDocs.length) return [];
 
   const todayKey = calendarDayKeyInTz(new Date());
+  const taskIds = taskDocs.map((t) => t._id || t.id);
   const pendingRows = await TaskApprovalRecord.find({
-    taskId: { $in: taskDocs.map((t) => t._id || t.id) },
+    taskId: { $in: taskIds },
     status: "pending",
-    kind: "completion",
+    kind: { $in: ["completion", "not_done"] },
   })
-    .sort({ submittedAt: -1 })
+    .sort({ occurrenceDueDate: 1, submittedAt: -1 })
     .lean();
 
   const pendingByTask = new Map();
   for (const r of pendingRows) {
     const tid = String(r.taskId);
-    if (!pendingByTask.has(tid)) pendingByTask.set(tid, r);
+    if (!pendingByTask.has(tid)) pendingByTask.set(tid, []);
+    pendingByTask.get(tid).push(r);
   }
 
   const kept = [];
   for (const raw of taskDocs) {
-    const task = raw.toObject ? raw.toObject() : { ...raw };
+    const base = raw.toObject ? raw.toObject() : { ...raw };
+    const tid = String(base._id);
 
-    if (task.notDoneApproval?.status === "pending") {
-      task.submissionRemarks = task.notDoneApproval?.remarks || "";
-      task.pendingOccurrenceDueDate = task.notDoneApproval?.dueDate || task.dueDate;
-      kept.push(task);
+    if (base.notDoneApproval?.status === "pending") {
+      base.submissionRemarks = base.notDoneApproval?.remarks || "";
+      base.pendingOccurrenceDueDate = base.notDoneApproval?.dueDate || base.dueDate;
+      base.inboxRowKey = `${tid}-notdone`;
+      kept.push(base);
       continue;
     }
 
-    if (task.status !== "awaiting_approval" || task.approvalStatus !== "pending") continue;
+    const records = (pendingByTask.get(tid) || []).filter((r) => r.kind === "completion");
+    if (records.length) {
+      for (const pending of records) {
+        const row = enrichApprovalInboxRow(base, pending, { todayKey });
+        if (row) kept.push(row);
+      }
+      continue;
+    }
 
-    const pending = pendingByTask.get(String(task._id));
-    if (!pending) continue;
-
-    const effectiveDue = effectivePendingOccurrenceDue(pending, task);
-    const occKey = calendarDayKeyInTz(effectiveDue);
-    // Hide only future daily occurrences; past/today submissions stay in For Approval.
-    if (task.taskType === "daily" && occKey > todayKey) continue;
-
-    task.pendingOccurrenceDueDate = effectiveDue;
-    task.dueDate = effectiveDue;
-    task.submissionRemarks = pending.submissionRemarks;
-    task.pendingSubmittedAt = pending.submittedAt;
-    task.submissionSource = pending.submissionSource || "assignee";
-    kept.push(task);
+    if (base.status === "awaiting_approval" && base.approvalStatus === "pending") {
+      base.inboxRowKey = tid;
+      kept.push(base);
+    }
   }
 
   return kept;

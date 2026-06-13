@@ -25,11 +25,6 @@ import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
 import { canApproveTaskForUser, userAssigneeIdsForOperationsLead } from "../services/taskApprovalRouting.js";
-import { approvalVisibilityClause } from "../services/taskApprovalHistory.js";
-import { isWeekOffToday } from "../utils/weekoff.js";
-import { assertAllowedDepartmentId } from "../utils/departments.js";
-import { formatAppDate } from "../utils/dateFormat.js";
-import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
 import {
   recordTaskSubmission,
   recordNotDoneSubmission,
@@ -42,7 +37,14 @@ import {
   resolveOccurrenceDueForApproval,
   backfillApprovalRecordsFromEvents,
   assignerScopeClause,
+  approvalVisibilityClause,
+  approvalInboxTaskMatchClause,
+  repairApprovalInboxPendingTaskState,
 } from "../services/taskApprovalHistory.js";
+import { isWeekOffToday } from "../utils/weekoff.js";
+import { assertAllowedDepartmentId } from "../utils/departments.js";
+import { formatAppDate } from "../utils/dateFormat.js";
+import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
 import {
   invalidateAssigneeSync,
   scheduleBackground,
@@ -143,21 +145,17 @@ function escapeRegex(text) {
   return String(text).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function approvalInboxFilterClause() {
-  return {
-    $or: [
-      { status: "awaiting_approval", approvalStatus: "pending" },
-      { "notDoneApproval.status": "pending" },
-    ],
-  };
-}
-
 /** Match task title/description and assignee / assigner names or emails. */
-async function applyTaskTextAndPersonSearch(filter, query) {
+async function applyTaskTextAndPersonSearch(filter, query, { userId, role, centerId, isCeoRole } = {}) {
   const search = String(query.search || "").trim();
   const approval = query.approval === "true";
   if (!search) {
-    if (approval) Object.assign(filter, approvalInboxFilterClause());
+    if (approval) {
+      mergeClauseIntoFilter(
+        filter,
+        await approvalInboxTaskMatchClause({ userId, role, centerId, isCeoRole: isCeoRole ?? false })
+      );
+    }
     return;
   }
 
@@ -180,7 +178,10 @@ async function applyTaskTextAndPersonSearch(filter, query) {
   }
 
   if (approval) {
-    filter.$and = [{ $or: clauses }, approvalInboxFilterClause()];
+    filter.$and = [
+      { $or: clauses },
+      await approvalInboxTaskMatchClause({ userId, role, centerId, isCeoRole: isCeoRole ?? false }),
+    ];
   } else {
     filter.$or = clauses;
   }
@@ -596,7 +597,21 @@ router.get("/", async (req, res) => {
   }
 
   const filter = buildFilter(req.query, req.userId, req.userRole);
-  await applyTaskTextAndPersonSearch(filter, req.query);
+  const isApprovalInbox = req.query.approval === "true";
+  if (isApprovalInbox) {
+    await repairApprovalInboxPendingTaskState({
+      userId: req.userId,
+      role: req.userRole,
+      centerId: me?.centerId || null,
+      isCeoRole: isCeo(req.userRole),
+    });
+  }
+  await applyTaskTextAndPersonSearch(filter, req.query, {
+    userId: req.userId,
+    role: req.userRole,
+    centerId: me?.centerId || null,
+    isCeoRole: isCeo(req.userRole),
+  });
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
   if (req.query.approval === "true") {
     await applyApprovalListScope(filter, {
@@ -612,7 +627,6 @@ router.get("/", async (req, res) => {
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
   const isMasterList = String(req.query.masterScope || "").toLowerCase() === "true";
-  const isApprovalInbox = req.query.approval === "true";
   const statusFilter = req.query.status && req.query.status !== "all" ? String(req.query.status) : "all";
 
   const listQuery = Task.find(filter)
@@ -1328,7 +1342,10 @@ router.post("/:id/approve", async (req, res) => {
     return res.json({ task });
   }
 
-  const occurrenceDue = await resolveOccurrenceDueForApproval(task);
+  const occurrenceDue =
+    req.body?.occurrenceDueDate != null && String(req.body.occurrenceDueDate).trim()
+      ? new Date(req.body.occurrenceDueDate)
+      : await resolveOccurrenceDueForApproval(task);
   if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
     task.dueDate = occurrenceDue;
   }
@@ -1345,10 +1362,33 @@ router.post("/:id/approve", async (req, res) => {
     });
   }
 
-  task.approvalStatus = "approved";
-  task.status = "completed";
-  task.completedAt = new Date();
-  task.submissionRemarks = "";
+  const remainingPending = await TaskApprovalRecord.countDocuments({
+    taskId: task._id,
+    status: "pending",
+    kind: "completion",
+  });
+
+  if (remainingPending > 0) {
+    const nextPending = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+    })
+      .sort({ occurrenceDueDate: 1, submittedAt: -1 })
+      .lean();
+    task.status = "awaiting_approval";
+    task.approvalStatus = "pending";
+    task.completedAt = null;
+    task.submissionRemarks = nextPending?.submissionRemarks || "";
+    if (nextPending?.occurrenceDueDate) {
+      task.dueDate = nextPending.occurrenceDueDate;
+    }
+  } else {
+    task.approvalStatus = "approved";
+    task.status = "completed";
+    task.completedAt = new Date();
+    task.submissionRemarks = "";
+  }
   task.rejectionRemarks = "";
   task.rejectionMode = "";
   await task.save();

@@ -47,6 +47,8 @@ type Task = {
   masterHistoryCount?: number;
   /** For Approval inbox: occurrence from pending approval record (IST). */
   pendingOccurrenceDueDate?: string | null;
+  pendingRecordId?: string;
+  inboxRowKey?: string;
   pendingSubmittedAt?: string | null;
   submissionSource?: "assignee" | "assigner_reopen";
 };
@@ -283,7 +285,7 @@ export function TasksView({
         qs.set("assignee", assigneeFilter);
       }
     }
-    qs.set("limit", isCeoMasterView ? "200" : masterAdminActions ? "100" : "50");
+    qs.set("limit", isCeoMasterView ? "200" : masterAdminActions ? "100" : preset.approval ? "100" : "50");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
       .then((d) => {
         setTasks(d.tasks);
@@ -339,8 +341,11 @@ export function TasksView({
   const rowNeedsApproval = (t: Task) =>
     t.status === "awaiting_approval" || t.approvalStatus === "pending" || t.notDoneApproval?.status === "pending";
 
-  const approveTask = async (id: string) => {
-    await api(`/tasks/${id}/approve`, { method: "POST" });
+  const approveTask = async (id: string, occurrenceDueDate?: string | null) => {
+    await api(`/tasks/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify(occurrenceDueDate ? { occurrenceDueDate } : {}),
+    });
     flashCompleted([id]);
     celebrate("approve");
     load();
@@ -641,7 +646,7 @@ export function TasksView({
                   const hasVoice = !!t.voiceNoteUrl;
                   return (
                     <tr
-                      key={t._id}
+                      key={t.inboxRowKey || t._id}
                       onClick={() => setDetailId(t._id)}
                       className="cursor-pointer border-t border-zinc-100 transition-colors hover:bg-brand-50/40 dark:border-zinc-800 dark:hover:bg-brand-900/10"
                     >
@@ -731,7 +736,7 @@ export function TasksView({
                             <>
                               <button
                                 type="button"
-                                onClick={() => void approveTask(t._id)}
+                                onClick={() => void approveTask(t._id, t.pendingOccurrenceDueDate || t.dueDate)}
                                 title="Approve & complete"
                                 className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600 sm:h-7 sm:w-7 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-400"
                               >
@@ -790,7 +795,7 @@ export function TasksView({
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {orderedTasks.map((t, idx) => (
             <motion.div
-              key={t._id}
+              key={t.inboxRowKey || t._id}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.28, delay: Math.min(idx * 0.04, 0.32) }}
@@ -903,7 +908,7 @@ export function TasksView({
                         className="h-8 text-xs"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void approveTask(t._id);
+                          void approveTask(t._id, t.pendingOccurrenceDueDate || t.dueDate);
                         }}
                       >
                         Approve
