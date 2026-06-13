@@ -253,7 +253,7 @@ export function TasksView({
   };
 
   const canPermanentBulk = isCeo(user?.role);
-  const canPermanentSingle = isCeo(user?.role) || user?.role === "centre_head";
+  const canPermanentSingle = isManagement(user?.role);
 
   useEffect(() => {
     const handle = window.setTimeout(() => setDebouncedSearch(search.trim()), 350);

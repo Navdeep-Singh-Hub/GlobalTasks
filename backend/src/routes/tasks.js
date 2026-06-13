@@ -486,6 +486,14 @@ async function applyApprovalListScope(filter, { userId, role, centerId }) {
   if (visibility) mergeClauseIntoFilter(filter, visibility);
 }
 
+/** Recycle bin: same visibility as For Approval (assigner + operations team). */
+async function applyTrashListScope(filter, { userId, role, centerId, isCeoRole }) {
+  if (isCeoRole) return;
+  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole: false });
+  if (visibility) mergeClauseIntoFilter(filter, visibility);
+  else applyAssignerScopeFilter(filter, userId);
+}
+
 function applyListScopeForRole(filter, { userId, role, query }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
@@ -613,11 +621,19 @@ router.get("/", async (req, res) => {
     isCeoRole: isCeo(req.userRole),
   });
   if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
+  const trashOnly = req.query.trash === "only" || req.query.bin === "only";
   if (req.query.approval === "true") {
     await applyApprovalListScope(filter, {
       userId: req.userId,
       role: req.userRole,
       centerId: me?.centerId || null,
+    });
+  } else if (trashOnly) {
+    await applyTrashListScope(filter, {
+      userId: req.userId,
+      role: req.userRole,
+      centerId: me?.centerId || null,
+      isCeoRole: isCeo(req.userRole),
     });
   } else {
     applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
@@ -1527,22 +1543,34 @@ router.delete("/:id", requireManagement, async (req, res) => {
   res.json({ ok: true });
 });
 
-router.post("/:id/restore", async (req, res) => {
+router.post("/:id/restore", requireManagement, async (req, res) => {
   const me = await actor(req);
-  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  applyMutationScopeForRole(where, req.userId, req.userRole);
-  const task = await Task.findOneAndUpdate(where, { deletedAt: null });
-  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
+  const existing = await Task.findById(req.params.id).lean();
+  if (!existing || !existing.deletedAt) return res.status(404).json({ message: "Task not found" });
+  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can restore tasks from your center only" });
+  }
+  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {
+    return res.status(403).json({ message: "You can only restore tasks assigned to you or tasks you assigned" });
+  }
+  const task = await Task.findOneAndUpdate({ _id: existing._id }, { deletedAt: null });
+  if (!task) return res.status(404).json({ message: "Task not found" });
+  await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "restored", meta: {} });
   res.json({ ok: true });
 });
 
-router.delete("/:id/hard", requireRoles("ceo", "centre_head"), async (req, res) => {
+router.delete("/:id/hard", requireManagement, async (req, res) => {
   const me = await actor(req);
-  const where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
-  applyMutationScopeForRole(where, req.userId, req.userRole);
-  const task = await Task.findOne(where);
-  if (task) await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });
-  await Task.deleteOne(where);
+  const existing = await Task.findById(req.params.id).lean();
+  if (!existing) return res.status(404).json({ message: "Task not found" });
+  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can delete tasks from your center only" });
+  }
+  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {
+    return res.status(403).json({ message: "You can only permanently delete tasks assigned to you or tasks you assigned" });
+  }
+  await TaskEvent.create({ taskId: existing._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });
+  await Task.deleteOne({ _id: existing._id });
   res.json({ ok: true });
 });
 
