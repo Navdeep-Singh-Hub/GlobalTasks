@@ -38,12 +38,27 @@ async function getDirectChildrenMap(parentIds, centerId) {
 /** Roles that can receive tasks within a center (excludes ceo / centre_head). */
 const CENTER_ASSIGNEE_ROLES = ["coordinator", "supervisor", "operations", "user", "executor"];
 
-/** Users an operations lead may assign tasks to (same center). */
+/** Legacy users with no center still count as in-scope for a selected center. */
+export function assigneeMatchesCenter(userCenterId, taskCenterId) {
+  if (!taskCenterId) return true;
+  if (userCenterId == null || userCenterId === "") return true;
+  return String(userCenterId) === String(taskCenterId);
+}
+
+export async function findInvalidCenterAssignees(assigneeIds, taskCenterId) {
+  if (!assigneeIds.length || !taskCenterId) return [];
+  const users = await User.find({ _id: { $in: assigneeIds } })
+    .select("_id centerId")
+    .lean();
+  return users.filter((u) => !assigneeMatchesCenter(u.centerId, taskCenterId)).map((u) => String(u._id));
+}
+
+/** Users an operations lead may assign tasks to (same center, any role except CEO). */
 export async function getOperationsAssignableIds(_actorId, centerId) {
   if (!centerId) return [];
   const ids = await User.find({
     ...centerScopeFilter(centerId),
-    role: { $in: CENTER_ASSIGNEE_ROLES },
+    role: { $ne: "ceo" },
     active: ACTIVE_USER_FILTER,
   }).distinct("_id");
   return ids.map(String);

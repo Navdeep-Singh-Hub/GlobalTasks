@@ -23,7 +23,7 @@ import {
 } from "../services/recurringOccurrenceSync.js";
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
-import { getAssignableAssigneeIds } from "../services/hierarchy.js";
+import { getAssignableAssigneeIds, findInvalidCenterAssignees } from "../services/hierarchy.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import {
   recordTaskSubmission,
@@ -763,8 +763,10 @@ router.post("/", async (req, res, next) => {
       }
     }
     if (payload.assignees.length) {
-      const crossCenter = await User.countDocuments({ _id: { $in: payload.assignees }, centerId: { $ne: payload.centerId } });
-      if (crossCenter > 0) return res.status(400).json({ message: "All assignees must belong to the selected center" });
+      const invalidCenter = await findInvalidCenterAssignees(payload.assignees, payload.centerId);
+      if (invalidCenter.length > 0) {
+        return res.status(400).json({ message: "All assignees must belong to the selected center" });
+      }
     }
     if (!payload.requiredInputsSchema) payload.requiredInputsSchema = { type: "object", properties: {}, required: [] };
     if (!payload.inputPayload) payload.inputPayload = {};
@@ -893,8 +895,10 @@ router.patch("/:id", async (req, res, next) => {
       }
     }
     if (task.assignees?.length) {
-      const crossCenter = await User.countDocuments({ _id: { $in: task.assignees }, centerId: { $ne: task.centerId } });
-      if (crossCenter > 0) return res.status(400).json({ message: "All assignees must belong to task center" });
+      const invalidCenter = await findInvalidCenterAssignees(task.assignees, task.centerId);
+      if (invalidCenter.length > 0) {
+        return res.status(400).json({ message: "All assignees must belong to task center" });
+      }
     }
 
     const requestedComplete = "status" in req.body && req.body.status === "completed";
