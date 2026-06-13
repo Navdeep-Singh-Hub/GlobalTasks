@@ -70,12 +70,5 @@ export async function operationsTeamTaskClause(operationsLeadId, centerId) {
 export async function canApproveTaskForUser({ userId, userRole, task }) {
   if (!task) return false;
   if (userRole === "ceo") return true;
-  if (taskAssignerId(task) === String(userId || "")) return true;
-  if (userRole === "operations") {
-    const centerId = task.centerId?._id || task.centerId || null;
-    const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
-    const assignees = (task.assignees || []).map((a) => String(a._id || a));
-    return assignees.some((id) => teamIds.includes(id));
-  }
-  return false;
+  return taskAssignerId(task) === String(userId || "");
 }

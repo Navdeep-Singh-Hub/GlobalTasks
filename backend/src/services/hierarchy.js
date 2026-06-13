@@ -1,5 +1,7 @@
 import mongoose from "mongoose";
 import { User } from "../models/User.js";
+import { Task } from "../models/Task.js";
+import { assignerScopeClause } from "./taskApprovalHistory.js";
 
 /** Treat missing `active` as active (legacy users created before the field existed). */
 export const ACTIVE_USER_FILTER = { $ne: false };
@@ -87,8 +89,10 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
     return [String(actorId), ...descendants.map((u) => String(u._id))];
   }
   if (actorRole === "operations") {
-    const ids = await getOperationsAssignableIds(actorId, centerId);
-    return [String(actorId), ...ids];
+    const filter = { deletedAt: null, ...assignerScopeClause(actorId) };
+    if (centerId) Object.assign(filter, centerScopeFilter(centerId));
+    const assigneeIds = await Task.distinct("assignees", filter);
+    return [String(actorId), ...assigneeIds.map(String)];
   }
   return [String(actorId)];
 }

@@ -1,7 +1,6 @@
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { Task } from "../models/Task.js";
 import { TaskEvent } from "../models/TaskEvent.js";
-import { userAssigneeIdsForOperationsLead } from "./taskApprovalRouting.js";
 import { APP_TIMEZONE, calendarDayKeyInTz, startOfNextCalendarDayInTz, isRecurring, isOccurrencePastDue, resolveOccurrenceDueForSubmitTime } from "../utils/recurrence.js";
 
 export function taskAssignerIdFromDoc(task) {
@@ -840,18 +839,10 @@ export function assignerScopeClause(userId) {
   };
 }
 
-/** For Approval + performance: tasks you assigned, or (operations) tasks for your mapped user-role team. */
+/** For Approval + performance: only tasks you assigned. */
 export async function approvalVisibilityClause({ userId, role, centerId, isCeoRole }) {
   if (isCeoRole || role === "ceo") return null;
-  const assigner = assignerScopeClause(userId);
-  if (role === "operations") {
-    const teamIds = await userAssigneeIdsForOperationsLead(userId, centerId);
-    if (!teamIds.length) return assigner;
-    return {
-      $or: [...assigner.$or, { assignees: { $in: teamIds } }],
-    };
-  }
-  return assigner;
+  return assignerScopeClause(userId);
 }
 
 /**
@@ -875,13 +866,6 @@ export async function listMyAssignees({ userId, centerId, isCeoRole, role }) {
 
   const historyFilter = { assignedBy: userId };
   if (centerId) historyFilter.centerId = centerId;
-  if (role === "operations") {
-    const teamIds = await userAssigneeIdsForOperationsLead(userId, centerId);
-    if (teamIds.length) {
-      historyFilter.$or = [{ assignedBy: userId }, { assigneeId: { $in: teamIds } }];
-      delete historyFilter.assignedBy;
-    }
-  }
 
   const [fromTasks, fromHistory, taskIdsForHistory] = await Promise.all([
     Task.distinct("assignees", taskFilter),
@@ -914,14 +898,7 @@ export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, 
     };
     if (centerId) taskFilter.centerId = centerId;
     const taskIds = await Task.distinct("_id", taskFilter);
-    const orClause = [{ assignedBy: userId }, { taskId: { $in: taskIds } }];
-    if (role === "operations") {
-      const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
-      if (teamIds.includes(String(assigneeId))) {
-        orClause.push({ assigneeId });
-      }
-    }
-    q = { assigneeId, $or: orClause };
+    q = { assigneeId, $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }] };
   }
   if (from || to) {
     q.occurrenceDueDate = {};

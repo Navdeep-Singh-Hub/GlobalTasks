@@ -24,6 +24,7 @@ import {
   fillMissingDailyOccurrenceHistory,
   sortRecordsByOccurrence,
   sanitizeHistoryMissedDisplay,
+  assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
 import { syncRecurringTasksForAssignee } from "../services/recurringOccurrenceSync.js";
 import {
@@ -168,8 +169,13 @@ router.get("/team-performance", async (_req, res) => {
   if (_req.userRole === "coordinator") userFilter.role = { $in: ["coordinator", "supervisor", "operations", "user", "executor"] };
   if (_req.userRole === "supervisor") userFilter.role = "executor";
   if (_req.userRole === "operations") {
-    userFilter.role = "user";
-    userFilter.reportsTo = _req.userId;
+    const assigneeIds = await Task.distinct("assignees", {
+      deletedAt: null,
+      ...assignerScopeClause(_req.userId),
+      ...(me?.centerId ? { centerId: me.centerId } : {}),
+    });
+    if (!assigneeIds.length) return res.json({ members: [] });
+    userFilter._id = { $in: assigneeIds };
   }
   if (_req.userRole === "user" || _req.userRole === "executor") userFilter._id = _req.userId;
   const users = await User.find(userFilter).select("_id name email role executorKind avatarUrl title").lean();
@@ -222,8 +228,14 @@ router.get("/member-tasks", async (req, res) => {
   else if (req.userRole === "coordinator") userFilter.role = { $in: ["coordinator", "supervisor", "operations", "user", "executor"] };
   else if (req.userRole === "supervisor") userFilter.role = "executor";
   else if (req.userRole === "operations") {
-    userFilter.role = "user";
-    userFilter.reportsTo = req.userId;
+    const assigneeIds = await Task.distinct("assignees", {
+      deletedAt: null,
+      ...assignerScopeClause(req.userId),
+      ...(me?.centerId ? { centerId: me.centerId } : {}),
+    });
+    if (!assigneeIds.map(String).includes(String(assigneeId))) {
+      return res.status(403).json({ message: "Not allowed to view this member" });
+    }
   }
   else if (req.userRole === "user" || req.userRole === "executor") {
     if (String(assigneeId) !== String(req.userId)) return res.status(403).json({ message: "Not allowed" });

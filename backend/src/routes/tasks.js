@@ -24,7 +24,7 @@ import {
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds } from "../services/hierarchy.js";
-import { canApproveTaskForUser, userAssigneeIdsForOperationsLead } from "../services/taskApprovalRouting.js";
+import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import {
   recordTaskSubmission,
   recordNotDoneSubmission,
@@ -486,14 +486,6 @@ async function applyApprovalListScope(filter, { userId, role, centerId }) {
   if (visibility) mergeClauseIntoFilter(filter, visibility);
 }
 
-/** Recycle bin: same visibility as For Approval (assigner + operations team). */
-async function applyTrashListScope(filter, { userId, role, centerId, isCeoRole }) {
-  if (isCeoRole) return;
-  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole: false });
-  if (visibility) mergeClauseIntoFilter(filter, visibility);
-  else applyAssignerScopeFilter(filter, userId);
-}
-
 function applyListScopeForRole(filter, { userId, role, query }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
   if (masterScope) {
@@ -531,11 +523,6 @@ async function userCanAccessTaskDoc(task, userId, role, centerId) {
   if (isCeo(role)) return true;
   if (taskAssignerId(task) === uid) return true;
   if (userIsAssigneeOnTask(task, uid)) return true;
-  if (role === "operations") {
-    const teamIds = (await userAssigneeIdsForOperationsLead(userId, centerId)).map(String);
-    const assignees = (task.assignees || []).map((a) => String(a._id || a));
-    if (assignees.some((id) => teamIds.includes(id))) return true;
-  }
   return false;
 }
 
@@ -629,12 +616,7 @@ router.get("/", async (req, res) => {
       centerId: me?.centerId || null,
     });
   } else if (trashOnly) {
-    await applyTrashListScope(filter, {
-      userId: req.userId,
-      role: req.userRole,
-      centerId: me?.centerId || null,
-      isCeoRole: isCeo(req.userRole),
-    });
+    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
   } else {
     applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
   }

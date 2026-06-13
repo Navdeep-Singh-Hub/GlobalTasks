@@ -66,7 +66,7 @@ export default function PerformancePage() {
         title={isOperationsView ? "User team performance" : "Performance"}
         subtitle={
           isOperationsView
-            ? "Task completion for users mapped to you as operations lead."
+            ? "Task completion for people you have assigned tasks to."
             : user?.role === "ceo"
               ? "Team throughput below. Use Task approval history to review submissions and approvals by person."
               : "Throughput and reliability of each team member."

@@ -9,6 +9,7 @@ import { CoordinatorSheet } from "../models/CoordinatorSheet.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { canViewClinicalPerformance, isCeo, isManagement } from "../constants/roles.js";
 import { getDescendantUsers } from "../services/hierarchy.js";
+import { assignerScopeClause } from "../services/taskApprovalHistory.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
 import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetEntries.js";
@@ -431,16 +432,26 @@ router.get("/operations", async (req, res) => {
   const me = await actor(req);
   const operationsId = req.userRole === "operations" ? req.userId : req.query.operationsId || req.userId;
   const taskRange = taskDueDateRangeFromQuery(req.query);
-  const team = await User.find({
-    role: "user",
-    active: true,
-    reportsTo: operationsId,
-    ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
-  })
-    .select("_id name role")
-    .lean();
-  const ids = team.map((u) => u._id);
   const centerScope = isCeo(req.userRole) ? {} : { centerId: me?.centerId || null };
+  const assigneeIds = await Task.distinct("assignees", {
+    deletedAt: null,
+    ...assignerScopeClause(operationsId),
+    ...centerScope,
+  });
+  const team =
+    assigneeIds.length > 0
+      ? await User.find({
+          _id: { $in: assigneeIds },
+          active: true,
+          ...centerScope,
+        })
+          .select("_id name role")
+          .lean()
+      : [];
+  const ids = team.map((u) => u._id);
+  if (!ids.length) {
+    return res.json({ operationsId, teamCount: 0, total: 0, completed: 0, pending: 0, overdue: 0, team: [] });
+  }
   const [total, completed, pending, overdue] = await Promise.all([
     Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, ...centerScope }),
     Task.countDocuments({ assignees: { $in: ids }, deletedAt: null, ...taskRange, status: "completed", ...centerScope }),
