@@ -23,7 +23,7 @@ import {
 } from "../services/recurringOccurrenceSync.js";
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
-import { getAssignableAssigneeIds, findInvalidCenterAssignees } from "../services/hierarchy.js";
+import { getAssignableAssigneeIds, findInvalidCenterAssignees, canAccessAnyCenter } from "../services/hierarchy.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import {
   recordTaskSubmission,
@@ -62,8 +62,12 @@ const TASK_LIST_SELECT = "-requiredInputsSchema -inputPayload -__v";
 
 async function actor(req) {
   if (req._actor) return req._actor;
-  req._actor = await User.findById(req.userId).select("_id role centerId").lean();
+  req._actor = await User.findById(req.userId).select("_id role centerId email").lean();
   return req._actor;
+}
+
+function actorHasAnyCenterAccess(req, me) {
+  return canAccessAnyCenter({ role: req.userRole, email: me?.email });
 }
 
 const ADMIN_TASK_FIELDS = new Set([
@@ -607,7 +611,7 @@ router.get("/", async (req, res) => {
     centerId: me?.centerId || null,
     isCeoRole: isCeo(req.userRole),
   });
-  if (!isCeo(req.userRole)) filter.centerId = me?.centerId || null;
+  if (!actorHasAnyCenterAccess(req, me)) filter.centerId = me?.centerId || null;
   const trashOnly = req.query.trash === "only" || req.query.bin === "only";
   if (req.query.approval === "true") {
     await applyApprovalListScope(filter, {
@@ -729,7 +733,7 @@ router.get("/:id", async (req, res) => {
         .populate("centerId", "name code")
     : null;
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!isCeo(req.userRole) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
+  if (!actorHasAnyCenterAccess(req, me) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
   if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
@@ -750,11 +754,16 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "Description is required" });
     }
     if (!payload.centerId) return res.status(400).json({ message: "Center is required" });
-    if (!isCeo(req.userRole) && String(payload.centerId) !== String(me?.centerId || "")) {
+    if (!actorHasAnyCenterAccess(req, me) && String(payload.centerId) !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can only create tasks in your center" });
     }
     if (!Array.isArray(payload.assignees)) payload.assignees = payload.assignees ? [payload.assignees] : [];
-    const assignableIds = await getAssignableAssigneeIds({ actorId: req.userId, actorRole: req.userRole, centerId: payload.centerId });
+    const assignableIds = await getAssignableAssigneeIds({
+      actorId: req.userId,
+      actorRole: req.userRole,
+      centerId: payload.centerId,
+      actorEmail: me?.email,
+    });
     if (payload.assignees.length) {
       if (assignableIds.length === 0) return res.status(403).json({ message: "You cannot assign tasks to users" });
       const invalidAssignee = payload.assignees.find((id) => !assignableIds.includes(String(id)));
@@ -818,7 +827,7 @@ router.patch("/:id", async (req, res, next) => {
     const me = await actor(req);
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
     const isAssignerEdit = managementCreatorOwnsTask(req, task) || (isCeo(req.userRole) && taskCreatedByUser(task, req.userId));
@@ -881,11 +890,16 @@ router.patch("/:id", async (req, res, next) => {
     if ("taskType" in req.body && req.body.taskType === "one_time") {
       task.recurrence = { forever: true, includeSunday: false, weekOff: "Sunday", endDate: null };
     }
-    if ("centerId" in req.body && !isCeo(req.userRole) && String(req.body.centerId || "") !== String(me?.centerId || "")) {
+    if ("centerId" in req.body && !actorHasAnyCenterAccess(req, me) && String(req.body.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can only set your center on tasks" });
     }
     if ("assignees" in req.body) {
-      const assignableIds = await getAssignableAssigneeIds({ actorId: req.userId, actorRole: req.userRole, centerId: task.centerId });
+      const assignableIds = await getAssignableAssigneeIds({
+        actorId: req.userId,
+        actorRole: req.userRole,
+        centerId: task.centerId,
+        actorEmail: me?.email,
+      });
       if (task.assignees?.length) {
         if (assignableIds.length === 0) return res.status(403).json({ message: "You cannot assign tasks to users" });
         const invalidAssignee = task.assignees.find((id) => !assignableIds.includes(String(id)));
@@ -1073,7 +1087,7 @@ router.post("/bulk", async (req, res) => {
   const me = await actor(req);
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
-  const scope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
+  const scope = !actorHasAnyCenterAccess(req, me) ? { centerId: me?.centerId || null } : {};
   applyMutationScopeForRole(scope, req.userId, req.userRole);
 
   if (action === "delete") {
@@ -1162,7 +1176,7 @@ router.post("/:id/resubmit", async (req, res) => {
     const me = await actor(req);
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can resubmit tasks from your center only" });
     }
 
@@ -1221,7 +1235,7 @@ router.post("/:id/not-done", async (req, res) => {
     const me = await actor(req);
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can mark tasks from your center only" });
     }
     if (!userIsAssigneeOnTask(task, req.userId)) {
@@ -1310,7 +1324,7 @@ router.post("/:id/approve", async (req, res) => {
   const me = await actor(req);
   const task = await Task.findById(req.params.id);
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+  if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can approve tasks from your center only" });
   }
   if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
@@ -1437,7 +1451,7 @@ router.post("/:id/reject", async (req, res) => {
 
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!isCeo(req.userRole) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can reject tasks from your center only" });
     }
     if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
@@ -1510,16 +1524,16 @@ router.delete("/:id", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id);
   if (!existing || existing.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can delete tasks from your center only" });
   }
 
   let where;
   if (managementCreatorOwnsTask(req, existing)) {
     where = { _id: req.params.id };
-    if (!isCeo(req.userRole)) where.centerId = me?.centerId || null;
+    if (!actorHasAnyCenterAccess(req, me)) where.centerId = me?.centerId || null;
   } else {
-    where = !isCeo(req.userRole) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+    where = !actorHasAnyCenterAccess(req, me) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
     applyMutationScopeForRole(where, req.userId, req.userRole);
   }
 
@@ -1533,7 +1547,7 @@ router.post("/:id/restore", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id).lean();
   if (!existing || !existing.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can restore tasks from your center only" });
   }
   if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {
@@ -1549,7 +1563,7 @@ router.delete("/:id/hard", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id).lean();
   if (!existing) return res.status(404).json({ message: "Task not found" });
-  if (!isCeo(req.userRole) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can delete tasks from your center only" });
   }
   if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {

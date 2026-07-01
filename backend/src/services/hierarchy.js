@@ -2,6 +2,24 @@ import mongoose from "mongoose";
 import { User } from "../models/User.js";
 import { Task } from "../models/Task.js";
 import { assignerScopeClause } from "./taskApprovalHistory.js";
+import { isCeo } from "../constants/roles.js";
+
+/** May assign tasks in any center and to any center's staff (hardcoded). */
+export const CROSS_CENTER_ASSIGNER_EMAILS = ["sachin@gmail.com"];
+
+export function isCrossCenterAssignerEmail(email) {
+  return CROSS_CENTER_ASSIGNER_EMAILS.includes(String(email || "").trim().toLowerCase());
+}
+
+export async function isCrossCenterAssigner(userId) {
+  if (!userId) return false;
+  const u = await User.findById(userId).select("email").lean();
+  return isCrossCenterAssignerEmail(u?.email);
+}
+
+export function canAccessAnyCenter({ role, email }) {
+  return isCeo(role) || isCrossCenterAssignerEmail(email);
+}
 
 /** Treat missing `active` as active (legacy users created before the field existed). */
 export const ACTIVE_USER_FILTER = { $ne: false };
@@ -112,9 +130,10 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
   return [String(actorId)];
 }
 
-export async function getAssignableAssigneeIds({ actorId, actorRole, centerId }) {
+export async function getAssignableAssigneeIds({ actorId, actorRole, centerId, actorEmail }) {
   if (actorRole === "executor" || actorRole === "user") return [];
-  if (actorRole === "ceo") {
+  const crossCenter = actorEmail ? isCrossCenterAssignerEmail(actorEmail) : await isCrossCenterAssigner(actorId);
+  if (actorRole === "ceo" || crossCenter) {
     const filter = { role: { $ne: "ceo" }, active: ACTIVE_USER_FILTER };
     if (centerId) Object.assign(filter, centerScopeFilter(centerId));
     const ids = await User.find(filter).distinct("_id");

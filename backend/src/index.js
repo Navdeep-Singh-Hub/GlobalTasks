@@ -24,6 +24,7 @@ import { startTrashPurgeScheduler } from "./jobs/purgeExpiredTrash.js";
 import { startEscalationScheduler } from "./jobs/escalationScheduler.js";
 import { startRecurringOccurrenceScheduler } from "./jobs/recurringOccurrenceScheduler.js";
 import { runWhatsAppDigestTick, startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
+import { runAutoSubmitDueTasksTick, startAutoSubmitDueTasksScheduler } from "./jobs/autoSubmitDueTasksScheduler.js";
 import { runRecurringOccurrenceSync } from "./jobs/recurringOccurrenceScheduler.js";
 import { isWhatsAppConfigured } from "./services/whatsappService.js";
 import { SupervisorSheet } from "./models/SupervisorSheet.js";
@@ -114,6 +115,21 @@ app.get("/api/cron/whatsapp-digest", async (req, res) => {
   }
 });
 
+/** Auto-submit due-today tasks for configured assignees (default mandeep@gmail.com at 17:30 IST). */
+app.get("/api/cron/auto-submit-due-tasks", async (req, res) => {
+  const secret = process.env.WHATSAPP_DIGEST_CRON_SECRET;
+  if (!secret || String(req.query.secret || "") !== secret) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+  try {
+    const result = await runAutoSubmitDueTasksTick();
+    return res.json({ ok: true, result });
+  } catch (e) {
+    console.error("[auto-submit] cron tick failed:", e);
+    return res.status(500).json({ message: e?.message || "Auto-submit failed" });
+  }
+});
+
 app.use("/api/auth", authRoutes);
 app.use("/api/users", usersRoutes);
 app.use("/api/tasks", tasksRoutes);
@@ -157,6 +173,7 @@ connectDatabase(uri)
     startRecurringOccurrenceScheduler();
     const digestEnabled = String(process.env.WHATSAPP_DIGEST_SCHEDULER_ENABLED || "true").toLowerCase() === "true";
     if (digestEnabled) startWhatsAppTaskDigestScheduler();
+    startAutoSubmitDueTasksScheduler();
     const waMode = isWhatsAppConfigured() ? "live" : "stub (set WHATSAPP_PHONE_NUMBER_ID + WHATSAPP_ACCESS_TOKEN)";
     const waTemplate =
       process.env.WHATSAPP_TEMPLATE_MORNING ||

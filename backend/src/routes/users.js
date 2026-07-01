@@ -13,7 +13,7 @@ import { TaskTemplate } from "../models/TaskTemplate.js";
 import { authRequired, requireCenterAssigned, requireManagement, requireRoles } from "../middleware/auth.js";
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
-import { ACTIVE_USER_FILTER, getAssignableAssigneeIds, getVisibleUserIds } from "../services/hierarchy.js";
+import { ACTIVE_USER_FILTER, getAssignableAssigneeIds, getVisibleUserIds, canAccessAnyCenter } from "../services/hierarchy.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -24,7 +24,7 @@ router.use(requireCenterAssigned);
 
 async function actor(req) {
   if (req._actor) return req._actor;
-  req._actor = await User.findById(req.userId).select("_id role centerId").lean();
+  req._actor = await User.findById(req.userId).select("_id role centerId email").lean();
   return req._actor;
 }
 
@@ -51,14 +51,15 @@ router.get("/", async (req, res) => {
   if (status === "inactive") q.active = false;
   const assigneePicker =
     String(req.query.assignable || "").toLowerCase() === "true" && (isManagement(req.userRole) || isCeo(req.userRole));
+  const crossCenter = canAccessAnyCenter({ role: req.userRole, email: me?.email });
   const pickerCenterId =
     req.query.centerId && String(req.query.centerId) !== "all"
       ? String(req.query.centerId)
-      : isCeo(req.userRole)
+      : isCeo(req.userRole) || crossCenter
         ? ""
         : String(me?.centerId || "");
-  if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  if (assigneePicker && pickerCenterId && isCeo(req.userRole)) {
+  if (!isCeo(req.userRole) && !crossCenter) q.centerId = me?.centerId || null;
+  if (assigneePicker && pickerCenterId && (isCeo(req.userRole) || crossCenter)) {
     q.centerId = pickerCenterId;
   }
   const operationsUserListing =
@@ -71,6 +72,7 @@ router.get("/", async (req, res) => {
       actorId: req.userId,
       actorRole: req.userRole,
       centerId: pickerCenterId || me?.centerId || null,
+      actorEmail: me?.email,
     });
     if (!ids.length) return res.json({ users: [] });
     q._id = { $in: ids };
