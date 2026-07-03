@@ -4,6 +4,7 @@ import { User } from "../models/User.js";
 import { signToken } from "../utils/token.js";
 import { authRequired, loadUser } from "../middleware/auth.js";
 import { normalizeRole } from "../constants/roles.js";
+import { isCrossCenterAssignerEmail } from "../services/hierarchy.js";
 
 const router = Router();
 const GLOBAL_ACCESS_EMAILS = new Set(["admin@globaltasks.demo", "testing@gmail.com"]);
@@ -53,6 +54,7 @@ router.post("/login", async (req, res, next) => {
     await user.save();
     const outUser = user.toJSON();
     outUser.role = effectiveRole;
+    outUser.canAssignAcrossCenters = isCrossCenterAssignerEmail(user.email);
     res.json({ token: signToken({ ...user.toObject(), role: effectiveRole }), user: outUser });
   } catch (e) {
     next(e);
@@ -63,6 +65,7 @@ router.get("/me", authRequired, loadUser, (req, res) => {
   if (!req.user) return res.status(401).json({ message: "Authentication required" });
   const outUser = req.user.toJSON();
   outUser.role = effectiveRoleForUser(req.user);
+  outUser.canAssignAcrossCenters = isCrossCenterAssignerEmail(req.user.email);
   res.json({ user: outUser });
 });
 

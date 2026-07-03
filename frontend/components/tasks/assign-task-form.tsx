@@ -197,6 +197,7 @@ export function AssignTaskForm() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  const crossCenterAssign = Boolean(user?.canAssignAcrossCenters);
   const pickerCenterId = drafts[0]?.centerId || "";
 
   useEffect(() => {
@@ -210,6 +211,10 @@ export function AssignTaskForm() {
       setUsers([]);
       return;
     }
+    if (!pickerCenterId && !crossCenterAssign) {
+      setUsers([]);
+      return;
+    }
     const qs = new URLSearchParams();
     qs.set("assignable", "true");
     qs.set("status", "active");
@@ -217,7 +222,7 @@ export function AssignTaskForm() {
     api<{ users: UserLite[] }>(`/users?${qs.toString()}`)
       .then((d) => setUsers(d.users || []))
       .catch(() => setUsers([]));
-  }, [user?.role, pickerCenterId]);
+  }, [user?.role, user?.canAssignAcrossCenters, pickerCenterId, crossCenterAssign]);
 
   const createdCount = drafts.length;
 
@@ -304,6 +309,11 @@ export function AssignTaskForm() {
 
   return (
     <div className="glass-card space-y-4 p-4 sm:space-y-5 sm:p-5">
+      {crossCenterAssign && (
+        <div className="rounded-xl border border-brand-200/80 bg-brand-50/80 px-4 py-3 text-sm text-brand-800 dark:border-brand-800/60 dark:bg-brand-950/40 dark:text-brand-200">
+          You can assign tasks in <strong>any center</strong> and to <strong>all active staff</strong> in that center (every role except CEO).
+        </div>
+      )}
       {drafts.map((d, idx) => (
         <DraftCard
           key={d.id}
@@ -312,6 +322,7 @@ export function AssignTaskForm() {
           users={users}
           centers={centers}
           departments={departments}
+          crossCenterAssign={crossCenterAssign}
           onChange={(patch) => updateDraft(d.id, patch)}
           onToggleAssignee={(userId) => toggleDraftAssignee(d.id, userId)}
           onRemove={drafts.length > 1 ? () => setDrafts((list) => list.filter((x) => x.id !== d.id)) : undefined}
@@ -360,6 +371,7 @@ function DraftCard({
   users,
   centers,
   departments,
+  crossCenterAssign,
   onChange,
   onToggleAssignee,
   onRemove,
@@ -369,6 +381,7 @@ function DraftCard({
   users: UserLite[];
   centers: CenterLite[];
   departments: DepartmentLite[];
+  crossCenterAssign?: boolean;
   onChange: (p: Partial<Draft>) => void;
   onToggleAssignee: (userId: string) => void;
   onRemove?: () => void;
@@ -377,13 +390,13 @@ function DraftCard({
   const [assigneeSearch, setAssigneeSearch] = useState("");
 
   const usersInSelectedCenter = useMemo(() => {
-    if (!draft.centerId) return [];
+    if (!draft.centerId) return crossCenterAssign ? users : [];
     const center = String(draft.centerId);
     return users.filter((u) => {
       const uid = userCenterIdRef(u);
       return uid === center || !uid;
     });
-  }, [users, draft.centerId]);
+  }, [users, draft.centerId, crossCenterAssign]);
 
   const selectedNames = useMemo(
     () => users.filter((u) => draft.assignees.includes(u._id)).map((u) => u.name),

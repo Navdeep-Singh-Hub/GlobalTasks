@@ -18,6 +18,7 @@ export type User = {
   department?: string;
   permissions?: string[];
   active?: boolean;
+  canAssignAcrossCenters?: boolean;
 };
 
 type AuthState = {
