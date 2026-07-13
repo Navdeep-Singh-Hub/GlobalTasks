@@ -13,7 +13,7 @@ import {
 } from "../utils/recurrence.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 
-const DEFAULT_REMARKS = "Auto-submitted for approval at 5:30 PM (system).";
+const DEFAULT_REMARKS = "done";
 
 function dueDateDayBounds(d, timeZone = APP_TIMEZONE) {
   const key = calendarDayKeyInTz(d, timeZone);
