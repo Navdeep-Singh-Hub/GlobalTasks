@@ -82,7 +82,7 @@ export function AppSidebar({
     let cancel = false;
     import("@/lib/api").then(({ api }) => {
       api<{ tasks: { _id: string }[]; total?: number }>(
-        "/tasks?recurring=true&statusGroup=open&workableToday=true&myTasks=true&limit=1"
+        "/tasks?recurring=true&statusGroup=open&myTasks=true&assigneeInbox=true&limit=1"
       )
         .then((d) => {
           if (!cancel) setPendingCount((d as unknown as { total: number }).total ?? d.tasks.length);

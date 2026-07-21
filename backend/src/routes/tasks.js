@@ -630,6 +630,8 @@ router.get("/", async (req, res) => {
 
   const isMasterList = String(req.query.masterScope || "").toLowerCase() === "true";
   const statusFilter = req.query.status && req.query.status !== "all" ? String(req.query.status) : "all";
+  const assigneeRecurringInbox =
+    req.query.assigneeInbox === "true" && req.query.recurring === "true" && req.query.workableToday !== "true";
 
   const listQuery = Task.find(filter)
     .select(TASK_LIST_SELECT)
@@ -639,7 +641,7 @@ router.get("/", async (req, res) => {
     .populate("project", "name")
     .populate("departmentId", "name code")
     .populate("centerId", "name code")
-    .sort(isMasterList ? { updatedAt: -1 } : { createdAt: -1 })
+    .sort(assigneeRecurringInbox ? { dueDate: 1 } : isMasterList ? { updatedAt: -1 } : { createdAt: -1 })
     .skip((page - 1) * limit)
     .limit(limit)
     .lean();

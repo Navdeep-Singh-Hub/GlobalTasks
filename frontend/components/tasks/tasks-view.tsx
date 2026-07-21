@@ -310,14 +310,21 @@ export function TasksView({
         )
       : tasks;
     const myId = user?._id;
-    if (!myId || user?.role !== "supervisor") return list;
-    return [...list].sort((a, b) => {
-      const aMineFromOthers = Boolean(a.assignees?.some((assignee) => assignee._id === myId) && a.createdBy?._id !== myId);
-      const bMineFromOthers = Boolean(b.assignees?.some((assignee) => assignee._id === myId) && b.createdBy?._id !== myId);
-      if (aMineFromOthers === bMineFromOthers) return 0;
-      return aMineFromOthers ? -1 : 1;
-    });
-  }, [tasks, user?._id, user?.role, preset.workableToday]);
+    let sorted = list;
+    if (preset.recurring && preset.assigneeInbox && !preset.workableToday) {
+      sorted = [...list].sort(
+        (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+      );
+    } else if (myId && user?.role === "supervisor") {
+      sorted = [...list].sort((a, b) => {
+        const aMineFromOthers = Boolean(a.assignees?.some((assignee) => assignee._id === myId) && a.createdBy?._id !== myId);
+        const bMineFromOthers = Boolean(b.assignees?.some((assignee) => assignee._id === myId) && b.createdBy?._id !== myId);
+        if (aMineFromOthers === bMineFromOthers) return 0;
+        return aMineFromOthers ? -1 : 1;
+      });
+    }
+    return sorted;
+  }, [tasks, user?._id, user?.role, preset.workableToday, preset.recurring, preset.assigneeInbox]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
   const toggle = (id: string, on: boolean) =>

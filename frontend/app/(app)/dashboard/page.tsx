@@ -61,7 +61,7 @@ export default function DashboardPage() {
     void Promise.all([
       api<{ total?: number }>("/tasks?myTasks=true&statusGroup=open&recurring=false&page=1&limit=1"),
       api<{ total?: number }>(
-        "/tasks?myTasks=true&statusGroup=open&recurring=true&workableToday=true&page=1&limit=1"
+        "/tasks?myTasks=true&statusGroup=open&recurring=true&assigneeInbox=true&page=1&limit=1"
       ),
     ])
       .then(([single, recurring]) => {
