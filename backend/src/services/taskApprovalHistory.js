@@ -156,6 +156,7 @@ export async function repairWronglyAutoMissedSubmissions({ assigneeId }) {
   const taskById = new Map(tasks.map((t) => [String(t._id), t]));
   const missedRows = await TaskApprovalRecord.find({
     taskId: { $in: tasks.map((t) => t._id) },
+    assigneeId,
     status: "missed",
   }).sort({ submittedAt: -1 });
 
@@ -540,6 +541,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
 
   const query = {
     taskId: task._id,
+    assigneeId,
     status: { $in: ["approved", "not_done_acknowledged"] },
   };
   if (occurrenceDueDate) {
@@ -555,6 +557,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     if (existing?.occurrenceDueDate) return existing.occurrenceDueDate;
     const lastApproved = await TaskApprovalRecord.findOne({
       taskId: task._id,
+      assigneeId,
       status: { $in: ["approved", "not_done_acknowledged"] },
     })
       .sort({ approvedAt: -1, submittedAt: -1 })
@@ -582,6 +585,7 @@ export async function reopenApprovalForAssigner({ task, assigneeId, remarks, occ
     await existing.save();
     await TaskApprovalRecord.deleteMany({
       taskId: task._id,
+      assigneeId,
       status: "pending",
       kind: "completion",
       _id: { $ne: existing._id },
@@ -702,6 +706,7 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
   const { start, end } = dueDateDayBounds(occurrenceDue);
   await TaskApprovalRecord.deleteMany({
     taskId: task._id,
+    assigneeId,
     status: "pending",
     kind: "completion",
     occurrenceDueDate: { $gte: start, $lt: end },
@@ -722,7 +727,7 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
   });
 }
 
-export async function finalizeApprovalRecord({ task, occurrenceDueDate, approverId, status, extra = {} }) {
+export async function finalizeApprovalRecord({ task, occurrenceDueDate, approverId, status, extra = {}, assigneeId = null }) {
   const due = occurrenceDueDate || task.dueDate;
   const update = {
     status,
@@ -741,21 +746,30 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
     update.approvedBy = approverId;
   }
 
+  const scopedAssignee =
+    assigneeId ||
+    extra.assigneeId ||
+    null;
+
   async function findPendingForDue(targetDue) {
     const { start, end } = dueDateDayBounds(targetDue);
-    let pending = await TaskApprovalRecord.findOne({
+    const base = {
       taskId: task._id,
       status: "pending",
       occurrenceDueDate: { $gte: start, $lt: end },
-    }).sort({ submittedAt: -1 });
+    };
+    if (scopedAssignee) base.assigneeId = scopedAssignee;
+    let pending = await TaskApprovalRecord.findOne(base).sort({ submittedAt: -1 });
     if (pending) return pending;
 
     if (isRecurring(task.taskType)) {
-      return await TaskApprovalRecord.findOne({
+      const fallback = {
         taskId: task._id,
         status: "pending",
         kind: { $in: ["completion", "not_done"] },
-      }).sort({ submittedAt: -1 });
+      };
+      if (scopedAssignee) fallback.assigneeId = scopedAssignee;
+      return await TaskApprovalRecord.findOne(fallback).sort({ submittedAt: -1 });
     }
     return null;
   }
@@ -763,13 +777,17 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
   const pending = await findPendingForDue(due);
   if (!pending) {
     if (extra.allowCreateWithoutPending) {
+      const createAssignee =
+        scopedAssignee ||
+        (Array.isArray(task.assignees) && task.assignees.length === 1 ? task.assignees[0] : null);
+      if (!createAssignee) return null;
       return TaskApprovalRecord.create({
         taskId: task._id,
         taskTitle: task.title,
         taskType: task.taskType,
         centerId: task.centerId || null,
         assignedBy: taskAssignerIdFromDoc(task),
-        assigneeId: (task.assignees || [])[0] || null,
+        assigneeId: createAssignee,
         occurrenceDueDate: due,
         submittedAt: extra.submittedAt || task.updatedAt || new Date(),
         submissionRemarks: extra.submissionRemarks ?? task.submissionRemarks ?? "",
@@ -921,6 +939,14 @@ function occurrenceDayKey(d) {
   return calendarDayKeyInTz(d);
 }
 
+function assigneeKey(r) {
+  return String(r?.assigneeId?._id || r?.assigneeId || "");
+}
+
+function occurrenceRecordKey(r) {
+  return `${String(r.taskId || "")}-${assigneeKey(r)}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+}
+
 function approvalRecordPriority(r) {
   if (r.status === "pending") return 4;
   if (r.status === "approved" || r.status === "not_done_acknowledged") return 3;
@@ -929,7 +955,7 @@ function approvalRecordPriority(r) {
   return 0;
 }
 
-/** Prefer assignee not-done / approval rows over auto-missed for the same task + day. */
+/** Prefer assignee not-done / approval rows over auto-missed for the same task + assignee + day. */
 function pickPreferredApprovalRecord(prev, r) {
   const pp = approvalRecordPriority(prev);
   const rp = approvalRecordPriority(r);
@@ -941,23 +967,23 @@ function pickPreferredApprovalRecord(prev, r) {
   return new Date(r.submittedAt) > new Date(prev.submittedAt) ? r : prev;
 }
 
-/** One row per task occurrence; pending wins over approved when assigner reopened. */
+/** One row per task + assignee + occurrence; pending wins over approved when assigner reopened. */
 export function dedupeApprovalRecords(records) {
   const byKey = new Map();
   for (const r of records) {
-    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+    const key = occurrenceRecordKey(r);
     const prev = byKey.get(key);
     byKey.set(key, prev ? pickPreferredApprovalRecord(prev, r) : r);
   }
   return [...byKey.values()].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 
-/** Keep one pending row per task + occurrence day (drops true duplicates only). */
+/** Keep one pending row per task + assignee + occurrence day (drops true duplicates only). */
 export function pruneDuplicatePendingPerTask(records) {
   const latestPendingByKey = new Map();
   for (const r of records) {
     if (r.status !== "pending") continue;
-    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+    const key = occurrenceRecordKey(r);
     const prev = latestPendingByKey.get(key);
     if (!prev || new Date(r.submittedAt).getTime() > new Date(prev.submittedAt).getTime()) {
       latestPendingByKey.set(key, r);
@@ -966,7 +992,7 @@ export function pruneDuplicatePendingPerTask(records) {
   if (!latestPendingByKey.size) return records;
   return records.filter((r) => {
     if (r.status !== "pending") return true;
-    const key = `${String(r.taskId || "")}-${occurrenceDayKey(r.occurrenceDueDate)}`;
+    const key = occurrenceRecordKey(r);
     const latest = latestPendingByKey.get(key);
     return latest && String(r._id) === String(latest._id);
   });
@@ -977,16 +1003,17 @@ export function pruneDuplicatePendingPerTask(records) {
  * (fixes legacy duplicate rows: approved 5/6 + waiting 6/6 for the same reopen).
  */
 export function collapseReopenedDuplicates(records) {
-  const byTask = new Map();
+  const byTaskAssignee = new Map();
   for (const r of records) {
     const tid = String(r.taskId || "");
     if (!tid) continue;
-    if (!byTask.has(tid)) byTask.set(tid, []);
-    byTask.get(tid).push(r);
+    const key = `${tid}-${assigneeKey(r)}`;
+    if (!byTaskAssignee.has(key)) byTaskAssignee.set(key, []);
+    byTaskAssignee.get(key).push(r);
   }
 
   const kept = [];
-  for (const rows of byTask.values()) {
+  for (const rows of byTaskAssignee.values()) {
     const pending = rows
       .filter((r) => r.status === "pending")
       .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime());
@@ -1056,7 +1083,11 @@ async function dailyTasksForAssigneeHistory({ assigneeId, userId, centerId, isCe
     Object.assign(taskFilter, visibility);
     if (centerId) taskFilter.centerId = centerId;
   }
-  return Task.find(taskFilter).select("_id title taskType createdAt recurrence dueDate").lean();
+  // Solo-assignee tasks only — shared multi-assignee legacy tasks inflate everyone else's history.
+  return Task.find(taskFilter)
+    .select("_id title taskType createdAt recurrence dueDate assignees")
+    .lean()
+    .then((tasks) => tasks.filter((t) => (t.assignees || []).length <= 1));
 }
 
 /** Fill gaps so every scheduled daily occurrence since assignment appears in history. */
@@ -1078,13 +1109,11 @@ export async function fillMissingDailyOccurrenceHistory({
   const toKey = to ? calendarDayKeyInTz(new Date(String(to))) : todayKey;
   const rangeEndKey = toKey < todayKey ? toKey : todayKey;
 
-  const recordKeys = new Set(
-    records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
-  );
+  const recordKeys = new Set(records.map((r) => occurrenceRecordKey({ ...r, assigneeId })));
   const pendingKeys = new Set(
     records
       .filter((r) => r.status === "pending")
-      .map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
+      .map((r) => occurrenceRecordKey({ ...r, assigneeId }))
   );
 
   const synth = [];
@@ -1105,12 +1134,17 @@ export async function fillMissingDailyOccurrenceHistory({
         continue;
       }
 
-      const recKey = `${task._id}-${dayKey}`;
+      const recKey = occurrenceRecordKey({
+        taskId: task._id,
+        assigneeId,
+        occurrenceDueDate: occurrenceDueOnDay(task.dueDate, dayKey),
+      });
       const dueDt = occurrenceDueOnDay(task.dueDate, dayKey);
       if (!recordKeys.has(recKey) && !pendingKeys.has(recKey) && dayKey < todayKey) {
         synth.push({
-          _id: `gap-${task._id}-${dayKey}`,
+          _id: `gap-${task._id}-${assigneeId}-${dayKey}`,
           taskId: task._id,
+          assigneeId,
           taskTitle: task.title,
           taskType: task.taskType,
           occurrenceDueDate: dueDt,
@@ -1137,6 +1171,7 @@ export async function repairMisdatedMissedRecords({ assigneeId }) {
   const taskById = new Map(tasks.map((t) => [String(t._id), t]));
   const missed = await TaskApprovalRecord.find({
     taskId: { $in: tasks.map((t) => t._id) },
+    assigneeId,
     status: "missed",
   });
   let fixed = 0;
@@ -1158,6 +1193,7 @@ export async function repairMisdatedMissedRecords({ assigneeId }) {
     const { start, end } = dueDateDayBounds(effectiveDue || rec.occurrenceDueDate);
     const approved = await TaskApprovalRecord.findOne({
       taskId: rec.taskId,
+      assigneeId,
       status: { $in: ["approved", "not_done_acknowledged"] },
       occurrenceDueDate: { $gte: start, $lt: end },
       _id: { $ne: rec._id },
@@ -1217,6 +1253,7 @@ export async function repairPhantomApprovedRecords({ assigneeId }) {
 
   const approved = await TaskApprovalRecord.find({
     taskId: { $in: tasks.map((t) => t._id) },
+    assigneeId,
     status: { $in: ["approved", "not_done_acknowledged"] },
     kind: "completion",
   }).sort({ occurrenceDueDate: 1, submittedAt: 1 });
@@ -1254,6 +1291,7 @@ export async function repairMisdatedApprovedRecords({ assigneeId }) {
 
   const records = await TaskApprovalRecord.find({
     taskId: { $in: tasks.map((t) => t._id) },
+    assigneeId,
     status: { $in: ["approved", "rejected", "pending", "not_done_acknowledged"] },
     kind: { $in: ["completion", "not_done"] },
     submittedAt: { $exists: true },
@@ -1297,6 +1335,7 @@ export async function repairNotDoneMissedConflicts({ assigneeId }) {
 
   const notDoneRows = await TaskApprovalRecord.find({
     taskId: { $in: tasks.map((t) => t._id) },
+    assigneeId,
     kind: "not_done",
     status: { $in: ["pending", "not_done_acknowledged"] },
   }).lean();
@@ -1306,6 +1345,7 @@ export async function repairNotDoneMissedConflicts({ assigneeId }) {
     const { start, end } = dueDateDayBounds(nd.occurrenceDueDate);
     const result = await TaskApprovalRecord.deleteMany({
       taskId: nd.taskId,
+      assigneeId,
       status: "missed",
       occurrenceDueDate: { $gte: start, $lt: end },
     });
@@ -1392,7 +1432,7 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
   }
 
   const tasks = await Task.find(taskFilter)
-    .select("_id title taskType dueDate submissionRemarks updatedAt notDoneApproval")
+    .select("_id title taskType dueDate submissionRemarks updatedAt notDoneApproval assignees")
     .lean();
 
   const taskIds = tasks.map((t) => t._id);
@@ -1400,6 +1440,7 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     taskIds.length > 0
       ? await TaskApprovalRecord.find({
           taskId: { $in: taskIds },
+          assigneeId,
           status: "pending",
           kind: { $in: ["completion", "not_done"] },
         })
@@ -1414,8 +1455,11 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
 
   const rows = [];
   for (const t of tasks) {
-    const isNotDone = t.notDoneApproval?.status === "pending";
     const storedPending = pendingByTask.get(String(t._id));
+    // Task-level awaiting_approval on a shared multi-assignee task often belongs to someone else.
+    // Only surface live rows when THIS assignee has a pending history record (or solo-assignee not-done).
+    const soloAssignee = (t.assignees || []).length <= 1;
+    const isNotDone = t.notDoneApproval?.status === "pending" && soloAssignee;
     if (!isNotDone && !storedPending) continue;
 
     const isNotDoneRow = isNotDone || storedPending?.kind === "not_done";
@@ -1441,8 +1485,9 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     }
 
     rows.push({
-      _id: `live-${t._id}-${occurrenceDayKey(occurrenceDueDate)}`,
+      _id: `live-${t._id}-${assigneeId}-${occurrenceDayKey(occurrenceDueDate)}`,
       taskId: t._id,
+      assigneeId,
       taskTitle: t.title,
       taskType: t.taskType,
       occurrenceDueDate,
@@ -1461,12 +1506,8 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
 }
 
 export function mergeAssigneeApprovalRows(records, livePending) {
-  const covered = new Set(
-    records.map((r) => `${String(r.taskId)}-${occurrenceDayKey(r.occurrenceDueDate)}`)
-  );
-  const extra = livePending.filter(
-    (p) => !covered.has(`${String(p.taskId)}-${occurrenceDayKey(p.occurrenceDueDate)}`)
-  );
+  const covered = new Set(records.map((r) => occurrenceRecordKey(r)));
+  const extra = livePending.filter((p) => !covered.has(occurrenceRecordKey(p)));
   return [...extra, ...records].sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
 }
 
@@ -1500,7 +1541,7 @@ export async function backfillApprovalRecordsFromEvents() {
     if (e.eventType === "updated" && e.meta?.status === "awaiting_approval") {
       pendingSubmit.set(tid, {
         submittedAt: e.createdAt,
-        assigneeId: e.actorId || task.assignees?.[0],
+        assigneeId: e.actorId || (task.assignees?.length === 1 ? task.assignees[0] : null),
         occurrenceDueDate: task.dueDate,
         remarks: task.submissionRemarks || "",
       });
@@ -1510,7 +1551,7 @@ export async function backfillApprovalRecordsFromEvents() {
     if (e.eventType !== "approved" && e.eventType !== "rejected") continue;
 
     const pending = pendingSubmit.get(tid);
-    const assigneeId = pending?.assigneeId || task.assignees?.[0];
+    const assigneeId = pending?.assigneeId || (task.assignees?.length === 1 ? task.assignees[0] : null);
     const assignedBy = taskAssignerIdFromDoc(task);
     if (!assigneeId || !assignedBy) {
       skipped += 1;

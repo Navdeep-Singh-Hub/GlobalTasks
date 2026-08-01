@@ -449,6 +449,11 @@ router.get("/assignee-approval-history", async (req, res) => {
     from: req.query.from,
     to: req.query.to,
   });
+  // Hard guarantee: never leak another person's rows into this assignee's history.
+  records = records.filter((r) => {
+    const rid = String(r.assigneeId?._id || r.assigneeId || "");
+    return !rid || rid === String(assigneeId);
+  });
   records = sanitizeHistoryApprovedDisplay(records);
   records = sanitizeHistoryMissedDisplay(records);
   records = sortRecordsByOccurrence(records);

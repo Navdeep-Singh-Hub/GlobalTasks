@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { api } from "@/lib/api";
 import { formatRoleLine, isCeo, isManagement } from "@/lib/roles";
@@ -97,6 +98,52 @@ function remarksDisplay(r: ApprovalRecord) {
     return remarks || "Not completed before the day ended.";
   }
   return r.submissionRemarks?.trim() || "—";
+}
+
+function RemarksCell({ record }: { record: ApprovalRecord }) {
+  const [open, setOpen] = useState(false);
+  const text = remarksDisplay(record);
+  const rejection = record.rejectionRemarks?.trim() || "";
+  const hasContent = text !== "—" || Boolean(rejection);
+  if (!hasContent) return <span className="text-zinc-400">—</span>;
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="max-w-[220px] text-left text-xs text-zinc-600 transition hover:text-brand-700 dark:text-zinc-300 dark:hover:text-brand-300"
+        title="Click to view full remarks"
+      >
+        <span className="line-clamp-2">{text}</span>
+        {rejection ? (
+          <span className="mt-1 block line-clamp-1 text-rose-600">Reject: {rejection}</span>
+        ) : null}
+        <span className="mt-0.5 block text-[10px] font-medium text-brand-600 dark:text-brand-400">View full</span>
+      </button>
+      <Modal open={open} title="Remarks" onClose={() => setOpen(false)}>
+        <div className="space-y-3 text-sm">
+          <div>
+            <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Submission</div>
+            <p className="whitespace-pre-wrap break-words text-zinc-800 dark:text-zinc-100">
+              {text === "—" ? "No submission remarks." : text}
+            </p>
+          </div>
+          {rejection ? (
+            <div>
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-rose-600">Rejection</div>
+              <p className="whitespace-pre-wrap break-words text-rose-700 dark:text-rose-300">{rejection}</p>
+            </div>
+          ) : null}
+          {record.taskTitle ? (
+            <p className="border-t border-zinc-100 pt-3 text-xs text-zinc-500 dark:border-zinc-800">
+              Task: {record.taskTitle}
+            </p>
+          ) : null}
+        </div>
+      </Modal>
+    </>
+  );
 }
 
 function occurrenceDueLabel(r: ApprovalRecord) {
@@ -276,15 +323,8 @@ export function AssigneeApprovalHistory() {
                         {statusLabel(r)}
                       </span>
                     </td>
-                    <td className="max-w-[200px] px-2 py-2 text-xs text-zinc-600 dark:text-zinc-300">
-                      <span className="line-clamp-2" title={remarksDisplay(r)}>
-                        {remarksDisplay(r)}
-                      </span>
-                      {r.rejectionRemarks ? (
-                        <span className="mt-1 block text-rose-600" title={r.rejectionRemarks}>
-                          Reject: {r.rejectionRemarks}
-                        </span>
-                      ) : null}
+                    <td className="px-2 py-2">
+                      <RemarksCell record={r} />
                     </td>
                   </tr>
                 ))}
@@ -303,7 +343,9 @@ export function AssigneeApprovalHistory() {
                   <div>Due: {occurrenceDueLabel(r)}</div>
                   <div>Submitted: {submittedLabel(r)}</div>
                   <div>Approved/rejected: {closedLabel(r)}</div>
-                  {remarksDisplay(r) !== "—" ? <div>Remarks: {remarksDisplay(r)}</div> : null}
+                  <div className="mt-1">
+                    <RemarksCell record={r} />
+                  </div>
                 </div>
               </div>
             ))}

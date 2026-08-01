@@ -219,6 +219,9 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
   const taskPlain = task.toObject ? task.toObject() : task;
 
   if (task.status === "completed") {
+    if ((task.assignees || []).length > 1) {
+      return { synced: false, missed: 0 };
+    }
     const next = computeNextDueDate(task);
     task.status = "pending";
     task.approvalStatus = "none";
@@ -236,6 +239,7 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
   if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
     const pendingApproval = await TaskApprovalRecord.findOne({
       taskId: task._id,
+      assigneeId: primaryAssignee,
       status: "pending",
       kind: "completion",
     })
@@ -253,6 +257,10 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
       now,
     });
     if (rec) missed += 1;
+    // Shared multi-assignee legacy tasks: do not roll the shared due date for one person's miss.
+    if ((task.assignees || []).length > 1) {
+      return { synced: true, missed };
+    }
     const next = computeNextDueDate(task);
     if (next) cursor = next;
     else {
@@ -280,6 +288,11 @@ export async function syncRecurringTaskToToday(task, { assigneeId, now = new Dat
     const next = computeNextDueDate({ ...taskPlain, dueDate: cursor });
     if (!next) break;
     cursor = next;
+  }
+
+  // Shared multi-assignee tasks keep one dueDate for everyone — only write missed rows above.
+  if ((task.assignees || []).length > 1) {
+    return { synced: true, missed };
   }
 
   const cursorKey = calendarDayKeyInTz(cursor);

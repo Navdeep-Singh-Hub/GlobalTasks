@@ -784,41 +784,66 @@ router.post("/", async (req, res, next) => {
     if (payload.requiresApproval) payload.approvalStatus = "none";
     payload.assignedBy = req.userId;
     payload.createdBy = req.userId;
-    const task = await Task.create(payload);
-    await TaskEvent.create({
-      taskId: task._id,
-      actorId: req.userId,
-      eventType: "created",
-      meta: { status: task.status },
-    });
+
+    // One Task document per assignee so submit/approve/history never leak across people.
+    const assigneeIds = [...new Set((payload.assignees || []).map((id) => String(id)).filter(Boolean))];
+    const createPayloads =
+      assigneeIds.length > 1
+        ? assigneeIds.map((id) => ({ ...payload, assignees: [id] }))
+        : [{ ...payload, assignees: assigneeIds }];
+
+    const createdTasks = [];
+    for (const p of createPayloads) {
+      // eslint-disable-next-line no-await-in-loop
+      const task = await Task.create(p);
+      createdTasks.push(task);
+      // eslint-disable-next-line no-await-in-loop
+      await TaskEvent.create({
+        taskId: task._id,
+        actorId: req.userId,
+        eventType: "created",
+        meta: { status: task.status, fanOut: assigneeIds.length > 1 },
+      });
+    }
+    const task = createdTasks[0];
 
     const creator = await User.findById(req.userId).lean();
-    if (task.assignees?.length) {
-      const notifyIds = task.assignees.filter((id) => String(id) !== req.userId);
-      await notifyMany(notifyIds, {
-        type: "task_assigned",
-        title: "New task assigned",
-        message: `${creator?.name || "Admin"} assigned: ${task.title}`,
-        link: "/pending-single",
-      });
-      queueTaskAssignedWhatsApp({
-        taskId: task._id,
-        assigneeIds: notifyIds,
-        assignedByUserId: req.userId,
-      });
-      for (const id of task.assignees) invalidateAssigneeSync(id);
+    if (assigneeIds.length) {
+      const notifyIds = assigneeIds.filter((id) => id !== String(req.userId));
+      if (notifyIds.length) {
+        await notifyMany(notifyIds, {
+          type: "task_assigned",
+          title: "New task assigned",
+          message: `${creator?.name || "Admin"} assigned: ${task.title}`,
+          link: "/pending-single",
+        });
+      }
+      for (const t of createdTasks) {
+        const ids = (t.assignees || []).map(String).filter((id) => id !== String(req.userId));
+        if (ids.length) {
+          queueTaskAssignedWhatsApp({
+            taskId: t._id,
+            assigneeIds: ids,
+            assignedByUserId: req.userId,
+          });
+        }
+        for (const id of t.assignees || []) invalidateAssigneeSync(id);
+      }
     }
     await logActivity({
       actor: req.userId,
       actorName: creator?.name,
       type: "task_assigned",
-      message: `${creator?.name || "Admin"} assigned ${task.title}`,
+      message:
+        assigneeIds.length > 1
+          ? `${creator?.name || "Admin"} assigned ${task.title} to ${assigneeIds.length} people`
+          : `${creator?.name || "Admin"} assigned ${task.title}`,
       task: task._id,
       taskTitle: task.title,
       taskType: task.taskType,
     });
 
-    res.status(201).json({ task });
+    res.status(201).json({ task, tasks: createdTasks });
   } catch (e) {
     next(e);
   }
@@ -983,7 +1008,19 @@ router.patch("/:id", async (req, res, next) => {
 
     applyAssignerLifecycleReset(task, prevStatus, req.body, isAssignerEdit);
 
-    const primaryAssignee = (task.assignees || [])[0] || req.userId;
+    const assigneeList = (task.assignees || []).map((id) => String(id));
+    const lastClosed = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: { $in: ["approved", "not_done_acknowledged", "rejected"] },
+    })
+      .sort({ approvedAt: -1, rejectedAt: -1, submittedAt: -1 })
+      .select("assigneeId")
+      .lean();
+    const reopenAssigneeId =
+      String(req.body.assigneeId || "").trim() ||
+      (lastClosed?.assigneeId ? String(lastClosed.assigneeId) : "") ||
+      (assigneeList.length === 1 ? assigneeList[0] : "") ||
+      String(req.userId);
     const assignerReopened =
       isAssignerEdit &&
       String(taskAssignerId(task)) === String(req.userId) &&
@@ -994,14 +1031,14 @@ router.patch("/:id", async (req, res, next) => {
     if (assignerReopened) {
       const reopened = await reopenApprovalForAssigner({
         task,
-        assigneeId: primaryAssignee,
+        assigneeId: reopenAssigneeId,
         remarks: task.submissionRemarks,
         occurrenceDueDate: req.body.occurrenceDueDate,
       });
       if (reopened?.occurrenceDueDate) {
         task.dueDate = reopened.occurrenceDueDate;
       }
-      assignerReopenedHistory = true;
+      assignerReopenedHistory = Boolean(reopened);
     }
 
     await task.save();
@@ -1022,7 +1059,7 @@ router.patch("/:id", async (req, res, next) => {
       if (!assignerReopenedHistory) {
         await recordTaskSubmission({
           task,
-          assigneeId: assignerReopened ? primaryAssignee : req.userId,
+          assigneeId: assignerReopened ? reopenAssigneeId : req.userId,
           remarks: task.submissionRemarks,
           kind: "completion",
         });
