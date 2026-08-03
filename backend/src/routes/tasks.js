@@ -40,6 +40,8 @@ import {
   approvalVisibilityClause,
   approvalInboxTaskMatchClause,
   repairApprovalInboxPendingTaskState,
+  claimSharedTaskForAssignee,
+  filterAssigneePersonalOpenTasks,
 } from "../services/taskApprovalHistory.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -216,7 +218,8 @@ function buildFilter(query, userId, role) {
     filter.status = status;
   } else if (statusGroup === "open") {
     if (assigneeInbox === "true") {
-      filter.status = { $in: ["pending", "in_progress", "overdue"] };
+      // Include awaiting_approval so multi-assignee shared rows can still reach personal open filter.
+      filter.status = { $in: ["pending", "in_progress", "overdue", "awaiting_approval"] };
     } else {
       filter.status = { $in: ["pending", "in_progress", "awaiting_approval", "overdue"] };
     }
@@ -698,6 +701,7 @@ router.get("/", async (req, res) => {
         { $set: { status: "pending" } }
       );
     }
+    tasks = await filterAssigneePersonalOpenTasks(tasks, req.userId);
   } else {
     tasks = tasks.map((t) => withEffectiveTaskStatus(t));
   }
@@ -705,7 +709,9 @@ router.get("/", async (req, res) => {
   res.json({
     tasks,
     total:
-      (req.query.workableToday === "true" && req.query.recurring === "true") || isApprovalInbox
+      (req.query.workableToday === "true" && req.query.recurring === "true") ||
+      isApprovalInbox ||
+      req.query.assigneeInbox === "true"
         ? tasks.length
         : total,
     page,
@@ -852,7 +858,7 @@ router.post("/", async (req, res, next) => {
 router.patch("/:id", async (req, res, next) => {
   try {
     const me = await actor(req);
-    const task = await Task.findById(req.params.id);
+    let task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
     if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
@@ -983,6 +989,22 @@ router.patch("/:id", async (req, res, next) => {
       if (workableErr) return res.status(400).json({ message: workableErr });
       if (!submissionRemarks) {
         return res.status(400).json({ message: "Remarks are required when submitting for approval" });
+      }
+      // Multi-assignee: split so this submit only affects this person's task; others keep open copies.
+      if ((task.assignees || []).length > 1 && userIsAssigneeOnTask(task, req.userId)) {
+        const originalTask = task;
+        const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
+          originalTask,
+          req.userId,
+          { actorId: req.userId }
+        );
+        for (const c of clones) {
+          for (const id of c.assignees || []) invalidateAssigneeSync(id);
+        }
+        if (removedSelfFromOriginal) {
+          await originalTask.save();
+        }
+        task = workingTask;
       }
       task.submissionRemarks = submissionRemarks;
       task.status = "awaiting_approval";
@@ -1165,24 +1187,43 @@ router.post("/bulk", async (req, res) => {
     const tasks = await Task.find({ _id: { $in: ids }, ...scope });
     for (const t of tasks) {
       if (!isCeo(req.userRole)) {
-        t.submissionRemarks = submissionRemarks;
-        t.status = "awaiting_approval";
-        t.approvalStatus = "pending";
-        t.requiresApproval = true;
-        t.completedAt = null;
+        let working = t;
+        if ((t.assignees || []).length > 1 && userIsAssigneeOnTask(t, req.userId)) {
+          // eslint-disable-next-line no-await-in-loop
+          const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
+            t,
+            req.userId,
+            { actorId: req.userId }
+          );
+          for (const c of clones) {
+            for (const id of c.assignees || []) invalidateAssigneeSync(id);
+          }
+          if (removedSelfFromOriginal) {
+            // eslint-disable-next-line no-await-in-loop
+            await t.save();
+          }
+          working = workingTask;
+        }
+        working.submissionRemarks = submissionRemarks;
+        working.status = "awaiting_approval";
+        working.approvalStatus = "pending";
+        working.requiresApproval = true;
+        working.completedAt = null;
         // eslint-disable-next-line no-await-in-loop
         await recordTaskSubmission({
-          task: t,
+          task: working,
           assigneeId: req.userId,
           remarks: submissionRemarks,
           kind: "completion",
         });
+        // eslint-disable-next-line no-await-in-loop
+        await working.save();
       } else {
         t.status = "completed";
         if (!t.completedAt) t.completedAt = new Date();
         if (!t.requiresApproval) await advanceIfRecurring(t, req.userId, actor?.name);
+        await t.save();
       }
-      await t.save();
     }
     if (!isCeo(req.userRole)) {
       const creatorCounts = new Map();
@@ -1272,7 +1313,7 @@ router.post("/:id/resubmit", async (req, res) => {
 router.post("/:id/not-done", async (req, res) => {
   try {
     const me = await actor(req);
-    const task = await Task.findById(req.params.id);
+    let task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
     if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can mark tasks from your center only" });
@@ -1281,7 +1322,28 @@ router.post("/:id/not-done", async (req, res) => {
       return res.status(403).json({ message: "Only assignees can mark a task as not done" });
     }
     if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
-      return res.status(400).json({ message: "This task is already waiting for approval" });
+      // If shared multi-assignee, another person may have submitted — claim my own copy first.
+      if ((task.assignees || []).length > 1) {
+        const originalTask = task;
+        const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
+          originalTask,
+          req.userId,
+          { actorId: req.userId }
+        );
+        for (const c of clones) {
+          for (const id of c.assignees || []) invalidateAssigneeSync(id);
+        }
+        if (removedSelfFromOriginal) {
+          await originalTask.save();
+        }
+        task = workingTask;
+        task.status = "pending";
+        task.approvalStatus = "none";
+        task.submissionRemarks = "";
+        task.notDoneApproval = undefined;
+      } else {
+        return res.status(400).json({ message: "This task is already waiting for approval" });
+      }
     }
     if (task.notDoneApproval?.status === "pending") {
       return res.status(400).json({ message: "A not-done request is already pending approval" });
@@ -1292,6 +1354,22 @@ router.post("/:id/not-done", async (req, res) => {
     const remarks = String(req.body.submissionRemarks || req.body.remarks || "Not done for this occurrence").trim();
     if (!remarks) {
       return res.status(400).json({ message: "Remarks are required when marking a task as not done" });
+    }
+
+    if ((task.assignees || []).length > 1) {
+      const originalTask = task;
+      const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
+        originalTask,
+        req.userId,
+        { actorId: req.userId }
+      );
+      for (const c of clones) {
+        for (const id of c.assignees || []) invalidateAssigneeSync(id);
+      }
+      if (removedSelfFromOriginal) {
+        await originalTask.save();
+      }
+      task = workingTask;
     }
 
     const occurrenceDue = task.dueDate;

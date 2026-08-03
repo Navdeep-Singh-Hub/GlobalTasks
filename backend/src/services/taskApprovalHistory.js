@@ -7,6 +7,152 @@ export function taskAssignerIdFromDoc(task) {
   return String(task?.assignedBy?._id || task?.assignedBy || task?.createdBy?._id || task?.createdBy || "");
 }
 
+/**
+ * Shared multi-assignee task: ensure `assigneeId` has a solo task they can submit on.
+ * - If nobody else has approval history on this task: keep this doc for them, clone open copies for others.
+ * - If someone else already submitted: spawn a fresh open task for this person and remove them from original.
+ * Mutates `task` assignees when keeping original; returns the task document the caller should save/submit on.
+ */
+export async function claimSharedTaskForAssignee(task, assigneeId, { actorId } = {}) {
+  const aid = String(assigneeId || "");
+  if (!task || !aid) return { workingTask: task, clones: [] };
+
+  const allIds = (task.assignees || []).map((id) => String(id?._id || id)).filter(Boolean);
+  const others = allIds.filter((id) => id !== aid);
+  if (!others.length) return { workingTask: task, clones: [] };
+
+  const foreign = await TaskApprovalRecord.findOne({
+    taskId: task._id,
+    assigneeId: { $ne: aid },
+    status: { $in: ["pending", "approved", "not_done_acknowledged", "rejected", "missed"] },
+  })
+    .select("_id assigneeId status")
+    .lean();
+
+  const plain = typeof task.toObject === "function" ? task.toObject() : { ...task };
+  const {
+    _id,
+    __v,
+    createdAt,
+    updatedAt,
+    taskIdDisplay,
+    submissionRemarks,
+    completedAt,
+    notDoneApproval,
+    rejectionRemarks,
+    rejectionMode,
+    approvalStatus,
+    status,
+    ...rest
+  } = plain;
+
+  const openStatus = ["pending", "in_progress", "overdue"].includes(status) ? status : "pending";
+  const baseClonePayload = () => ({
+    ...rest,
+    status: openStatus,
+    approvalStatus: "none",
+    submissionRemarks: "",
+    completedAt: null,
+    notDoneApproval: undefined,
+    rejectionRemarks: "",
+    rejectionMode: "",
+    inputPayload: rest.inputPayload && typeof rest.inputPayload === "object" ? { ...rest.inputPayload } : {},
+    attachments: Array.isArray(rest.attachments) ? rest.attachments.map((a) => ({ ...a })) : [],
+    tags: Array.isArray(rest.tags) ? [...rest.tags] : [],
+  });
+
+  // Another assignee already progressed this shared document — give me my own copy.
+  if (foreign) {
+    const mine = await Task.create({
+      ...baseClonePayload(),
+      assignees: [aid],
+    });
+    await TaskEvent.create({
+      taskId: mine._id,
+      actorId: actorId || assigneeId,
+      eventType: "created",
+      meta: { splitFrom: String(task._id), forAssignee: aid, reason: "foreign_progress" },
+    });
+    task.assignees = others;
+    return { workingTask: mine, clones: [mine], removedSelfFromOriginal: true };
+  }
+
+  // No foreign history — I claim the original; others get open clones.
+  const clones = [];
+  for (const otherId of others) {
+    // eslint-disable-next-line no-await-in-loop
+    const clone = await Task.create({
+      ...baseClonePayload(),
+      assignees: [otherId],
+    });
+    // eslint-disable-next-line no-await-in-loop
+    await TaskEvent.create({
+      taskId: clone._id,
+      actorId: actorId || assigneeId,
+      eventType: "created",
+      meta: { splitFrom: String(task._id), forAssignee: otherId, reason: "claim_original" },
+    });
+    clones.push(clone);
+  }
+
+  task.assignees = [aid];
+  return { workingTask: task, clones, removedSelfFromOriginal: false };
+}
+
+/**
+ * Assignee open inbox: keep shared multi-assignee tasks visible for people who have not yet
+ * submitted this occurrence, even if task.status is already awaiting_approval (legacy rows).
+ */
+export async function filterAssigneePersonalOpenTasks(tasks, userId) {
+  if (!tasks?.length || !userId) return tasks || [];
+  const uid = String(userId);
+  const openStatuses = new Set(["pending", "in_progress", "overdue"]);
+  const alwaysShow = [];
+  const awaiting = [];
+
+  for (const t of tasks) {
+    const isAssignee = (t.assignees || []).some((a) => String(a?._id || a) === uid);
+    if (!isAssignee) continue;
+    if (openStatuses.has(t.status)) alwaysShow.push(t);
+    else if (t.status === "awaiting_approval" || t.approvalStatus === "pending") awaiting.push(t);
+  }
+
+  if (!awaiting.length) return alwaysShow;
+
+  const taskIds = awaiting.map((t) => t._id);
+  const myRecords = await TaskApprovalRecord.find({
+    taskId: { $in: taskIds },
+    assigneeId: uid,
+    status: { $in: ["pending", "approved", "not_done_acknowledged", "rejected", "missed"] },
+    kind: { $in: ["completion", "not_done"] },
+  })
+    .select("taskId status kind")
+    .lean();
+
+  const mineByTask = new Map();
+  for (const r of myRecords) {
+    const tid = String(r.taskId);
+    const list = mineByTask.get(tid) || [];
+    list.push(r);
+    mineByTask.set(tid, list);
+  }
+
+  const stillOpen = [];
+  for (const t of awaiting) {
+    const mine = mineByTask.get(String(t._id)) || [];
+    const multi = (t.assignees || []).length > 1;
+    const hasActivePending = mine.some((r) => r.status === "pending");
+    const hasTerminal = mine.some((r) =>
+      ["approved", "not_done_acknowledged", "rejected", "missed"].includes(r.status)
+    );
+    if (hasActivePending || hasTerminal) continue;
+    if (!multi) continue;
+    stillOpen.push({ ...t, status: "pending", approvalStatus: "none" });
+  }
+
+  return [...alwaysShow, ...stillOpen];
+}
+
 function dueDateDayBounds(d, timeZone = APP_TIMEZONE) {
   const key = calendarDayKeyInTz(d, timeZone);
   const start = new Date(`${key}T00:00:00+05:30`);
