@@ -548,6 +548,81 @@ export async function repairAllSharedMultiAssigneeTasks() {
 }
 
 /**
+ * Personal open/work state for an assignee viewing a task.
+ * Shared multi-assignee damage left many tasks stuck as awaiting_approval so Submit disappeared.
+ * - If THIS user already has a pending approval row → they correctly wait (awaiting_approval).
+ * - If not, they can still work: multi → response only; solo stuck → reopen and save.
+ */
+export async function resolvePersonalWorkTaskView(taskInput, userId) {
+  if (!taskInput || !userId) return taskInput;
+  const plain =
+    typeof taskInput.toObject === "function" ? taskInput.toObject() : { ...taskInput };
+  const uid = String(userId);
+  const isAssignee = (plain.assignees || []).some((a) => String(a?._id || a) === uid);
+  if (!isAssignee) {
+    return { ...plain, personalWorkState: "viewer" };
+  }
+
+  const myPending = await TaskApprovalRecord.findOne({
+    taskId: plain._id,
+    assigneeId: uid,
+    status: "pending",
+    kind: { $in: ["completion", "not_done"] },
+  })
+    .select("_id kind submissionRemarks occurrenceDueDate")
+    .lean();
+
+  if (myPending) {
+    return {
+      ...plain,
+      status: "awaiting_approval",
+      approvalStatus: "pending",
+      personalWorkState: "submitted",
+      personalPendingKind: myPending.kind,
+    };
+  }
+
+  const blocked =
+    plain.status === "awaiting_approval" ||
+    plain.approvalStatus === "pending" ||
+    plain.notDoneApproval?.status === "pending";
+
+  if (!blocked) {
+    return { ...plain, personalWorkState: "open" };
+  }
+
+  const multi = (plain.assignees || []).length > 1;
+
+  // Solo task wrongly stuck awaiting / pending with no personal submission → reopen so submit works.
+  if (!multi && typeof taskInput.save === "function") {
+    taskInput.status = "pending";
+    taskInput.approvalStatus = "none";
+    taskInput.submissionRemarks = "";
+    taskInput.notDoneApproval = undefined;
+    taskInput.completedAt = null;
+    try {
+      await taskInput.save();
+    } catch (e) {
+      console.error("[personal-work] reopen stuck task failed:", plain._id, e?.message || e);
+    }
+    const refreshed =
+      typeof taskInput.toObject === "function" ? taskInput.toObject() : { ...taskInput };
+    return { ...refreshed, personalWorkState: "open", unstuck: true };
+  }
+
+  // Multi-assignee: don't rewrite shared state for others; give this person an open personal view.
+  return {
+    ...plain,
+    status: plain.status === "overdue" ? "overdue" : "pending",
+    approvalStatus: "none",
+    submissionRemarks: "",
+    notDoneApproval: undefined,
+    personalWorkState: "open",
+    sharedTaskAwaitingOthers: multi,
+  };
+}
+
+/**
  * Assignee open inbox: keep shared multi-assignee tasks visible for people who have not yet
  * submitted this occurrence, even if task.status is already awaiting_approval (legacy rows).
  */

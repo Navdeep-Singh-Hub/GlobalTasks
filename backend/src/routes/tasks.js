@@ -42,6 +42,7 @@ import {
   repairApprovalInboxPendingTaskState,
   claimSharedTaskForAssignee,
   filterAssigneePersonalOpenTasks,
+  resolvePersonalWorkTaskView,
   repairAllSharedMultiAssigneeTasks,
   repairSharedMultiAssigneeForAssignee,
 } from "../services/taskApprovalHistory.js";
@@ -766,7 +767,32 @@ router.get("/:id", async (req, res) => {
   if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
-  res.json({ task: withEffectiveTaskStatus(task.toObject ? task.toObject() : task) });
+
+  // Re-fetch plain doc for possible save when unsticking solo awaiting-without-pending.
+  let workDoc = raw;
+  if (workDoc && userIsAssigneeOnTask(workDoc, req.userId)) {
+    workDoc = await Task.findById(task._id);
+  }
+  const personal = await resolvePersonalWorkTaskView(workDoc || task, req.userId);
+  const base =
+    personal && typeof personal === "object"
+      ? personal
+      : task.toObject
+        ? task.toObject()
+        : task;
+  // Prefer populated relations from the populated fetch
+  const populated = task.toObject ? task.toObject() : task;
+  const merged = {
+    ...populated,
+    ...base,
+    assignees: populated.assignees,
+    assignedBy: populated.assignedBy,
+    createdBy: populated.createdBy,
+    project: populated.project,
+    departmentId: populated.departmentId,
+    centerId: populated.centerId,
+  };
+  res.json({ task: withEffectiveTaskStatus(merged) });
 });
 
 router.post("/", async (req, res, next) => {

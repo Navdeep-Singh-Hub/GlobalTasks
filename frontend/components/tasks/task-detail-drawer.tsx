@@ -48,6 +48,8 @@ type TaskDetail = {
   rejectionRemarks?: string;
   rejectionMode?: string;
   submissionRemarks?: string;
+  personalWorkState?: "open" | "submitted" | "viewer";
+  sharedTaskAwaitingOthers?: boolean;
   notDoneApproval?: {
     dueDate?: string;
     remarks?: string;
@@ -122,7 +124,9 @@ export function TaskDetailDrawer({
     task && myId && assignerId === myId && (isCeoUser || isManagement(me?.role))
   );
   const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
-  const isAssignee = Boolean(task && myId && task.assignees?.some((a) => String(a._id) === myId));
+  const isAssignee = Boolean(
+    task && myId && task.assignees?.some((a) => String(a._id || a) === myId)
+  );
   const canResubmit = Boolean(
     task &&
       task.taskType === "daily" &&
@@ -141,23 +145,33 @@ export function TaskDetailDrawer({
         task.approvalStatus === "approved")
   );
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
-  const assigneeBlockedByCompletionApproval =
-    task?.status === "awaiting_approval" || task?.approvalStatus === "pending";
+  // Block Submit only when THIS assignee already submitted (personal state), not merely because a
+  // shared multi-assignee task is awaiting for someone else.
+  const personalSubmitted =
+    task?.personalWorkState === "submitted" ||
+    (task?.status === "awaiting_approval" &&
+      task?.approvalStatus === "pending" &&
+      task?.personalWorkState !== "open" &&
+      (task?.assignees?.length || 0) <= 1);
+  const assigneeBlockedByCompletionApproval = personalSubmitted || Boolean(hasPendingNotDone && !isRecurringTask);
   const canSubmitForApproval = Boolean(
     task &&
       myId &&
       !isCeoUser &&
-      task.assignees?.some((a) => String(a._id) === myId) &&
+      isAssignee &&
       !assigneeBlockedByCompletionApproval &&
-      (!hasPendingNotDone || isRecurringTask)
+      task.status !== "completed" &&
+      task.status !== "cancelled"
   );
   const canMarkNotDone = Boolean(
     task &&
       myId &&
       !isCeoUser &&
-      task.assignees?.some((a) => String(a._id) === myId) &&
-      !assigneeBlockedByCompletionApproval &&
-      !hasPendingNotDone
+      isAssignee &&
+      !personalSubmitted &&
+      !hasPendingNotDone &&
+      task.status !== "completed" &&
+      task.status !== "cancelled"
   );
   const canApproveNotDone = Boolean(canApprove && hasPendingNotDone);
 
@@ -575,7 +589,9 @@ export function TaskDetailDrawer({
               </div>
             ) : (
               <>
-                {(task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone) && (
+                {(task.personalWorkState === "submitted" ||
+                  ((task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone) &&
+                    task.personalWorkState !== "open")) && (
                   <div className="space-y-2">
                     <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
                       {hasPendingNotDone ? (
@@ -641,7 +657,11 @@ export function TaskDetailDrawer({
                     Created {task.createdAt ? formatAppDateTime(task.createdAt) : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-                    {task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone ? (
+                    {task.personalWorkState === "submitted" ||
+                    (task.personalWorkState !== "open" &&
+                      (task.status === "awaiting_approval" ||
+                        task.approvalStatus === "pending" ||
+                        hasPendingNotDone)) ? (
                       canApprove || canApproveNotDone ? (
                         <>
                           {!canApproveNotDone && (

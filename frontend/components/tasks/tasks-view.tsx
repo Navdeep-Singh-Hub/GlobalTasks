@@ -376,7 +376,8 @@ export function TasksView({
     load();
   };
 
-  const isAssigneeOnTask = (t: Task) => Boolean(myId && t.assignees?.some((a) => String(a._id) === myId));
+  const isAssigneeOnTask = (t: Task) =>
+    Boolean(myId && t.assignees?.some((a) => String(a._id || a) === myId));
 
   const canResubmitTask = (t: Task) =>
     t.taskType === "daily" &&
