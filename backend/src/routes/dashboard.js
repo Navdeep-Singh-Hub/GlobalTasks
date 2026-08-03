@@ -20,6 +20,8 @@ import {
   correctOccurrenceDatesInHistory,
   correctMisdatedPendingOccurrence,
   repairAssigneeHistoryRecords,
+  repairSharedMultiAssigneeForAssignee,
+  repairAllSharedMultiAssigneeTasks,
   sanitizeHistoryApprovedDisplay,
   fillMissingDailyOccurrenceHistory,
   sortRecordsByOccurrence,
@@ -387,6 +389,19 @@ router.get("/assignee-approval-history", async (req, res) => {
       return res.status(403).json({ message: "You can only view people you have assigned tasks to" });
     }
   }
+
+  // Heal shared multi-assignee damage for this person before reading history (throttled).
+  const sharedKey = throttleKey("shared-repair", assigneeId);
+  if (shouldRunThrottled(sharedKey, REPAIR_TTL_MS)) {
+    await repairSharedMultiAssigneeForAssignee(assigneeId);
+  }
+
+  // Slow full-org heal in background (once per interval) so peers get tasks back too.
+  scheduleBackground(
+    throttleKey("shared-heal-org", "global"),
+    () => repairAllSharedMultiAssigneeTasks(),
+    Math.max(REPAIR_TTL_MS, 6 * 60 * 60 * 1000)
+  );
 
   if (req.query.sync === "true") {
     const repairKey = throttleKey("history-repair", assigneeId);

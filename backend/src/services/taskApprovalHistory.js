@@ -99,6 +99,453 @@ export async function claimSharedTaskForAssignee(task, assigneeId, { actorId } =
   return { workingTask: task, clones, removedSelfFromOriginal: false };
 }
 
+function taskIdsEqual(a, b) {
+  return String(a || "") === String(b || "");
+}
+
+function buildClonePayloadFromTask(task) {
+  const plain = typeof task.toObject === "function" ? task.toObject() : { ...task };
+  const {
+    _id,
+    __v,
+    createdAt,
+    updatedAt,
+    taskIdDisplay,
+    submissionRemarks,
+    completedAt,
+    notDoneApproval,
+    rejectionRemarks,
+    rejectionMode,
+    approvalStatus,
+    status,
+    assignees,
+    ...rest
+  } = plain;
+  const openStatus = ["pending", "in_progress", "overdue"].includes(status) ? status : "pending";
+  return {
+    ...rest,
+    status: openStatus,
+    approvalStatus: "none",
+    submissionRemarks: "",
+    completedAt: null,
+    notDoneApproval: undefined,
+    rejectionRemarks: "",
+    rejectionMode: "",
+    inputPayload: rest.inputPayload && typeof rest.inputPayload === "object" ? { ...rest.inputPayload } : {},
+    attachments: Array.isArray(rest.attachments) ? rest.attachments.map((a) => ({ ...a })) : [],
+    tags: Array.isArray(rest.tags) ? [...rest.tags] : [],
+  };
+}
+
+async function findExistingSplitClone(sourceTaskId, assigneeId) {
+  const ev = await TaskEvent.findOne({
+    eventType: "created",
+    "meta.splitFrom": String(sourceTaskId),
+    "meta.forAssignee": String(assigneeId),
+  })
+    .select("taskId")
+    .lean();
+  if (!ev?.taskId) return null;
+  return Task.findOne({ _id: ev.taskId, deletedAt: null });
+}
+
+/** Move this person's approval rows onto their solo task. */
+async function rehomeAssigneeRecords(fromTaskId, toTaskId, assigneeId) {
+  if (taskIdsEqual(fromTaskId, toTaskId)) return 0;
+  const result = await TaskApprovalRecord.updateMany(
+    { taskId: fromTaskId, assigneeId },
+    { $set: { taskId: toTaskId } }
+  );
+  return result.modifiedCount || 0;
+}
+
+/**
+ * Align solo task status with this assignee's approval rows (pending / completed / open).
+ */
+async function applyPersonalTaskStateFromRecords(task, assigneeId) {
+  if (!task || !assigneeId) return;
+
+  const pending = await TaskApprovalRecord.findOne({
+    taskId: task._id,
+    assigneeId,
+    status: "pending",
+    kind: { $in: ["completion", "not_done"] },
+  })
+    .sort({ submittedAt: -1 })
+    .lean();
+
+  if (pending) {
+    task.status = "awaiting_approval";
+    task.approvalStatus = "pending";
+    task.requiresApproval = true;
+    task.submissionRemarks = pending.submissionRemarks || "";
+    task.completedAt = null;
+    if (pending.kind === "not_done") {
+      task.notDoneApproval = {
+        dueDate: pending.occurrenceDueDate || task.dueDate,
+        remarks: pending.submissionRemarks || "",
+        submittedAt: pending.submittedAt || new Date(),
+        submittedBy: assigneeId,
+        status: "pending",
+      };
+    } else {
+      task.notDoneApproval = undefined;
+    }
+    if (pending.occurrenceDueDate) task.dueDate = pending.occurrenceDueDate;
+    await task.save();
+    return;
+  }
+
+  const approved = await TaskApprovalRecord.findOne({
+    taskId: task._id,
+    assigneeId,
+    status: { $in: ["approved", "not_done_acknowledged"] },
+  })
+    .sort({ approvedAt: -1, submittedAt: -1 })
+    .lean();
+
+  if (approved && !isRecurring(task.taskType)) {
+    if (approved.status === "approved") {
+      task.status = "completed";
+      task.approvalStatus = "approved";
+      task.completedAt = approved.approvedAt || approved.submittedAt || new Date();
+    } else {
+      task.status = "pending";
+      task.approvalStatus = "none";
+      task.completedAt = null;
+    }
+    task.submissionRemarks = "";
+    task.notDoneApproval = undefined;
+    await task.save();
+    return;
+  }
+
+  // No personal pending: if task was shared awaiting for someone else, open it for this person.
+  if (task.status === "awaiting_approval" || task.approvalStatus === "pending") {
+    task.status = "pending";
+    task.approvalStatus = "none";
+    task.submissionRemarks = "";
+    task.notDoneApproval = undefined;
+    task.completedAt = null;
+    await task.save();
+  }
+}
+
+/**
+ * Persist missed (not done) rows for past scheduled days so performance is complete.
+ */
+async function backfillMissedDbRowsForTaskAssignee(task, assigneeId) {
+  const assignedBy = taskAssignerIdFromDoc(task);
+  if (!assignedBy || !assigneeId || !task?._id) return 0;
+
+  let created = 0;
+  const todayKey = calendarDayKeyInTz(new Date());
+
+  if (task.taskType === "daily") {
+    let dayKey = calendarDayKeyInTz(task.createdAt || task.dueDate || new Date());
+    while (dayKey < todayKey) {
+      if (isDailyOccurrenceScheduled(task, dayKey)) {
+        const dueDt = occurrenceDueOnDay(task.dueDate, dayKey);
+        const { start, end } = dueDateDayBounds(dueDt);
+        // eslint-disable-next-line no-await-in-loop
+        const exists = await TaskApprovalRecord.findOne({
+          taskId: task._id,
+          assigneeId,
+          occurrenceDueDate: { $gte: start, $lt: end },
+        })
+          .select("_id")
+          .lean();
+        if (!exists) {
+          // eslint-disable-next-line no-await-in-loop
+          await TaskApprovalRecord.create({
+            taskId: task._id,
+            taskTitle: task.title,
+            taskType: task.taskType,
+            centerId: task.centerId || null,
+            assignedBy,
+            assigneeId,
+            occurrenceDueDate: dueDt,
+            submittedAt: new Date(`${dayKey}T23:59:59+05:30`),
+            submissionRemarks: GAP_MISSED_REMARKS,
+            kind: "not_done",
+            status: "missed",
+            submissionSource: "shared_repair",
+          });
+          created += 1;
+        }
+      }
+      dayKey = nextCalendarDayKey(dayKey);
+    }
+    return created;
+  }
+
+  // One-time / non-daily: past due with no personal outcome → not done (missed)
+  if (task.dueDate && isOccurrencePastDue(task.dueDate) && !isRecurring(task.taskType)) {
+    const { start, end } = dueDateDayBounds(task.dueDate);
+    const exists = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      assigneeId,
+      occurrenceDueDate: { $gte: start, $lt: end },
+    })
+      .select("_id")
+      .lean();
+    if (!exists) {
+      await TaskApprovalRecord.create({
+        taskId: task._id,
+        taskTitle: task.title,
+        taskType: task.taskType,
+        centerId: task.centerId || null,
+        assignedBy,
+        assigneeId,
+        occurrenceDueDate: task.dueDate,
+        submittedAt: task.dueDate,
+        submissionRemarks: GAP_MISSED_REMARKS,
+        kind: "not_done",
+        status: "missed",
+        submissionSource: "shared_repair",
+      });
+      created += 1;
+    }
+  }
+
+  return created;
+}
+
+/**
+ * Permanently fan-out one shared multi-assignee task into solo tasks.
+ * Keep original for the person who already submitted (pending), else first assignee.
+ * Others get open clones + their history rows rehomed + missed backfill.
+ */
+export async function splitSharedTaskPermanently(taskDoc) {
+  const task = taskDoc?.toObject ? taskDoc : await Task.findById(taskDoc?._id || taskDoc);
+  if (!task || task.deletedAt) return { cloned: 0, rehomed: 0, missedRows: 0 };
+
+  const assigneeIds = [
+    ...new Set((task.assignees || []).map((id) => String(id?._id || id)).filter(Boolean)),
+  ];
+
+  // Also include people who only appear on approval history (removed from assignees earlier)
+  const historyAssignees = (
+    await TaskApprovalRecord.distinct("assigneeId", { taskId: task._id })
+  ).map(String);
+  const allPeople = [...new Set([...assigneeIds, ...historyAssignees])];
+
+  if (allPeople.length <= 1) {
+    if (allPeople[0]) {
+      await applyPersonalTaskStateFromRecords(task, allPeople[0]);
+      const missedRows = await backfillMissedDbRowsForTaskAssignee(task, allPeople[0]);
+      return { cloned: 0, rehomed: 0, missedRows };
+    }
+    return { cloned: 0, rehomed: 0, missedRows: 0 };
+  }
+
+  const records = await TaskApprovalRecord.find({ taskId: task._id })
+    .select("assigneeId status submittedAt kind")
+    .sort({ submittedAt: -1 })
+    .lean();
+
+  let primary =
+    records.find((r) => r.status === "pending")?.assigneeId ||
+    records.find((r) => r.status === "approved" || r.status === "not_done_acknowledged")?.assigneeId ||
+    assigneeIds[0] ||
+    allPeople[0];
+  primary = String(primary);
+
+  // Prefer someone still listed if primary not in assignees
+  if (!assigneeIds.includes(primary) && assigneeIds.length) {
+    const pendingOnList = records.find(
+      (r) => r.status === "pending" && assigneeIds.includes(String(r.assigneeId))
+    );
+    primary = pendingOnList ? String(pendingOnList.assigneeId) : assigneeIds[0];
+  }
+
+  let cloned = 0;
+  let rehomed = 0;
+  let missedRows = 0;
+  const base = buildClonePayloadFromTask(task);
+
+  for (const aid of allPeople) {
+    if (aid === primary) continue;
+
+    // eslint-disable-next-line no-await-in-loop
+    let solo = await findExistingSplitClone(task._id, aid);
+    if (!solo) {
+      // eslint-disable-next-line no-await-in-loop
+      solo = await Task.create({
+        ...base,
+        assignees: [aid],
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await TaskEvent.create({
+        taskId: solo._id,
+        actorId: taskAssignerIdFromDoc(task) || primary,
+        eventType: "created",
+        meta: {
+          splitFrom: String(task._id),
+          forAssignee: aid,
+          reason: "repair_shared_multi",
+        },
+      });
+      cloned += 1;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    rehomed += await rehomeAssigneeRecords(task._id, solo._id, aid);
+    // eslint-disable-next-line no-await-in-loop
+    await applyPersonalTaskStateFromRecords(solo, aid);
+    // eslint-disable-next-line no-await-in-loop
+    missedRows += await backfillMissedDbRowsForTaskAssignee(solo, aid);
+  }
+
+  task.assignees = [primary];
+  await task.save();
+  await applyPersonalTaskStateFromRecords(task, primary);
+  missedRows += await backfillMissedDbRowsForTaskAssignee(task, primary);
+
+  return { cloned, rehomed, missedRows, primary };
+}
+
+/**
+ * Restore inbox + performance after shared multi-assignee damage for one person (and their shared peers).
+ */
+export async function repairSharedMultiAssigneeForAssignee(assigneeId) {
+  const aid = String(assigneeId || "");
+  if (!aid) return { tasksHealed: 0, cloned: 0, rehomed: 0, missedRows: 0 };
+
+  const multiIds = await Task.distinct("_id", {
+    deletedAt: null,
+    assignees: aid,
+    "assignees.1": { $exists: true },
+  });
+
+  // Tasks where this person has history but is no longer an assignee (was wiped after co-submit)
+  const recordTaskIds = await TaskApprovalRecord.distinct("taskId", { assigneeId: aid });
+  const orphanIds = recordTaskIds.length
+    ? await Task.distinct("_id", {
+        _id: { $in: recordTaskIds },
+        deletedAt: null,
+        assignees: { $ne: aid },
+      })
+    : [];
+  // Mongo `$ne` on array means "array is not equal to value" not "does not contain".
+  // Use $nin for element membership:
+  const orphanByNin = recordTaskIds.length
+    ? await Task.distinct("_id", {
+        _id: { $in: recordTaskIds },
+        deletedAt: null,
+        assignees: { $nin: [aid] },
+      })
+    : [];
+
+  // Also any multi-assignee tasks that share a title with this person's tasks (peer group) — heavy; skip.
+
+  // Tasks that still have multiple people's records even if currently solo on assignees
+  const multiRecordGroups = await TaskApprovalRecord.aggregate([
+    { $match: { assigneeId: { $exists: true } } },
+    { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
+    { $match: { "people.1": { $exists: true } } },
+    { $project: { _id: 1 } },
+    { $limit: 500 },
+  ]);
+  const multiRecordIds = multiRecordGroups.map((g) => g._id);
+
+  // Only process multi-record tasks that involve this assignee
+  const multiRecordForAssignee = [];
+  if (multiRecordIds.length) {
+    const related = await TaskApprovalRecord.distinct("taskId", {
+      taskId: { $in: multiRecordIds },
+      assigneeId: aid,
+    });
+    multiRecordForAssignee.push(...related);
+  }
+
+  const allTaskIds = [
+    ...new Set(
+      [...multiIds, ...orphanByNin, ...multiRecordForAssignee].map((id) => String(id))
+    ),
+  ];
+
+  let tasksHealed = 0;
+  let cloned = 0;
+  let rehomed = 0;
+  let missedRows = 0;
+
+  for (const tid of allTaskIds) {
+    // eslint-disable-next-line no-await-in-loop
+    const task = await Task.findById(tid);
+    if (!task || task.deletedAt) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const result = await splitSharedTaskPermanently(task);
+    tasksHealed += 1;
+    cloned += result.cloned || 0;
+    rehomed += result.rehomed || 0;
+    missedRows += result.missedRows || 0;
+  }
+
+  // Final pass: any solo task for this assignee still missing past not-done rows
+  const soloTasks = await Task.find({
+    deletedAt: null,
+    assignees: aid,
+    $expr: { $eq: [{ $size: "$assignees" }, 1] },
+  })
+    .select("_id title taskType createdAt dueDate recurrence centerId assignedBy createdBy assignees")
+    .limit(400);
+
+  for (const t of soloTasks) {
+    // eslint-disable-next-line no-await-in-loop
+    await applyPersonalTaskStateFromRecords(t, aid);
+    // eslint-disable-next-line no-await-in-loop
+    missedRows += await backfillMissedDbRowsForTaskAssignee(t, aid);
+  }
+
+  return { tasksHealed, cloned, rehomed, missedRows, orphanIds: orphanByNin.length };
+}
+
+/**
+ * Org-wide heal for every multi-assignee task and multi-person approval-record task.
+ */
+export async function repairAllSharedMultiAssigneeTasks() {
+  const multiTasks = await Task.find({
+    deletedAt: null,
+    "assignees.1": { $exists: true },
+  })
+    .select("_id")
+    .limit(2000)
+    .lean();
+
+  const multiRecordGroups = await TaskApprovalRecord.aggregate([
+    { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
+    { $match: { "people.1": { $exists: true } } },
+    { $limit: 2000 },
+  ]);
+
+  const ids = [
+    ...new Set([
+      ...multiTasks.map((t) => String(t._id)),
+      ...multiRecordGroups.map((g) => String(g._id)),
+    ]),
+  ];
+
+  let tasksHealed = 0;
+  let cloned = 0;
+  let rehomed = 0;
+  let missedRows = 0;
+
+  for (const tid of ids) {
+    // eslint-disable-next-line no-await-in-loop
+    const task = await Task.findById(tid);
+    if (!task || task.deletedAt) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const result = await splitSharedTaskPermanently(task);
+    tasksHealed += 1;
+    cloned += result.cloned || 0;
+    rehomed += result.rehomed || 0;
+    missedRows += result.missedRows || 0;
+  }
+
+  return { tasksHealed, cloned, rehomed, missedRows };
+}
+
 /**
  * Assignee open inbox: keep shared multi-assignee tasks visible for people who have not yet
  * submitted this occurrence, even if task.status is already awaiting_approval (legacy rows).
@@ -1502,12 +1949,21 @@ export async function repairNotDoneMissedConflicts({ assigneeId }) {
 
 /** Run all history repairs for one assignee (org-wide on refresh). */
 export async function repairAssigneeHistoryRecords({ assigneeId }) {
+  // First restore / split shared multi-assignee damage so inbox + performance exist per person.
+  const shared = await repairSharedMultiAssigneeForAssignee(assigneeId);
   const restoredSubmissions = await repairWronglyAutoMissedSubmissions({ assigneeId });
   const misdatedApproved = await repairMisdatedApprovedRecords({ assigneeId });
   const phantoms = await repairPhantomApprovedRecords({ assigneeId });
   const missed = await repairMisdatedMissedRecords({ assigneeId });
   const notDoneConflicts = await repairNotDoneMissedConflicts({ assigneeId });
-  return { misdatedApproved, phantoms, missed, notDoneConflicts, restoredSubmissions };
+  return {
+    shared,
+    misdatedApproved,
+    phantoms,
+    missed,
+    notDoneConflicts,
+    restoredSubmissions,
+  };
 }
 
 /** Drop phantom approved rows from API responses. */

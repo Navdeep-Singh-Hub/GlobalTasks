@@ -42,6 +42,8 @@ import {
   repairApprovalInboxPendingTaskState,
   claimSharedTaskForAssignee,
   filterAssigneePersonalOpenTasks,
+  repairAllSharedMultiAssigneeTasks,
+  repairSharedMultiAssigneeForAssignee,
 } from "../services/taskApprovalHistory.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -564,6 +566,23 @@ router.post("/admin/backfill-assigned-by", requireRoles("ceo"), async (_req, res
 router.post("/admin/backfill-approval-history", requireRoles("ceo"), async (_req, res) => {
   const result = await backfillApprovalRecordsFromEvents();
   res.json({ ok: true, ...result });
+});
+
+/**
+ * Restore multi-assignee tasks that disappeared after one person submitted.
+ * Fans out shared tasks to solo copies and backfills not-done / keeps completed history.
+ * CEO only (or pass assigneeId as query to heal one person — also management? keep CEO for full).
+ */
+router.post("/admin/repair-shared-assignees", requireRoles("ceo", "centre_head"), async (req, res) => {
+  try {
+    const assigneeId = String(req.query.assigneeId || req.body?.assigneeId || "").trim();
+    const result = assigneeId
+      ? await repairSharedMultiAssigneeForAssignee(assigneeId)
+      : await repairAllSharedMultiAssigneeTasks();
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ message: e.message || "Repair failed" });
+  }
 });
 
 router.get("/my-missed-occurrences", async (req, res) => {
