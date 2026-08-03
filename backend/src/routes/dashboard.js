@@ -390,13 +390,12 @@ router.get("/assignee-approval-history", async (req, res) => {
     }
   }
 
-  // Heal shared multi-assignee damage for this person before reading history (throttled).
-  const sharedKey = throttleKey("shared-repair", assigneeId);
-  if (shouldRunThrottled(sharedKey, REPAIR_TTL_MS)) {
-    await repairSharedMultiAssigneeForAssignee(assigneeId);
-  }
-
-  // Slow full-org heal in background (once per interval) so peers get tasks back too.
+  // Never block Performance API on heavy shared-task heal — run in background.
+  scheduleBackground(
+    throttleKey("shared-repair", assigneeId),
+    () => repairSharedMultiAssigneeForAssignee(assigneeId),
+    REPAIR_TTL_MS
+  );
   scheduleBackground(
     throttleKey("shared-heal-org", "global"),
     () => repairAllSharedMultiAssigneeTasks(),
@@ -404,16 +403,18 @@ router.get("/assignee-approval-history", async (req, res) => {
   );
 
   if (req.query.sync === "true") {
-    const repairKey = throttleKey("history-repair", assigneeId);
-    if (shouldRunThrottled(repairKey, REPAIR_TTL_MS)) {
-      await syncRecurringTasksForAssignee(assigneeId);
-      await repairAssigneeHistoryRecords({ assigneeId });
-    } else {
-      scheduleBackground(
-        throttleKey("recurring-sync", assigneeId),
-        () => syncRecurringTasksForAssignee(assigneeId)
-      );
-    }
+    scheduleBackground(
+      throttleKey("history-repair", assigneeId),
+      async () => {
+        try {
+          await syncRecurringTasksForAssignee(assigneeId);
+          await repairAssigneeHistoryRecords({ assigneeId });
+        } catch (e) {
+          console.error("[history-repair] failed:", e?.message || e);
+        }
+      },
+      REPAIR_TTL_MS
+    );
   }
 
   const recordLimit = Math.min(1500, Math.max(50, Number(req.query.limit) || 800));
@@ -465,9 +466,11 @@ router.get("/assignee-approval-history", async (req, res) => {
     to: req.query.to,
   });
   // Hard guarantee: never leak another person's rows into this assignee's history.
+  // Keep rows with matching assigneeId OR synthetic gap/live rows that lack assigneeId.
   records = records.filter((r) => {
-    const rid = String(r.assigneeId?._id || r.assigneeId || "");
-    return !rid || rid === String(assigneeId);
+    const rid = String(r.assigneeId?._id || r.assigneeId || "").trim();
+    if (!rid) return true;
+    return rid === String(assigneeId);
   });
   records = sanitizeHistoryApprovedDisplay(records);
   records = sanitizeHistoryMissedDisplay(records);

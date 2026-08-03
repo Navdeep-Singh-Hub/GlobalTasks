@@ -412,138 +412,139 @@ export async function repairSharedMultiAssigneeForAssignee(assigneeId) {
   const aid = String(assigneeId || "");
   if (!aid) return { tasksHealed: 0, cloned: 0, rehomed: 0, missedRows: 0 };
 
-  const multiIds = await Task.distinct("_id", {
-    deletedAt: null,
-    assignees: aid,
-    "assignees.1": { $exists: true },
-  });
-
-  // Tasks where this person has history but is no longer an assignee (was wiped after co-submit)
-  const recordTaskIds = await TaskApprovalRecord.distinct("taskId", { assigneeId: aid });
-  const orphanIds = recordTaskIds.length
-    ? await Task.distinct("_id", {
-        _id: { $in: recordTaskIds },
-        deletedAt: null,
-        assignees: { $ne: aid },
-      })
-    : [];
-  // Mongo `$ne` on array means "array is not equal to value" not "does not contain".
-  // Use $nin for element membership:
-  const orphanByNin = recordTaskIds.length
-    ? await Task.distinct("_id", {
-        _id: { $in: recordTaskIds },
-        deletedAt: null,
-        assignees: { $nin: [aid] },
-      })
-    : [];
-
-  // Also any multi-assignee tasks that share a title with this person's tasks (peer group) — heavy; skip.
-
-  // Tasks that still have multiple people's records even if currently solo on assignees
-  const multiRecordGroups = await TaskApprovalRecord.aggregate([
-    { $match: { assigneeId: { $exists: true } } },
-    { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
-    { $match: { "people.1": { $exists: true } } },
-    { $project: { _id: 1 } },
-    { $limit: 500 },
-  ]);
-  const multiRecordIds = multiRecordGroups.map((g) => g._id);
-
-  // Only process multi-record tasks that involve this assignee
-  const multiRecordForAssignee = [];
-  if (multiRecordIds.length) {
-    const related = await TaskApprovalRecord.distinct("taskId", {
-      taskId: { $in: multiRecordIds },
-      assigneeId: aid,
+  try {
+    const multiIds = await Task.distinct("_id", {
+      deletedAt: null,
+      assignees: aid,
+      "assignees.1": { $exists: true },
     });
-    multiRecordForAssignee.push(...related);
+
+    const recordTaskIds = await TaskApprovalRecord.distinct("taskId", { assigneeId: aid });
+    const orphanByNin = recordTaskIds.length
+      ? await Task.distinct("_id", {
+          _id: { $in: recordTaskIds },
+          deletedAt: null,
+          assignees: { $nin: [aid] },
+        })
+      : [];
+
+    // Tasks that still have multiple people's records (capped, only involving this assignee)
+    const multiRecordForAssignee = recordTaskIds.length
+      ? (
+          await TaskApprovalRecord.aggregate([
+            { $match: { taskId: { $in: recordTaskIds } } },
+            { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
+            { $match: { "people.1": { $exists: true } } },
+            { $limit: 100 },
+          ])
+        ).map((g) => g._id)
+      : [];
+
+    const allTaskIds = [
+      ...new Set([...multiIds, ...orphanByNin, ...multiRecordForAssignee].map((id) => String(id))),
+    ].slice(0, 80);
+
+    let tasksHealed = 0;
+    let cloned = 0;
+    let rehomed = 0;
+    let missedRows = 0;
+
+    for (const tid of allTaskIds) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const task = await Task.findById(tid);
+        if (!task || task.deletedAt) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const result = await splitSharedTaskPermanently(task);
+        tasksHealed += 1;
+        cloned += result.cloned || 0;
+        rehomed += result.rehomed || 0;
+        missedRows += result.missedRows || 0;
+      } catch (e) {
+        console.error("[repair-shared] task failed:", tid, e?.message || e);
+      }
+    }
+
+    // Light missed backfill only for currently assigned solo tasks (small limit).
+    const assignedTasks = await Task.find({
+      deletedAt: null,
+      assignees: aid,
+    })
+      .select("_id title taskType createdAt dueDate recurrence centerId assignedBy createdBy assignees")
+      .limit(80);
+
+    const soloTasks = assignedTasks.filter((t) => (t.assignees || []).length === 1);
+
+    for (const t of soloTasks) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await applyPersonalTaskStateFromRecords(t, aid);
+        // eslint-disable-next-line no-await-in-loop
+        missedRows += await backfillMissedDbRowsForTaskAssignee(t, aid);
+      } catch (e) {
+        console.error("[repair-shared] solo backfill failed:", t?._id, e?.message || e);
+      }
+    }
+
+    return { tasksHealed, cloned, rehomed, missedRows, orphanIds: orphanByNin.length };
+  } catch (e) {
+    console.error("[repair-shared] for assignee failed:", aid, e?.message || e);
+    return { tasksHealed: 0, cloned: 0, rehomed: 0, missedRows: 0, error: e?.message || String(e) };
   }
-
-  const allTaskIds = [
-    ...new Set(
-      [...multiIds, ...orphanByNin, ...multiRecordForAssignee].map((id) => String(id))
-    ),
-  ];
-
-  let tasksHealed = 0;
-  let cloned = 0;
-  let rehomed = 0;
-  let missedRows = 0;
-
-  for (const tid of allTaskIds) {
-    // eslint-disable-next-line no-await-in-loop
-    const task = await Task.findById(tid);
-    if (!task || task.deletedAt) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const result = await splitSharedTaskPermanently(task);
-    tasksHealed += 1;
-    cloned += result.cloned || 0;
-    rehomed += result.rehomed || 0;
-    missedRows += result.missedRows || 0;
-  }
-
-  // Final pass: any solo task for this assignee still missing past not-done rows
-  const soloTasks = await Task.find({
-    deletedAt: null,
-    assignees: aid,
-    $expr: { $eq: [{ $size: "$assignees" }, 1] },
-  })
-    .select("_id title taskType createdAt dueDate recurrence centerId assignedBy createdBy assignees")
-    .limit(400);
-
-  for (const t of soloTasks) {
-    // eslint-disable-next-line no-await-in-loop
-    await applyPersonalTaskStateFromRecords(t, aid);
-    // eslint-disable-next-line no-await-in-loop
-    missedRows += await backfillMissedDbRowsForTaskAssignee(t, aid);
-  }
-
-  return { tasksHealed, cloned, rehomed, missedRows, orphanIds: orphanByNin.length };
 }
 
 /**
  * Org-wide heal for every multi-assignee task and multi-person approval-record task.
  */
 export async function repairAllSharedMultiAssigneeTasks() {
-  const multiTasks = await Task.find({
-    deletedAt: null,
-    "assignees.1": { $exists: true },
-  })
-    .select("_id")
-    .limit(2000)
-    .lean();
+  try {
+    const multiTasks = await Task.find({
+      deletedAt: null,
+      "assignees.1": { $exists: true },
+    })
+      .select("_id")
+      .limit(200)
+      .lean();
 
-  const multiRecordGroups = await TaskApprovalRecord.aggregate([
-    { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
-    { $match: { "people.1": { $exists: true } } },
-    { $limit: 2000 },
-  ]);
+    const multiRecordGroups = await TaskApprovalRecord.aggregate([
+      { $group: { _id: "$taskId", people: { $addToSet: "$assigneeId" } } },
+      { $match: { "people.1": { $exists: true } } },
+      { $limit: 200 },
+    ]);
 
-  const ids = [
-    ...new Set([
-      ...multiTasks.map((t) => String(t._id)),
-      ...multiRecordGroups.map((g) => String(g._id)),
-    ]),
-  ];
+    const ids = [
+      ...new Set([
+        ...multiTasks.map((t) => String(t._id)),
+        ...multiRecordGroups.map((g) => String(g._id)),
+      ]),
+    ].slice(0, 250);
 
-  let tasksHealed = 0;
-  let cloned = 0;
-  let rehomed = 0;
-  let missedRows = 0;
+    let tasksHealed = 0;
+    let cloned = 0;
+    let rehomed = 0;
+    let missedRows = 0;
 
-  for (const tid of ids) {
-    // eslint-disable-next-line no-await-in-loop
-    const task = await Task.findById(tid);
-    if (!task || task.deletedAt) continue;
-    // eslint-disable-next-line no-await-in-loop
-    const result = await splitSharedTaskPermanently(task);
-    tasksHealed += 1;
-    cloned += result.cloned || 0;
-    rehomed += result.rehomed || 0;
-    missedRows += result.missedRows || 0;
+    for (const tid of ids) {
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const task = await Task.findById(tid);
+        if (!task || task.deletedAt) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const result = await splitSharedTaskPermanently(task);
+        tasksHealed += 1;
+        cloned += result.cloned || 0;
+        rehomed += result.rehomed || 0;
+        missedRows += result.missedRows || 0;
+      } catch (e) {
+        console.error("[repair-shared-all] task failed:", tid, e?.message || e);
+      }
+    }
+
+    return { tasksHealed, cloned, rehomed, missedRows };
+  } catch (e) {
+    console.error("[repair-shared-all] failed:", e?.message || e);
+    return { tasksHealed: 0, cloned: 0, rehomed: 0, missedRows: 0, error: e?.message || String(e) };
   }
-
-  return { tasksHealed, cloned, rehomed, missedRows };
 }
 
 /**
@@ -1497,19 +1498,32 @@ export async function listMyAssignees({ userId, centerId, isCeoRole, role }) {
 
 /** Match history for tasks you assigned even if record.assignedBy was stored before backfill. */
 export async function buildAssigneeHistoryQuery({ userId, assigneeId, centerId, isCeoRole, role, from, to }) {
+  // Always key performance rows by person. Do not require them to still be on task.assignees
+  // (multi-assignee split / rehome can move people off the original document).
   let q = { assigneeId };
 
   if (!isCeoRole) {
     const visibility =
       (await approvalVisibilityClause({ userId, role, centerId, isCeoRole })) || assignerScopeClause(userId);
-    const taskFilter = {
+    // All tasks this viewer assigned (not only ones where assignee is still listed).
+    const scopedTaskFilter = { deletedAt: null, ...visibility };
+    if (centerId) scopedTaskFilter.centerId = centerId;
+    const taskIds = await Task.distinct("_id", scopedTaskFilter);
+
+    // Also include live tasks currently assigned to this person in our scope.
+    const assigneeTaskFilter = {
       deletedAt: null,
       assignees: assigneeId,
       ...visibility,
     };
-    if (centerId) taskFilter.centerId = centerId;
-    const taskIds = await Task.distinct("_id", taskFilter);
-    q = { assigneeId, $or: [{ assignedBy: userId }, { taskId: { $in: taskIds } }] };
+    if (centerId) assigneeTaskFilter.centerId = centerId;
+    const assigneeTaskIds = await Task.distinct("_id", assigneeTaskFilter);
+
+    const allTaskIds = [...new Set([...taskIds, ...assigneeTaskIds].map(String))];
+    q = {
+      assigneeId,
+      $or: [{ assignedBy: userId }, { taskId: { $in: allTaskIds } }],
+    };
   }
   if (from || to) {
     q.occurrenceDueDate = {};
