@@ -65,8 +65,9 @@ function isAllowedOrigin(origin) {
 app.use(
   cors({
     origin(origin, cb) {
+      // Do not throw — throwing becomes HTTP 500 and confuses clients on mismatch.
       if (isAllowedOrigin(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin || "none"}`));
+      return cb(null, false);
     },
     credentials: true,
   })
@@ -81,6 +82,8 @@ app.get("/api/health", (_req, res) =>
   res.json({
     ok: true,
     service: "task-project-api",
+    /** Bump when ops need to confirm Render actually restarted on the latest push. */
+    codeVersion: "sessions-list-v3",
     recycleBinRetentionDays: Math.max(1, Number(process.env.RECYCLE_BIN_RETENTION_DAYS) || 10),
   })
 );

@@ -194,8 +194,8 @@ export function PendingRecurringDailySessions() {
   const [loadErr, setLoadErr] = useState("");
   const UPLOADED_LIST_LIMIT = 500;
   const [refreshToken, setRefreshToken] = useState(0);
-  // Default last 14 days so older sessionDate uploads still appear after save.
-  const [viewFrom, setViewFrom] = useState(() => daysAgoIso(14));
+  // Default last 60 days so past sessionDate uploads remain visible on prod too.
+  const [viewFrom, setViewFrom] = useState(() => daysAgoIso(60));
   const [viewTo, setViewTo] = useState(todayIsoDate);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
@@ -230,13 +230,17 @@ export function PendingRecurringDailySessions() {
     qs.set("limit", String(UPLOADED_LIST_LIMIT));
     if (viewFrom) qs.set("from", viewFrom);
     if (viewTo) qs.set("to", viewTo);
-    if (isSupervisor) qs.set("scope", "self");
+    // Always own uploads (therapist + supervisor) — never team list on this panel.
+    qs.set("scope", "self");
     // Cache buster so the browser / any intermediary never serves a stale response.
     qs.set("_", String(Date.now()));
     const base = qs.toString();
     setLoadingUploaded(true);
     setLoadErr("");
-    api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, { cache: "no-store" })
+    api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" },
+    })
       .then((listRes) => {
         if (cancelled) return;
         const batch = Array.isArray(listRes.sessions) ? listRes.sessions : [];
@@ -257,7 +261,7 @@ export function PendingRecurringDailySessions() {
     return () => {
       cancelled = true;
     };
-  }, [user, isSupervisor, viewFrom, viewTo, refreshToken]);
+  }, [user, viewFrom, viewTo, refreshToken]);
 
   const hasMoreUploaded = uploadedSessionsTotal > uploadedSessions.length;
 
@@ -1283,11 +1287,11 @@ export function PendingRecurringDailySessions() {
               size="sm"
               variant="outline"
               onClick={() => {
-                setViewFrom(daysAgoIso(14));
+                setViewFrom(daysAgoIso(60));
                 setViewTo(todayIsoDate());
               }}
             >
-              Last 14 days
+              Last 60 days
             </Button>
             <Button
               size="sm"
@@ -1554,7 +1558,9 @@ export function PendingRecurringDailySessions() {
           </>
         ) : (
           <p className="mt-3 text-xs text-zinc-500">
-            No uploaded sessions found for {viewFrom || "start"} to {viewTo || "end"}.
+            No uploaded sessions found for {viewFrom || "start"} to {viewTo || "end"}. Widen the
+            date range or click Refresh. If you just pushed code, hard-refresh (Ctrl/Cmd+Shift+R)
+            after Render + Vercel both redeploy.
           </p>
         )}
       </div>

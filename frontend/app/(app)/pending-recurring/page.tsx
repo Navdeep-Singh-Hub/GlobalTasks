@@ -9,7 +9,8 @@ import { useAuth } from "@/contexts/auth-context";
 export default function PendingRecurringPage() {
   const { user } = useAuth();
   const showTherapistDailyLog =
-    (user?.role === "executor" && user?.executorKind === "therapist") || user?.role === "supervisor";
+    (user?.role === "executor" && String(user?.executorKind || "").toLowerCase() === "therapist") ||
+    user?.role === "supervisor";
   const showCoordinatorSheet = user?.role === "coordinator";
   const showTopDailyBlock = showTherapistDailyLog || showCoordinatorSheet;
 

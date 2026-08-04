@@ -1,4 +1,5 @@
 import { Router } from "express";
+import mongoose from "mongoose";
 import PDFDocument from "pdfkit";
 import { Task } from "../models/Task.js";
 import { DailyReport } from "../models/DailyReport.js";
@@ -21,6 +22,17 @@ router.use(requireCenterAssigned);
 const PERF_CACHE_TTL_MS = 30_000;
 const perfCache = new Map();
 
+/** Cast JWT / query ids so Mongo ObjectId equality matches reliably. */
+function toObjectId(id) {
+  if (id == null || id === "") return null;
+  if (id instanceof mongoose.Types.ObjectId) return id;
+  const s = String(id);
+  if (mongoose.Types.ObjectId.isValid(s) && String(new mongoose.Types.ObjectId(s)) === s) {
+    return new mongoose.Types.ObjectId(s);
+  }
+  return null;
+}
+
 async function actor(req) {
   if (req._actor) return req._actor;
   req._actor = await User.findById(req.userId).select("_id role executorKind centerId").lean();
@@ -35,12 +47,13 @@ function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
 
 /** Shared filter for therapist session list / count (patient session log + performance). */
 async function buildTherapistSessionsFilter(req, me) {
-  const executorKind = String(me?.executorKind || "").toLowerCase();
+  const executorKind = String(me?.executorKind || "").toLowerCase().trim();
   const isTherapist =
     (req.userRole === "executor" || me?.role === "executor") && executorKind === "therapist";
   const isSupervisor = req.userRole === "supervisor" || me?.role === "supervisor";
+  // Personal "my uploads" log: therapists always; anyone with scope=self (supervisors).
   const selfScope =
-    isTherapist || (isSupervisor && String(req.query.scope || "").toLowerCase() === "self");
+    isTherapist || String(req.query.scope || "").toLowerCase() === "self";
 
   const q = {};
   if (req.query.from || req.query.to) {
@@ -50,17 +63,19 @@ async function buildTherapistSessionsFilter(req, me) {
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
 
-  // Own log: match sessions this user uploaded OR sessions tagged to them
-  // (covers legacy rows and any id mismatch between JWT sub and therapistId).
+  // Own log: match sessions this user uploaded OR sessions tagged to them.
+  // Must not AND with a conflicting therapistId/centerId (would yield empty lists in prod).
   if (selfScope) {
-    const uid = req.userId;
+    const uid = toObjectId(req.userId) || req.userId;
+    delete q.therapistId;
+    delete q.centerId;
     q.$or = [{ therapistId: uid }, { createdBy: uid }];
   }
 
   const selectedCenterId = String(req.query.centerId || "").trim();
-  // Own session log: therapistId/createdBy is enough; do not exclude mismatched center rows.
+  // Own session log: ownership is enough; do not exclude mismatched center rows.
   if (!selfScope && !isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (isCeo(req.userRole) && selectedCenterId) {
+  else if (!selfScope && isCeo(req.userRole) && selectedCenterId) {
     const centerTherapistIds = await User.find({
       active: true,
       centerId: selectedCenterId,
@@ -76,7 +91,7 @@ async function buildTherapistSessionsFilter(req, me) {
     }
   }
 
-  if (req.userRole === "supervisor" && !selfScope && !q.therapistId && !q.$or) {
+  if (!selfScope && req.userRole === "supervisor" && !q.therapistId && !q.$or) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
     else if (q.therapistId) {
