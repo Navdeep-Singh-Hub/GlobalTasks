@@ -11,7 +11,28 @@ import { ClipboardCheck, Eye, Pencil, Plus, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 function todayIsoDate() {
-  return new Date().toISOString().slice(0, 10);
+  // IST calendar day — matches backend week-off / clinical ops timezone.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+/** Inclusive lookback so "Recent uploaded" is not empty after past-day uploads. */
+function daysAgoIso(days: number) {
+  const parts = todayIsoDate().split("-").map(Number);
+  const d = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  d.setUTCDate(d.getUTCDate() - days);
+  return d.toISOString().slice(0, 10);
+}
+
+function minIsoDate(a: string, b: string) {
+  return a && b ? (a < b ? a : b) : a || b;
+}
+function maxIsoDate(a: string, b: string) {
+  return a && b ? (a > b ? a : b) : a || b;
 }
 
 type SessionRow = {
@@ -170,9 +191,11 @@ export function PendingRecurringDailySessions() {
   const [uploadedSessions, setUploadedSessions] = useState<UploadedSession[]>([]);
   const [uploadedSessionsTotal, setUploadedSessionsTotal] = useState(0);
   const [loadingUploaded, setLoadingUploaded] = useState(false);
-  const UPLOADED_LIST_LIMIT = 150;
+  const [loadErr, setLoadErr] = useState("");
+  const UPLOADED_LIST_LIMIT = 500;
   const [refreshToken, setRefreshToken] = useState(0);
-  const [viewFrom, setViewFrom] = useState(todayIsoDate);
+  // Default last 14 days so older sessionDate uploads still appear after save.
+  const [viewFrom, setViewFrom] = useState(() => daysAgoIso(14));
   const [viewTo, setViewTo] = useState(todayIsoDate);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft | null>(null);
@@ -212,6 +235,7 @@ export function PendingRecurringDailySessions() {
     qs.set("_", String(Date.now()));
     const base = qs.toString();
     setLoadingUploaded(true);
+    setLoadErr("");
     api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, { cache: "no-store" })
       .then((listRes) => {
         if (cancelled) return;
@@ -221,11 +245,11 @@ export function PendingRecurringDailySessions() {
         setUploadedSessionsTotal(total);
         setUploadedSessions(batch);
       })
-      .catch(() => {
-        if (!cancelled) {
-          setUploadedSessions([]);
-          setUploadedSessionsTotal(0);
-        }
+      .catch((e) => {
+        if (cancelled) return;
+        setUploadedSessions([]);
+        setUploadedSessionsTotal(0);
+        setLoadErr(e instanceof ApiError ? e.message : "Could not load your uploaded sessions.");
       })
       .finally(() => {
         if (!cancelled) setLoadingUploaded(false);
@@ -270,7 +294,9 @@ export function PendingRecurringDailySessions() {
         });
       }
       setRows([newRow()]);
-      setSessionDate(todayIsoDate());
+      // Keep list filter wide enough that the sessions just saved are visible (not only "today").
+      setViewFrom((prev) => minIsoDate(prev || sessionDate, sessionDate));
+      setViewTo((prev) => maxIsoDate(prev || sessionDate, sessionDate));
       setMessage({ type: "ok", text: `Saved ${filled.length} session(s).` });
       setRefreshToken((v) => v + 1);
     } catch (e) {
@@ -1257,6 +1283,16 @@ export function PendingRecurringDailySessions() {
               size="sm"
               variant="outline"
               onClick={() => {
+                setViewFrom(daysAgoIso(14));
+                setViewTo(todayIsoDate());
+              }}
+            >
+              Last 14 days
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
                 const today = todayIsoDate();
                 setViewFrom(today);
                 setViewTo(today);
@@ -1264,10 +1300,19 @@ export function PendingRecurringDailySessions() {
             >
               Today
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setRefreshToken((v) => v + 1)}
+            >
+              Refresh
+            </Button>
           </div>
         </div>
         {loadingUploaded ? (
           <p className="mt-3 text-xs text-zinc-500">Loading sessions...</p>
+        ) : loadErr ? (
+          <p className="mt-3 text-xs font-semibold text-rose-600">{loadErr}</p>
         ) : uploadedSessions.length ? (
           <>
           <div className="mt-3 hidden overflow-x-auto md:block">

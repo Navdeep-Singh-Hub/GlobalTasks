@@ -35,23 +35,30 @@ function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
 
 /** Shared filter for therapist session list / count (patient session log + performance). */
 async function buildTherapistSessionsFilter(req, me) {
-  const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
-  const isSupervisor = req.userRole === "supervisor" && me?.role === "supervisor";
+  const executorKind = String(me?.executorKind || "").toLowerCase();
+  const isTherapist =
+    (req.userRole === "executor" || me?.role === "executor") && executorKind === "therapist";
+  const isSupervisor = req.userRole === "supervisor" || me?.role === "supervisor";
   const selfScope =
     isTherapist || (isSupervisor && String(req.query.scope || "").toLowerCase() === "self");
 
   const q = {};
   if (req.query.from || req.query.to) {
     q.sessionDate = {};
-    if (req.query.from) q.sessionDate.$gte = String(req.query.from);
-    if (req.query.to) q.sessionDate.$lte = String(req.query.to);
+    if (req.query.from) q.sessionDate.$gte = String(req.query.from).slice(0, 10);
+    if (req.query.to) q.sessionDate.$lte = String(req.query.to).slice(0, 10);
   }
   if (req.query.therapistId) q.therapistId = req.query.therapistId;
-  if (isTherapist) q.therapistId = req.userId;
-  if (isSupervisor && selfScope) q.therapistId = req.userId;
+
+  // Own log: match sessions this user uploaded OR sessions tagged to them
+  // (covers legacy rows and any id mismatch between JWT sub and therapistId).
+  if (selfScope) {
+    const uid = req.userId;
+    q.$or = [{ therapistId: uid }, { createdBy: uid }];
+  }
 
   const selectedCenterId = String(req.query.centerId || "").trim();
-  // Own session log: therapistId is enough; do not exclude legacy/mismatched center rows.
+  // Own session log: therapistId/createdBy is enough; do not exclude mismatched center rows.
   if (!selfScope && !isCeo(req.userRole)) q.centerId = me?.centerId || null;
   else if (isCeo(req.userRole) && selectedCenterId) {
     const centerTherapistIds = await User.find({
@@ -64,12 +71,12 @@ async function buildTherapistSessionsFilter(req, me) {
     } else if (q.therapistId && q.therapistId.$in) {
       const allowed = new Set(centerTherapistIds.map((id) => String(id)));
       q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
-    } else {
+    } else if (!q.$or) {
       q.therapistId = { $in: centerTherapistIds };
     }
   }
 
-  if (req.userRole === "supervisor" && !q.therapistId) {
+  if (req.userRole === "supervisor" && !selfScope && !q.therapistId && !q.$or) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
     else if (q.therapistId) {
@@ -601,7 +608,7 @@ router.get("/export", async (req, res) => {
 router.post("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
   const meUser = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
-  const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
+  const isTherapist = meUser?.role === "executor" && String(meUser?.executorKind || "").toLowerCase() === "therapist";
   const isSupervisor = meUser?.role === "supervisor";
   if (!isTherapist && !isSupervisor) {
     return res.status(403).json({ message: "Only therapists or supervisors can submit sessions" });
@@ -659,8 +666,10 @@ router.post("/therapist-sessions", async (req, res) => {
 
 router.get("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
-  const isTherapist = req.userRole === "executor" && me?.role === "executor" && me?.executorKind === "therapist";
-  const isSupervisor = req.userRole === "supervisor" && me?.role === "supervisor";
+  const executorKind = String(me?.executorKind || "").toLowerCase();
+  const isTherapist =
+    (req.userRole === "executor" || me?.role === "executor") && executorKind === "therapist";
+  const isSupervisor = req.userRole === "supervisor" || me?.role === "supervisor";
   const isMgmtViewer = isManagement(req.userRole) && canViewClinicalPerformance(req.userRole);
   if (!isMgmtViewer && !isTherapist && !isSupervisor) {
     return res.status(403).json({ message: "Only therapists or supervisors can view sessions" });
@@ -671,7 +680,10 @@ router.get("/therapist-sessions", async (req, res) => {
   const total = await TherapistSession.countDocuments(q);
   if (countOnly) return res.json({ total });
 
-  const { page, limit, skip } = parsePageLimit(req.query, 100, 10000);
+  // Self logs need a high ceiling so the uploader always sees recent work.
+  const defaultLimit = String(req.query.scope || "").toLowerCase() === "self" || isTherapist ? 500 : 100;
+  const maxLimit = isTherapist || String(req.query.scope || "").toLowerCase() === "self" ? 2000 : 10000;
+  const { page, limit, skip } = parsePageLimit(req.query, defaultLimit, maxLimit);
   const sessions = await TherapistSession.find(q)
     .populate("therapistId", "name email role executorKind")
     .populate("centerId", "name code")
