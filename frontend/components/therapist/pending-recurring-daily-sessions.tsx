@@ -170,7 +170,7 @@ export function PendingRecurringDailySessions() {
   const [uploadedSessions, setUploadedSessions] = useState<UploadedSession[]>([]);
   const [uploadedSessionsTotal, setUploadedSessionsTotal] = useState(0);
   const [loadingUploaded, setLoadingUploaded] = useState(false);
-  const UPLOADED_LIST_LIMIT = 10000;
+  const UPLOADED_LIST_LIMIT = 150;
   const [refreshToken, setRefreshToken] = useState(0);
   const [viewFrom, setViewFrom] = useState(todayIsoDate);
   const [viewTo, setViewTo] = useState(todayIsoDate);
@@ -212,19 +212,12 @@ export function PendingRecurringDailySessions() {
     qs.set("_", String(Date.now()));
     const base = qs.toString();
     setLoadingUploaded(true);
-    Promise.all([
-      api<{ total: number }>(`/reports/therapist-sessions?${base}&countOnly=1`, { cache: "no-store" }),
-      api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, { cache: "no-store" }),
-    ])
-      .then(([countRes, listRes]) => {
+    api<{ sessions: UploadedSession[]; total?: number }>(`/reports/therapist-sessions?${base}`, { cache: "no-store" })
+      .then((listRes) => {
         if (cancelled) return;
         const batch = Array.isArray(listRes.sessions) ? listRes.sessions : [];
         const total =
-          typeof countRes.total === "number" && !Number.isNaN(countRes.total)
-            ? countRes.total
-            : typeof listRes.total === "number" && !Number.isNaN(listRes.total)
-              ? listRes.total
-              : batch.length;
+          typeof listRes.total === "number" && !Number.isNaN(listRes.total) ? listRes.total : batch.length;
         setUploadedSessionsTotal(total);
         setUploadedSessions(batch);
       })

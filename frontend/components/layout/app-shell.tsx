@@ -24,16 +24,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    const load = () =>
+    let cancelled = false;
+    const load = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       api<{ notifications: Notif[]; unread: number }>("/notifications")
         .then((d) => {
+          if (cancelled) return;
           setNotifications(d.notifications);
           setUnread(d.unread);
         })
         .catch(() => {});
+    };
     load();
-    const id = window.setInterval(load, 10000);
-    return () => window.clearInterval(id);
+    // Was 10s (constant DB load on every page). 45s + skip while tab hidden.
+    const id = window.setInterval(load, 45_000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") load();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [user]);
 
   useEffect(() => {

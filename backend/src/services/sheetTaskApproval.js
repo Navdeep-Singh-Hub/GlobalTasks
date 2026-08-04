@@ -15,6 +15,30 @@ export const COORDINATOR_SHEET_TASK_TITLE_REGEX = /fill\s+daily\s+coordinator\s+
 export const TAG_DAILY_SUPERVISOR_SHEET = "daily_sheet_supervisor";
 export const TAG_DAILY_COORDINATOR_SHEET = "daily_sheet_coordinator";
 
+export const OPEN_SHEET_TASK_STATUSES = ["pending", "in_progress", "overdue", "awaiting_approval"];
+
+export function isDailySheetTaskTitle(title) {
+  const t = String(title || "");
+  return SUPERVISOR_SHEET_TASK_TITLE_REGEX.test(t) || COORDINATOR_SHEET_TASK_TITLE_REGEX.test(t);
+}
+
+/** Detect supervisor/coordinator daily sheet tasks by title, tag, or functionTag. */
+export function isDailySheetTask(task) {
+  if (!task) return false;
+  if (isDailySheetTaskTitle(task.title)) return true;
+  const tags = Array.isArray(task.tags) ? task.tags : [];
+  if (tags.includes(TAG_DAILY_SUPERVISOR_SHEET) || tags.includes(TAG_DAILY_COORDINATOR_SHEET)) return true;
+  const ft = String(task.functionTag || "");
+  return ft === "daily_supervisor_sheet" || ft === "daily_coordinator_sheet";
+}
+
+export function sheetTaskTitleRegexForTitle(title) {
+  const t = String(title || "");
+  if (SUPERVISOR_SHEET_TASK_TITLE_REGEX.test(t)) return SUPERVISOR_SHEET_TASK_TITLE_REGEX;
+  if (COORDINATOR_SHEET_TASK_TITLE_REGEX.test(t)) return COORDINATOR_SHEET_TASK_TITLE_REGEX;
+  return null;
+}
+
 function dateKeyAsiaKolkata(d) {
   if (!d) return "";
   return new Intl.DateTimeFormat("en-CA", {
@@ -23,6 +47,61 @@ function dateKeyAsiaKolkata(d) {
     month: "2-digit",
     day: "2-digit",
   }).format(new Date(d));
+}
+
+/**
+ * One open daily-sheet task per assignee. Soft-deletes extras so the person is not
+ * assigned "Fill Daily … Sheet" twice in Pending Recurring / WhatsApp / For Approval.
+ */
+export async function findOpenDailySheetTasksForAssignee(assigneeId, titleRegex) {
+  let assigneeOid;
+  try {
+    assigneeOid = new mongoose.Types.ObjectId(String(assigneeId));
+  } catch {
+    return [];
+  }
+  return Task.find({
+    deletedAt: null,
+    assignees: assigneeOid,
+    title: titleRegex,
+    status: { $in: OPEN_SHEET_TASK_STATUSES },
+  }).sort({ dueDate: -1, updatedAt: -1 });
+}
+
+/** Returns keepTask if any, and soft-deletes remaining open duplicates. */
+export async function collapseOpenDailySheetDuplicates(tasks, { preferDayKey = "" } = {}) {
+  if (!tasks?.length) return null;
+  if (tasks.length === 1) return tasks[0];
+
+  const scored = [...tasks].sort((a, b) => {
+    const aMatch = preferDayKey && dateKeyAsiaKolkata(a.dueDate) === preferDayKey ? 1 : 0;
+    const bMatch = preferDayKey && dateKeyAsiaKolkata(b.dueDate) === preferDayKey ? 1 : 0;
+    if (aMatch !== bMatch) return bMatch - aMatch;
+    // Prefer awaiting_approval so we don't re-queue the wrong copy.
+    const aAwait = a.status === "awaiting_approval" ? 1 : 0;
+    const bAwait = b.status === "awaiting_approval" ? 1 : 0;
+    if (aAwait !== bAwait) return bAwait - aAwait;
+    return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+  });
+
+  const keep = scored[0];
+  const dropIds = scored.slice(1).map((t) => t._id).filter(Boolean);
+  if (dropIds.length) {
+    await Task.updateMany(
+      { _id: { $in: dropIds }, deletedAt: null },
+      { $set: { deletedAt: new Date() } }
+    );
+  }
+  return keep;
+}
+
+/** Open sheet task for assignee if one already exists (dedupe before assign/create). */
+export async function findExistingOpenDailySheetTask(assigneeId, titleOrRegex) {
+  const regex =
+    titleOrRegex instanceof RegExp ? titleOrRegex : sheetTaskTitleRegexForTitle(titleOrRegex);
+  if (!regex) return null;
+  const open = await findOpenDailySheetTasksForAssignee(assigneeId, regex);
+  return collapseOpenDailySheetDuplicates(open);
 }
 
 async function resolveSheetApprover({ kind, assigneeUser }) {
@@ -101,11 +180,25 @@ function dueDateFromSheetDate(sheetDate) {
 async function createDailySheetTask({ kind, assigneeUser, approverId, sheetDate }) {
   const isSupervisor = kind === "supervisor";
   const title = isSupervisor ? "Fill Daily Supervisor Sheet" : "Fill Daily Coordinator Sheet";
+  const titleRegex = isSupervisor ? SUPERVISOR_SHEET_TASK_TITLE_REGEX : COORDINATOR_SHEET_TASK_TITLE_REGEX;
   const tag = isSupervisor ? TAG_DAILY_SUPERVISOR_SHEET : TAG_DAILY_COORDINATOR_SHEET;
   const functionTag = isSupervisor ? "daily_supervisor_sheet" : "daily_coordinator_sheet";
   const description = isSupervisor
     ? "Complete and submit the daily supervisor sheet."
     : "Complete and submit the daily coordinator sheet.";
+
+  const existing = await findExistingOpenDailySheetTask(assigneeUser._id, titleRegex);
+  if (existing) {
+    const day = dateKeyAsiaKolkata(existing.dueDate);
+    if (day !== sheetDate && existing.taskType === "daily" && existing.status !== "awaiting_approval") {
+      existing.dueDate = dueDateFromSheetDate(sheetDate);
+      if (!Array.isArray(existing.tags) || !existing.tags.includes(tag)) {
+        existing.tags = [...new Set([...(existing.tags || []), tag, "recurring"])];
+      }
+      await existing.save();
+    }
+    return existing;
+  }
 
   const task = await Task.create({
     title,
@@ -192,36 +285,36 @@ export async function submitDailySheetTaskForApproval({
     return { ok: false, reason: "no_approver_found" };
   }
 
-  const openStatuses = ["pending", "in_progress", "overdue", "awaiting_approval"];
-
-  const baseFilter = {
-    deletedAt: null,
-    assignees: assigneeOid,
-    title: titleRegex,
-    status: { $in: openStatuses },
-  };
-  if (centerId) baseFilter.centerId = new mongoose.Types.ObjectId(String(centerId));
-
-  let task = await Task.findOne({
-    ...baseFilter,
-    tags: tag,
-  }).sort({ dueDate: -1 });
-
-  if (!task) {
-    task = await Task.findOne({ ...baseFilter }).sort({ dueDate: -1 });
-  }
+  // Match by assignee + title only (no center filter) so a re-assigned / auto-created
+  // sheet task never sits side-by-side with the existing one and shows up twice.
+  const openList = await findOpenDailySheetTasksForAssignee(assigneeOid, titleRegex);
+  let task = await collapseOpenDailySheetDuplicates(openList, { preferDayKey: sheetDate });
 
   if (!task && !isCeo(actorRole)) {
-    task = await createDailySheetTask({
-      kind,
-      assigneeUser,
-      approverId: approver._id,
-      sheetDate,
-    });
+    // Final guard: race-safe re-check before insert.
+    const race = await findOpenDailySheetTasksForAssignee(assigneeOid, titleRegex);
+    task = await collapseOpenDailySheetDuplicates(race, { preferDayKey: sheetDate });
+    if (!task) {
+      task = await createDailySheetTask({
+        kind,
+        assigneeUser,
+        approverId: approver._id,
+        sheetDate,
+      });
+    }
   }
   if (!task) return { ok: false, reason: "no_matching_task" };
 
-  const taskDay = dateKeyAsiaKolkata(task.dueDate);
+  let taskDay = dateKeyAsiaKolkata(task.dueDate);
+  // Daily forever sheet: snap due date to the sheet day when still open (avoids a 2nd task).
+  if (taskDay !== sheetDate && task.taskType === "daily" && task.status !== "awaiting_approval") {
+    task.dueDate = dueDateFromSheetDate(sheetDate);
+    if (!Array.isArray(task.tags) || !task.tags.includes(tag)) {
+      task.tags = [...new Set([...(task.tags || []), tag, "recurring"])];
+    }
+    await task.save();
+    taskDay = sheetDate;
+  }
   if (taskDay !== sheetDate) {
     return { ok: false, reason: "due_date_mismatch", taskDay, sheetDate };
   }

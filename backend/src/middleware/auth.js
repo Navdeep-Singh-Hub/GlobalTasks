@@ -31,17 +31,29 @@ export function requireManagement(req, res, next) {
 
 export async function loadUser(req, _res, next) {
   if (!req.userId) return next();
-  req.user = await User.findById(req.userId);
-  if (req.user) {
-    req.user.lastAccessAt = new Date();
-    await req.user.save().catch(() => {});
+  // Lean projection + avoid writing lastAccess on every /me (was a write per page load).
+  const user = await User.findById(req.userId);
+  if (!user) {
+    req.user = null;
+    return next();
+  }
+  req.user = user;
+  const last = user.lastAccessAt ? new Date(user.lastAccessAt).getTime() : 0;
+  if (Date.now() - last > 5 * 60_000) {
+    user.lastAccessAt = new Date();
+    await user.save().catch(() => {});
   }
   next();
 }
 
 export async function requireCenterAssigned(req, res, next) {
   if (isCeo(req.userRole)) return next();
-  const user = await User.findById(req.userId).select("_id centerId").lean();
+  // Reuse if actor already loaded this request
+  let user = req._actor;
+  if (!user || String(user._id) !== String(req.userId)) {
+    user = await User.findById(req.userId).select("_id centerId email role").lean();
+    req._actor = user;
+  }
   if (!user?.centerId) {
     return res.status(403).json({ message: "Center assignment required for this account" });
   }

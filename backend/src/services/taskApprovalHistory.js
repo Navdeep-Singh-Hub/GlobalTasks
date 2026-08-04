@@ -558,7 +558,8 @@ export async function resolvePersonalWorkTaskView(taskInput, userId) {
   const plain =
     typeof taskInput.toObject === "function" ? taskInput.toObject() : { ...taskInput };
   const uid = String(userId);
-  const isAssignee = (plain.assignees || []).some((a) => String(a?._id || a) === uid);
+  const assigneeIds = (plain.assignees || []).map((a) => String(a?._id || a));
+  const isAssignee = assigneeIds.includes(uid);
   if (!isAssignee) {
     return { ...plain, personalWorkState: "viewer" };
   }
@@ -579,6 +580,7 @@ export async function resolvePersonalWorkTaskView(taskInput, userId) {
       approvalStatus: "pending",
       personalWorkState: "submitted",
       personalPendingKind: myPending.kind,
+      canSubmitForApproval: false,
     };
   }
 
@@ -588,10 +590,10 @@ export async function resolvePersonalWorkTaskView(taskInput, userId) {
     plain.notDoneApproval?.status === "pending";
 
   if (!blocked) {
-    return { ...plain, personalWorkState: "open" };
+    return { ...plain, personalWorkState: "open", canSubmitForApproval: true };
   }
 
-  const multi = (plain.assignees || []).length > 1;
+  const multi = assigneeIds.length > 1;
 
   // Solo task wrongly stuck awaiting / pending with no personal submission → reopen so submit works.
   if (!multi && typeof taskInput.save === "function") {
@@ -607,10 +609,19 @@ export async function resolvePersonalWorkTaskView(taskInput, userId) {
     }
     const refreshed =
       typeof taskInput.toObject === "function" ? taskInput.toObject() : { ...taskInput };
-    return { ...refreshed, personalWorkState: "open", unstuck: true };
+    return {
+      ...refreshed,
+      status: "pending",
+      approvalStatus: "none",
+      submissionRemarks: "",
+      notDoneApproval: undefined,
+      personalWorkState: "open",
+      canSubmitForApproval: true,
+      unstuck: true,
+    };
   }
 
-  // Multi-assignee: don't rewrite shared state for others; give this person an open personal view.
+  // Multi-assignee or could not save: still give this assignee an open personal view so UI shows Submit.
   return {
     ...plain,
     status: plain.status === "overdue" ? "overdue" : "pending",
@@ -618,6 +629,7 @@ export async function resolvePersonalWorkTaskView(taskInput, userId) {
     submissionRemarks: "",
     notDoneApproval: undefined,
     personalWorkState: "open",
+    canSubmitForApproval: true,
     sharedTaskAwaitingOthers: multi,
   };
 }
@@ -745,6 +757,57 @@ export function isWronglyAutoMissedSubmissionRemarks(text) {
     t.startsWith("Submitted for approval but the day ended") ||
     t.startsWith("Submitted for approval but the due time passed")
   );
+}
+
+/**
+ * Explicit Not-done reasons assignees type (vs work notes on a completion submit).
+ * Used when sticky notDoneApproval / wrong kind mislabeled real work as not_done.
+ */
+export function looksLikeExplicitNotDoneReason(text) {
+  const t = String(text || "").trim().toLowerCase();
+  if (!t) return false;
+  return /\b(not\s*done|couldn'?t\b|could not|cannot|can not|unable to|no staff|on leave|absent|didn'?t (do|finish|complete)|did not (do|finish|complete)|holiday|week\s*off|sick leave|out of office|ooo)\b/i.test(
+    t
+  );
+}
+
+/**
+ * Response-time fix: kind=not_done with real work remarks (and no not-done wording)
+ * → show as completion submit / approved. Does not require TaskEvent lookups.
+ */
+export function reclassifyMislabeledNotDoneForDisplay(records) {
+  if (!Array.isArray(records) || !records.length) return records || [];
+  return records.map((r) => {
+    if (r.kind !== "not_done") return r;
+    const remarks = String(r.submissionRemarks || "").trim();
+    if (!remarks) return r;
+    if (isAutoMissedRemarks(remarks) && !isWronglyAutoMissedSubmissionRemarks(remarks)) return r;
+    if (looksLikeExplicitNotDoneReason(remarks) && !isWronglyAutoMissedSubmissionRemarks(remarks)) {
+      return r;
+    }
+
+    // Expired submit that still stored as not_done
+    if (isWronglyAutoMissedSubmissionRemarks(remarks) || r.status === "missed") {
+      if (r.status === "missed") {
+        return { ...r, kind: "completion" };
+      }
+    }
+
+    if (r.status === "not_done_acknowledged") {
+      return {
+        ...r,
+        status: "approved",
+        kind: "completion",
+      };
+    }
+    if (r.status === "pending") {
+      return { ...r, kind: "completion" };
+    }
+    if (r.status === "missed") {
+      return { ...r, kind: "completion" };
+    }
+    return r;
+  });
 }
 
 async function occurrenceHasTerminalOutcome(taskId, occurrenceDueDate, excludeId = null) {
@@ -930,11 +993,21 @@ export async function finalizePendingAsAutoMissed(pendingDoc, task, { now = new 
 
   const pending = await TaskApprovalRecord.findById(pendingDoc._id);
   if (!pending) return "skipped";
+  const originalRemarks = String(pending.submissionRemarks || "").trim();
+  const wasCompletionSubmit = pending.kind === "completion" || Boolean(originalRemarks && !isAutoMissedRemarks(originalRemarks));
   pending.status = "missed";
-  pending.kind = "not_done";
+  // Keep completion kind when this was a real submit so performance does not look like "Not done".
+  if (wasCompletionSubmit && pending.kind === "completion") {
+    pending.kind = "completion";
+    pending.submissionRemarks = isOccurrencePastDue(effectiveDue, now)
+      ? `Submitted for approval but the due time passed before assigner action.${originalRemarks ? ` Original remarks: ${originalRemarks}` : ""}`
+      : `Submitted for approval but the day ended before assigner action.${originalRemarks ? ` Original remarks: ${originalRemarks}` : ""}`;
+  } else {
+    pending.kind = "not_done";
+    pending.submissionRemarks = autoMissedRemarksForOccurrence(effectiveDue, now);
+  }
   pending.occurrenceDueDate = occurrenceDueOnDay(effectiveDue, occKey);
   pending.submittedAt = isOccurrencePastDue(effectiveDue, now) ? now : new Date(`${occKey}T23:59:59+05:30`);
-  pending.submissionRemarks = autoMissedRemarksForOccurrence(effectiveDue, now);
   await pending.save();
   return "missed";
 }
@@ -1040,20 +1113,15 @@ export async function enrichApprovalInboxTasks(tasks) {
 
 /** Tasks in scope that have a live submission waiting for review. */
 export async function approvalInboxTaskMatchClause({ userId, role, centerId, isCeoRole }) {
-  const visibilityTaskFilter = { deletedAt: null, status: { $nin: ["cancelled"] } };
-  if (!isCeoRole && centerId) visibilityTaskFilter.centerId = centerId;
-  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole });
-  if (visibility) Object.assign(visibilityTaskFilter, visibility);
+  // Approval-record-first (index on assignedBy+status) — avoid loading every assigner task id.
+  const pendingFilter = {
+    status: "pending",
+    kind: { $in: ["completion", "not_done"] },
+  };
+  if (!isCeoRole) pendingFilter.assignedBy = userId;
+  if (!isCeoRole && centerId) pendingFilter.centerId = centerId;
 
-  const visibleTaskIds = await Task.distinct("_id", visibilityTaskFilter);
-  const pendingTaskIds =
-    visibleTaskIds.length > 0
-      ? await TaskApprovalRecord.distinct("taskId", {
-          status: "pending",
-          kind: { $in: ["completion", "not_done"] },
-          taskId: { $in: visibleTaskIds },
-        })
-      : [];
+  const pendingTaskIds = await TaskApprovalRecord.distinct("taskId", pendingFilter);
 
   const or = [
     { status: "awaiting_approval", approvalStatus: "pending" },
@@ -1065,32 +1133,31 @@ export async function approvalInboxTaskMatchClause({ userId, role, centerId, isC
 
 /** Align task.status with pending approval records so For Approval matches history. */
 export async function repairApprovalInboxPendingTaskState({ userId, role, centerId, isCeoRole }) {
-  const visibilityTaskFilter = { deletedAt: null, status: { $nin: ["cancelled"] } };
-  if (!isCeoRole && centerId) visibilityTaskFilter.centerId = centerId;
-  const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole });
-  if (visibility) Object.assign(visibilityTaskFilter, visibility);
-
-  const visibleTaskIds = await Task.distinct("_id", visibilityTaskFilter);
-  if (!visibleTaskIds.length) return { repaired: 0 };
-
-  const pendingTaskIds = await TaskApprovalRecord.distinct("taskId", {
+  const pendingFilter = {
     status: "pending",
     kind: "completion",
-    taskId: { $in: visibleTaskIds },
-  });
+  };
+  if (!isCeoRole) pendingFilter.assignedBy = userId;
+  if (!isCeoRole && centerId) pendingFilter.centerId = centerId;
+
+  const pendingTaskIds = await TaskApprovalRecord.distinct("taskId", pendingFilter);
   if (!pendingTaskIds.length) return { repaired: 0 };
 
-  let repaired = 0;
-  const tasks = await Task.find({ _id: { $in: pendingTaskIds } });
-  for (const task of tasks) {
-    if (task.status === "awaiting_approval" && task.approvalStatus === "pending") continue;
-    task.status = "awaiting_approval";
-    task.approvalStatus = "pending";
-    task.requiresApproval = true;
-    await task.save();
-    repaired += 1;
-  }
-  return { repaired };
+  const result = await Task.updateMany(
+    {
+      _id: { $in: pendingTaskIds },
+      deletedAt: null,
+      $or: [{ status: { $ne: "awaiting_approval" } }, { approvalStatus: { $ne: "pending" } }],
+    },
+    {
+      $set: {
+        status: "awaiting_approval",
+        approvalStatus: "pending",
+        requiresApproval: true,
+      },
+    }
+  );
+  return { repaired: result.modifiedCount || 0 };
 }
 
 function enrichApprovalInboxRow(base, pending, { todayKey }) {
@@ -1136,20 +1203,61 @@ export async function filterAndEnrichApprovalInboxTasks(taskDocs) {
   for (const raw of taskDocs) {
     const base = raw.toObject ? raw.toObject() : { ...raw };
     const tid = String(base._id);
+    const allPending = pendingByTask.get(tid) || [];
 
-    if (base.notDoneApproval?.status === "pending") {
-      base.submissionRemarks = base.notDoneApproval?.remarks || "";
+    // Sticky not-done only when there is no opposing completion pending.
+    const hasCompletionPending = allPending.some((r) => r.kind === "completion");
+    if (base.notDoneApproval?.status === "pending" && !hasCompletionPending) {
+      const rem = String(base.notDoneApproval?.remarks || "").trim();
+      // Mislabeled "Not done" button with work notes → show as completion approve row.
+      if (rem && !looksLikeExplicitNotDoneReason(rem)) {
+        const fakePending = {
+          _id: `nd-${tid}`,
+          kind: "completion",
+          submissionRemarks: rem,
+          occurrenceDueDate: base.notDoneApproval?.dueDate || base.dueDate,
+          submittedAt: base.notDoneApproval?.submittedAt || base.updatedAt,
+          submissionSource: "assignee",
+        };
+        const row = enrichApprovalInboxRow(base, fakePending, { todayKey });
+        if (row) {
+          row.pendingIsMislabeledNotDone = true;
+          row.notDoneApproval = undefined;
+          kept.push(row);
+        }
+        continue;
+      }
+      base.submissionRemarks = rem;
       base.pendingOccurrenceDueDate = base.notDoneApproval?.dueDate || base.dueDate;
       base.inboxRowKey = `${tid}-notdone`;
+      base.pendingKind = "not_done";
       kept.push(base);
       continue;
     }
 
-    const records = (pendingByTask.get(tid) || []).filter((r) => r.kind === "completion");
-    if (records.length) {
-      for (const pending of records) {
-        const row = enrichApprovalInboxRow(base, pending, { todayKey });
-        if (row) kept.push(row);
+    // Include completion + not_done pendings (reclassify work-note "not_done" for UI as completion).
+    if (allPending.length) {
+      for (const pending of allPending) {
+        const asCompletion =
+          pending.kind === "completion" ||
+          (pending.kind === "not_done" &&
+            String(pending.submissionRemarks || "").trim() &&
+            !looksLikeExplicitNotDoneReason(pending.submissionRemarks));
+        const row = enrichApprovalInboxRow(
+          base,
+          asCompletion && pending.kind === "not_done"
+            ? { ...pending, kind: "completion", _forceKind: "completion" }
+            : pending,
+          { todayKey }
+        );
+        if (row) {
+          if (pending.kind === "not_done" && asCompletion) {
+            row.pendingIsMislabeledNotDone = true;
+            row.pendingRecordId = String(pending._id);
+          }
+          row.pendingKind = asCompletion ? "completion" : pending.kind;
+          kept.push(row);
+        }
       }
       continue;
     }
@@ -1164,13 +1272,23 @@ export async function filterAndEnrichApprovalInboxTasks(taskDocs) {
 }
 
 export async function resolveOccurrenceDueForApproval(task) {
-  const pending = await TaskApprovalRecord.findOne({
+  // Prefer real completion, then any pending (covers mislabeled not_done submits).
+  let pending = await TaskApprovalRecord.findOne({
     taskId: task._id,
     status: "pending",
     kind: "completion",
   })
     .sort({ submittedAt: -1 })
     .lean();
+  if (!pending) {
+    pending = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: { $in: ["completion", "not_done"] },
+    })
+      .sort({ submittedAt: -1 })
+      .lean();
+  }
   return effectivePendingOccurrenceDue(pending, task) || task.dueDate;
 }
 
@@ -1373,11 +1491,11 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
     }
   }
   const { start, end } = dueDateDayBounds(occurrenceDue);
+  // Replace any pending not-done or prior completion rows for this occurrence so submit wins.
   await TaskApprovalRecord.deleteMany({
     taskId: task._id,
     assigneeId,
     status: "pending",
-    kind: "completion",
     occurrenceDueDate: { $gte: start, $lt: end },
   });
   return TaskApprovalRecord.create({
@@ -1390,7 +1508,7 @@ export async function recordTaskSubmission({ task, assigneeId, remarks, kind = "
     occurrenceDueDate: occurrenceDue,
     submittedAt,
     submissionRemarks: String(remarks || "").trim(),
-    kind,
+    kind: kind === "not_done" ? "not_done" : "completion",
     status: "pending",
     submissionSource: source,
   });
@@ -1422,23 +1540,39 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
 
   async function findPendingForDue(targetDue) {
     const { start, end } = dueDateDayBounds(targetDue);
+    const preferredKind = status === "not_done_acknowledged" ? "not_done" : "completion";
     const base = {
       taskId: task._id,
       status: "pending",
       occurrenceDueDate: { $gte: start, $lt: end },
     };
     if (scopedAssignee) base.assigneeId = scopedAssignee;
-    let pending = await TaskApprovalRecord.findOne(base).sort({ submittedAt: -1 });
+
+    let pending = await TaskApprovalRecord.findOne({ ...base, kind: preferredKind }).sort({ submittedAt: -1 });
+    if (pending) return pending;
+
+    pending = await TaskApprovalRecord.findOne(base).sort({ submittedAt: -1 });
+    if (pending) return pending;
+
+    // Any remaining pending for this task (day mismatch / rolled daily due).
+    const anyOpen = {
+      taskId: task._id,
+      status: "pending",
+      kind: { $in: ["completion", "not_done"] },
+    };
+    if (scopedAssignee) anyOpen.assigneeId = scopedAssignee;
+    pending = await TaskApprovalRecord.findOne(anyOpen).sort({ submittedAt: -1 });
     if (pending) return pending;
 
     if (isRecurring(task.taskType)) {
       const fallback = {
         taskId: task._id,
         status: "pending",
-        kind: { $in: ["completion", "not_done"] },
+        kind: preferredKind,
       };
       if (scopedAssignee) fallback.assigneeId = scopedAssignee;
-      return await TaskApprovalRecord.findOne(fallback).sort({ submittedAt: -1 });
+      pending = await TaskApprovalRecord.findOne(fallback).sort({ submittedAt: -1 });
+      if (pending) return pending;
     }
     return null;
   }
@@ -1475,6 +1609,34 @@ export async function finalizeApprovalRecord({ task, occurrenceDueDate, approver
   }
 
   const setFields = { ...update };
+  // Never finalize a real completion submit as "not done acknowledged" (sticky flag bug).
+  if (status === "not_done_acknowledged" && pending.kind === "completion") {
+    setFields.status = "approved";
+    setFields.kind = "completion";
+    setFields.approvedAt = update.approvedAt || new Date();
+    setFields.approvedBy = approverId;
+  } else if (status === "not_done_acknowledged" && looksLikeExplicitNotDoneReason(pending.submissionRemarks)) {
+    setFields.kind = "not_done";
+  } else if (status === "not_done_acknowledged" && String(pending.submissionRemarks || "").trim() && !looksLikeExplicitNotDoneReason(pending.submissionRemarks)) {
+    // Work notes filed under not_done → treat approve as completion.
+    setFields.status = "approved";
+    setFields.kind = "completion";
+    setFields.approvedAt = update.approvedAt || new Date();
+    setFields.approvedBy = approverId;
+  } else if (status === "approved" && pending.kind === "not_done") {
+    // Approve always means completion unless remarks clearly say not-done.
+    if (looksLikeExplicitNotDoneReason(pending.submissionRemarks)) {
+      setFields.status = "not_done_acknowledged";
+      setFields.kind = "not_done";
+      setFields.approvedAt = update.approvedAt || new Date();
+      setFields.approvedBy = approverId;
+    } else {
+      setFields.kind = "completion";
+    }
+  } else if (status === "not_done_acknowledged") {
+    setFields.kind = "not_done";
+  }
+
   const subKey = calendarDayKeyInTz(pending.submittedAt);
   const occKey = calendarDayKeyInTz(pending.occurrenceDueDate);
   if (subKey && occKey && occKey > subKey && isRecurring(task.taskType)) {
@@ -1630,20 +1792,31 @@ function occurrenceRecordKey(r) {
 }
 
 function approvalRecordPriority(r) {
-  if (r.status === "pending") return 4;
-  if (r.status === "approved" || r.status === "not_done_acknowledged") return 3;
-  if (r.status === "rejected") return 2;
-  if (r.status === "missed") return 1;
+  // Real completion outcomes always beat not-done / auto-miss noise for the same day.
+  if (r.status === "pending" && r.kind !== "not_done") return 7;
+  if (r.status === "approved") return 6;
+  if (r.status === "rejected") return 5;
+  if (r.status === "pending" && r.kind === "not_done") return 4;
+  if (r.status === "not_done_acknowledged") return 3;
+  if (r.status === "missed") {
+    // Missed-after-submit (wrongly auto) should surface over blank auto gaps when choosing among missed only.
+    if (isWronglyAutoMissedSubmissionRemarks(r.submissionRemarks)) return 2;
+    if (r.kind === "completion") return 2;
+    return 1;
+  }
   return 0;
 }
 
-/** Prefer assignee not-done / approval rows over auto-missed for the same task + assignee + day. */
+/** Prefer completion submits / approvals over not-done & auto-miss for the same task + assignee + day. */
 function pickPreferredApprovalRecord(prev, r) {
   const pp = approvalRecordPriority(prev);
   const rp = approvalRecordPriority(r);
   if (rp !== pp) return rp > pp ? r : prev;
-  if (prev.kind === "not_done" && r.status === "missed") return prev;
-  if (r.kind === "not_done" && prev.status === "missed") return r;
+  // Tie-break: completion kind over not_done
+  if (prev.kind !== r.kind) {
+    if (prev.kind === "completion") return prev;
+    if (r.kind === "completion") return r;
+  }
   if (prev.live && !r.live) return r;
   if (!prev.live && r.live) return prev;
   return new Date(r.submittedAt) > new Date(prev.submittedAt) ? r : prev;
@@ -1790,6 +1963,15 @@ export async function fillMissingDailyOccurrenceHistory({
   const fromKey = from ? calendarDayKeyInTz(new Date(String(from))) : null;
   const toKey = to ? calendarDayKeyInTz(new Date(String(to))) : todayKey;
   const rangeEndKey = toKey < todayKey ? toKey : todayKey;
+  // Without an explicit date filter, only synthesise recent gaps (keeps Performance fast).
+  // Stored DB rows still show full history; open a date range for older gap-fill.
+  const DEFAULT_GAP_FILL_DAYS = 62;
+  let defaultFromKey = null;
+  if (!fromKey) {
+    const d = new Date();
+    d.setDate(d.getDate() - DEFAULT_GAP_FILL_DAYS);
+    defaultFromKey = calendarDayKeyInTz(d);
+  }
 
   const recordKeys = new Set(records.map((r) => occurrenceRecordKey({ ...r, assigneeId })));
   const pendingKeys = new Set(
@@ -1802,6 +1984,8 @@ export async function fillMissingDailyOccurrenceHistory({
   for (const task of tasks) {
     const createdKey = calendarDayKeyInTz(task.createdAt);
     let dayKey = createdKey;
+    if (defaultFromKey && dayKey < defaultFromKey) dayKey = defaultFromKey;
+    if (fromKey && dayKey < fromKey) dayKey = fromKey;
     while (dayKey <= rangeEndKey && !isDailyOccurrenceScheduled(task, dayKey)) {
       dayKey = nextCalendarDayKey(dayKey);
     }
@@ -2036,10 +2220,129 @@ export async function repairNotDoneMissedConflicts({ assigneeId }) {
   return { removed };
 }
 
+/**
+ * Fix rows wrongly shown as Not done when the assignee actually submitted for completion
+ * (sticky notDoneApproval + Approve path, or auto-miss that wiped completion context).
+ */
+export async function repairMislabeledNotDoneFromCompletion({ assigneeId }) {
+  const aid = String(assigneeId || "");
+  if (!aid) return { fixed: 0 };
+
+  const candidates = await TaskApprovalRecord.find({
+    assigneeId: aid,
+    status: { $in: ["not_done_acknowledged", "missed", "pending"] },
+    kind: "not_done",
+  })
+    .sort({ submittedAt: -1 })
+    .limit(800);
+
+  let fixed = 0;
+  for (const rec of candidates) {
+    const remarks = String(rec.submissionRemarks || "").trim();
+    if (!remarks) continue;
+
+    const originalMatch = remarks.match(/Original remarks:\s*([\s\S]+)$/i);
+    const workRemarks = originalMatch ? originalMatch[1].trim() : remarks;
+
+    if (isAutoMissedRemarks(workRemarks) && !isWronglyAutoMissedSubmissionRemarks(remarks)) {
+      continue;
+    }
+
+    const day = dueDateDayBounds(rec.occurrenceDueDate);
+    const windowStart = new Date(day.start.getTime() - 18 * 3600 * 1000);
+    const windowEnd = new Date(day.end.getTime() + 36 * 3600 * 1000);
+
+    // eslint-disable-next-line no-await-in-loop
+    const notDoneEv = await TaskEvent.findOne({
+      taskId: rec.taskId,
+      eventType: "not_done",
+      createdAt: { $gte: windowStart, $lt: windowEnd },
+    })
+      .select("_id")
+      .lean();
+
+    // Explicit Not done button with real not-done wording → leave as not-done.
+    // Work notes even with a not_done event were usually sticky / wrong button → still reclassify.
+    if (notDoneEv && looksLikeExplicitNotDoneReason(workRemarks)) {
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const submitEv = await TaskEvent.findOne({
+      taskId: rec.taskId,
+      eventType: "updated",
+      "meta.status": "awaiting_approval",
+      createdAt: { $gte: windowStart, $lt: windowEnd },
+    })
+      .select("_id")
+      .lean();
+
+    // eslint-disable-next-line no-await-in-loop
+    const approvedEv = await TaskEvent.findOne({
+      taskId: rec.taskId,
+      eventType: { $in: ["approved", "not_done_acknowledged"] },
+      createdAt: { $gte: windowStart, $lt: windowEnd },
+    })
+      .select("eventType createdAt")
+      .lean();
+
+    // Prefer event evidence; otherwise: non not-done wording = mislabeled completion.
+    const looksLikeCompletionSubmit =
+      Boolean(submitEv) ||
+      isWronglyAutoMissedSubmissionRemarks(remarks) ||
+      !looksLikeExplicitNotDoneReason(workRemarks);
+
+    if (!looksLikeCompletionSubmit) continue;
+
+    if (rec.status === "not_done_acknowledged") {
+      rec.status = "approved";
+      rec.kind = "completion";
+      if (workRemarks && !isAutoMissedRemarks(workRemarks) && !isWronglyAutoMissedSubmissionRemarks(workRemarks)) {
+        rec.submissionRemarks = workRemarks;
+      }
+      if (!rec.approvedAt) {
+        rec.approvedAt = approvedEv?.createdAt || rec.updatedAt || rec.submittedAt || new Date();
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await rec.save();
+      fixed += 1;
+      continue;
+    }
+
+    if (rec.status === "missed" || rec.status === "pending") {
+      rec.status =
+        (submitEv && approvedEv?.eventType === "approved") || approvedEv?.eventType === "approved"
+          ? "approved"
+          : rec.status === "missed"
+            ? "missed"
+            : "pending";
+      // If already acknowledged path used not_done_acknowledged event without approve
+      if (approvedEv?.eventType === "not_done_acknowledged" && rec.status === "pending") {
+        rec.status = "approved";
+      }
+      rec.kind = "completion";
+      if (workRemarks && !isAutoMissedRemarks(workRemarks)) {
+        rec.submissionRemarks = workRemarks;
+      } else if (isWronglyAutoMissedSubmissionRemarks(remarks) && originalMatch) {
+        rec.submissionRemarks = workRemarks;
+      }
+      if (rec.status === "approved" && !rec.approvedAt) {
+        rec.approvedAt = approvedEv?.createdAt || rec.updatedAt || rec.submittedAt || new Date();
+      }
+      // eslint-disable-next-line no-await-in-loop
+      await rec.save();
+      fixed += 1;
+    }
+  }
+
+  return { fixed };
+}
+
 /** Run all history repairs for one assignee (org-wide on refresh). */
 export async function repairAssigneeHistoryRecords({ assigneeId }) {
   // First restore / split shared multi-assignee damage so inbox + performance exist per person.
   const shared = await repairSharedMultiAssigneeForAssignee(assigneeId);
+  const mislabeled = await repairMislabeledNotDoneFromCompletion({ assigneeId });
   const restoredSubmissions = await repairWronglyAutoMissedSubmissions({ assigneeId });
   const misdatedApproved = await repairMisdatedApprovedRecords({ assigneeId });
   const phantoms = await repairPhantomApprovedRecords({ assigneeId });
@@ -2047,6 +2350,7 @@ export async function repairAssigneeHistoryRecords({ assigneeId }) {
   const notDoneConflicts = await repairNotDoneMissedConflicts({ assigneeId });
   return {
     shared,
+    mislabeled,
     misdatedApproved,
     phantoms,
     missed,
@@ -2150,17 +2454,21 @@ export async function fetchLivePendingApprovals({ userId, assigneeId, centerId, 
     // Task-level awaiting_approval on a shared multi-assignee task often belongs to someone else.
     // Only surface live rows when THIS assignee has a pending history record (or solo-assignee not-done).
     const soloAssignee = (t.assignees || []).length <= 1;
-    const isNotDone = t.notDoneApproval?.status === "pending" && soloAssignee;
-    if (!isNotDone && !storedPending) continue;
+    const stickyNotDone = t.notDoneApproval?.status === "pending" && soloAssignee;
+    if (!stickyNotDone && !storedPending) continue;
 
-    const isNotDoneRow = isNotDone || storedPending?.kind === "not_done";
-    let submittedAt = isNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
-    let occurrenceDueDate = isNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
-    let remarks = isNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;
+    // History record always wins over sticky notDoneApproval on the task.
+    // (Sticky flag + real completion submit used to force kind=not_done while remarks stayed work notes.)
+    let isNotDoneRow =
+      storedPending != null ? storedPending.kind === "not_done" : stickyNotDone;
+    let submittedAt = stickyNotDone ? t.notDoneApproval?.submittedAt || t.updatedAt : t.updatedAt;
+    let occurrenceDueDate = stickyNotDone ? t.notDoneApproval?.dueDate || t.dueDate : t.dueDate;
+    let remarks = stickyNotDone ? t.notDoneApproval?.remarks : t.submissionRemarks;
     if (storedPending) {
       submittedAt = storedPending.submittedAt;
       occurrenceDueDate = storedPending.occurrenceDueDate;
       remarks = storedPending.submissionRemarks;
+      isNotDoneRow = storedPending.kind === "not_done";
     }
 
     if (from || to) {

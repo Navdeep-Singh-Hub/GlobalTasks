@@ -285,7 +285,7 @@ export function TasksView({
         qs.set("assignee", assigneeFilter);
       }
     }
-    qs.set("limit", isCeoMasterView ? "200" : masterAdminActions ? "100" : preset.approval ? "100" : "50");
+    qs.set("limit", isCeoMasterView ? "80" : masterAdminActions ? "60" : preset.approval ? "50" : "40");
     api<{ tasks: Task[]; total: number }>(`/tasks?${qs.toString()}`)
       .then((d) => {
         setTasks(d.tasks);
@@ -299,16 +299,19 @@ export function TasksView({
     load();
   }, [load]);
 
-  const idList = useMemo(() => tasks.map((t) => t._id), [tasks]);
   const orderedTasks = useMemo(() => {
     const todayKey = calendarDayKeyInTz(new Date().toISOString());
+    // Sheets are filled via the dedicated form on Pending Recurring — never list them again here.
+    const withoutDailySheet = (preset.assigneeInbox && preset.recurring
+      ? tasks.filter((t) => !/fill\s+daily\s+(supervisor|coordinator)\s+sheet/i.test(String(t.title || "")))
+      : tasks);
     const list = preset.workableToday
-      ? tasks.filter((t) =>
+      ? withoutDailySheet.filter((t) =>
           t.taskType === "daily"
             ? calendarDayKeyInTz(t.dueDate) === todayKey
             : calendarDayKeyInTz(t.dueDate) <= todayKey
         )
-      : tasks;
+      : withoutDailySheet;
     const myId = user?._id;
     let sorted = list;
     if (preset.recurring && preset.assigneeInbox && !preset.workableToday) {
@@ -325,6 +328,8 @@ export function TasksView({
     }
     return sorted;
   }, [tasks, user?._id, user?.role, preset.workableToday, preset.recurring, preset.assigneeInbox]);
+
+  const idList = useMemo(() => orderedTasks.map((t) => t._id), [orderedTasks]);
 
   const toggleAll = (on: boolean) => setSelected(on ? idList : []);
   const toggle = (id: string, on: boolean) =>
@@ -348,14 +353,22 @@ export function TasksView({
   const rowNeedsApproval = (t: Task) =>
     t.status === "awaiting_approval" || t.approvalStatus === "pending" || t.notDoneApproval?.status === "pending";
 
-  const approveTask = async (id: string, occurrenceDueDate?: string | null) => {
-    await api(`/tasks/${id}/approve`, {
-      method: "POST",
-      body: JSON.stringify(occurrenceDueDate ? { occurrenceDueDate } : {}),
-    });
-    flashCompleted([id]);
-    celebrate("approve");
-    load();
+  const approveTask = async (id: string, occurrenceDueDate?: string | null, assigneeId?: string | null) => {
+    try {
+      await api(`/tasks/${id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({
+          ...(occurrenceDueDate ? { occurrenceDueDate } : {}),
+          ...(assigneeId ? { assigneeId } : {}),
+        }),
+      });
+      flashCompleted([id]);
+      celebrate("approve");
+      load();
+    } catch (e) {
+      const msg = e instanceof ApiError ? e.message : "Could not approve this task.";
+      window.alert(msg);
+    }
   };
 
   const canSendBackForApproval = (t: Task) =>
@@ -744,7 +757,13 @@ export function TasksView({
                             <>
                               <button
                                 type="button"
-                                onClick={() => void approveTask(t._id, t.pendingOccurrenceDueDate || t.dueDate)}
+                                onClick={() =>
+                                  void approveTask(
+                                    t._id,
+                                    t.pendingOccurrenceDueDate || t.dueDate,
+                                    t.assignees?.[0]?._id || (t.assignees?.[0] as unknown as string)
+                                  )
+                                }
                                 title="Approve & complete"
                                 className="flex h-9 w-9 items-center justify-center rounded-full text-zinc-400 hover:bg-emerald-50 hover:text-emerald-600 sm:h-7 sm:w-7 dark:hover:bg-emerald-950/40 dark:hover:text-emerald-400"
                               >
@@ -916,7 +935,11 @@ export function TasksView({
                         className="h-8 text-xs"
                         onClick={(e) => {
                           e.stopPropagation();
-                          void approveTask(t._id, t.pendingOccurrenceDueDate || t.dueDate);
+                          void approveTask(
+                            t._id,
+                            t.pendingOccurrenceDueDate || t.dueDate,
+                            t.assignees?.[0]?._id || (t.assignees?.[0] as unknown as string)
+                          );
                         }}
                       >
                         Approve

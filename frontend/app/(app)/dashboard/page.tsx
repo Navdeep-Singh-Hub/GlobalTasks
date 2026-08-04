@@ -13,15 +13,24 @@ type OperationsReport = SupervisorReport;
 import { CioDashboard, CoordinatorDashboard, CentreHeadDashboard, ExecutorDashboard, SupervisorDashboard } from "@/components/dashboard/role-sections";
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [scope, setScope] = useState<"month" | "all">("month");
   const [monthValue, setMonthValue] = useState(() => {
     const d = new Date();
     const mm = String(d.getMonth() + 1).padStart(2, "0");
     return `${d.getFullYear()}-${mm}`;
   });
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Init month date range immediately so first effect runs once with correct bounds (no double fetch).
+  const [from, setFrom] = useState(() => {
+    const d = new Date();
+    const first = new Date(d.getFullYear(), d.getMonth(), 1);
+    return `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, "0")}-01`;
+  });
+  const [to, setTo] = useState(() => {
+    const d = new Date();
+    const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    return `${last.getFullYear()}-${String(last.getMonth() + 1).padStart(2, "0")}-${String(last.getDate()).padStart(2, "0")}`;
+  });
   const [summary, setSummary] = useState<Summary | null>(null);
   const [team, setTeam] = useState<TeamMember[]>([]);
   const [activity, setActivity] = useState<ActivityItem[]>([]);
@@ -35,15 +44,25 @@ export default function DashboardPage() {
   const [myPendingRecurring, setMyPendingRecurring] = useState(0);
 
   useEffect(() => {
+    if (authLoading || !user) return;
     const qs = new URLSearchParams();
     qs.set("scope", scope);
-    if (from) qs.set("from", from);
-    if (to) qs.set("to", to);
+    if (scope === "month") {
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+    }
     const query = qs.toString();
-    api<Summary>(`/dashboard/summary?${query}`).then(setSummary).catch(() => {});
-    api<{ members: TeamMember[] }>(`/dashboard/team-performance?${query}`).then((d) => setTeam(d.members)).catch(() => setTeam([]));
-    api<{ items: ActivityItem[] }>(`/dashboard/activity?limit=10&${query}`).then((d) => setActivity(d.items)).catch(() => setActivity([]));
-    if (!user) return;
+
+    void Promise.all([
+      api<Summary>(`/dashboard/summary?${query}`).then(setSummary).catch(() => {}),
+      api<{ members: TeamMember[] }>(`/dashboard/team-performance?${query}`)
+        .then((d) => setTeam(d.members))
+        .catch(() => setTeam([])),
+      api<{ items: ActivityItem[] }>(`/dashboard/activity?limit=10&${query}`)
+        .then((d) => setActivity(d.items))
+        .catch(() => setActivity([])),
+    ]);
+
     if (isAssigneeOnly(user.role)) api<IndividualReport>(`/reports/individual?${query}`).then(setIndividual).catch(() => setIndividual(null));
     if (user.role === "supervisor") api<SupervisorReport>(`/reports/supervisor?${query}`).then(setSupervisor).catch(() => setSupervisor(null));
     if (user.role === "operations") api<OperationsReport>(`/reports/operations?${query}`).then(setOperations).catch(() => setOperations(null));
@@ -72,7 +91,7 @@ export default function DashboardPage() {
         setMyPendingSingle(0);
         setMyPendingRecurring(0);
       });
-  }, [scope, from, to, user]);
+  }, [scope, from, to, user, authLoading]);
 
   useEffect(() => {
     if (scope !== "month" || !monthValue) return;

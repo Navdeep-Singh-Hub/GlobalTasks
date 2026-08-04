@@ -88,9 +88,12 @@ export async function runEscalationSweep() {
 
 export function startEscalationScheduler() {
   const intervalMs = Math.max(HOUR_MS, Number(process.env.ESCALATION_SWEEP_INTERVAL_MS) || HOUR_MS);
-  void runEscalationSweep().catch((e) => console.error("[escalation] Startup sweep failed:", e));
+  // Delay startup sweep so user requests don't compete with cold-boot work.
+  setTimeout(() => {
+    void runEscalationSweep().catch((e) => console.error("[escalation] Startup sweep failed:", e));
+  }, 60_000);
   setInterval(() => {
     runEscalationSweep().catch((e) => console.error("[escalation] Scheduled sweep failed:", e));
   }, intervalMs);
-  console.log(`[escalation] Sweep scheduler started (every ${Math.round(intervalMs / HOUR_MS)}h)`);
+  console.log(`[escalation] Sweep scheduler started (every ${Math.round(intervalMs / HOUR_MS)}h, first run in 60s)`);
 }

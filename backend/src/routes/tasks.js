@@ -45,15 +45,23 @@ import {
   resolvePersonalWorkTaskView,
   repairAllSharedMultiAssigneeTasks,
   repairSharedMultiAssigneeForAssignee,
+  looksLikeExplicitNotDoneReason,
 } from "../services/taskApprovalHistory.js";
 import { isWeekOffToday } from "../utils/weekoff.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
 import { formatAppDate } from "../utils/dateFormat.js";
 import { queueTaskAssignedWhatsApp } from "../services/whatsappTaskAssignment.js";
 import {
+  isDailySheetTaskTitle,
+  findExistingOpenDailySheetTask,
+  SUPERVISOR_SHEET_TASK_TITLE_REGEX,
+  COORDINATOR_SHEET_TASK_TITLE_REGEX,
+  TAG_DAILY_SUPERVISOR_SHEET,
+  TAG_DAILY_COORDINATOR_SHEET,
+} from "../services/sheetTaskApproval.js";
+import {
   invalidateAssigneeSync,
   scheduleBackground,
-  shouldRunThrottled,
   throttleKey,
   REPAIR_TTL_MS,
 } from "../services/syncThrottle.js";
@@ -603,11 +611,13 @@ router.get("/", async (req, res) => {
   const needsRecurringSync =
     req.query.recurring === "true" && (req.query.workableToday === "true" || req.query.assigneeInbox === "true");
 
+  // Never block task list on recurring catch-up — background keeps UI responsive.
   if (needsRecurringSync) {
-    const syncKey = throttleKey("recurring-sync", req.userId);
-    if (forceSync || shouldRunThrottled(syncKey)) {
-      await syncRecurringTasksForAssignee(req.userId);
-    }
+    scheduleBackground(
+      throttleKey("recurring-sync", req.userId),
+      () => syncRecurringTasksForAssignee(req.userId),
+      forceSync ? 0 : undefined
+    );
   }
 
   if (req.query.assigneeInbox === "true") {
@@ -621,12 +631,18 @@ router.get("/", async (req, res) => {
   const filter = buildFilter(req.query, req.userId, req.userRole);
   const isApprovalInbox = req.query.approval === "true";
   if (isApprovalInbox) {
-    await repairApprovalInboxPendingTaskState({
-      userId: req.userId,
-      role: req.userRole,
-      centerId: me?.centerId || null,
-      isCeoRole: isCeo(req.userRole),
-    });
+    // Align status offline; list uses approval records for live pending rows.
+    scheduleBackground(
+      throttleKey("approval-inbox-repair", req.userId),
+      () =>
+        repairApprovalInboxPendingTaskState({
+          userId: req.userId,
+          role: req.userRole,
+          centerId: me?.centerId || null,
+          isCeoRole: isCeo(req.userRole),
+        }),
+      forceSync ? 0 : REPAIR_TTL_MS
+    );
   }
   await applyTaskTextAndPersonSearch(filter, req.query, {
     userId: req.userId,
@@ -648,6 +664,24 @@ router.get("/", async (req, res) => {
     applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
   }
   await applyMasterHistoricalStatusFilter(filter, req.query);
+
+  // Daily supervisor/coordinator sheet is filled via the dedicated form on Pending Recurring —
+  // hide those backend tasks from the personal recurring inbox so they are not listed twice.
+  if (req.query.assigneeInbox === "true" && req.query.recurring === "true") {
+    const hideSheetTasks = {
+      $nor: [
+        { title: SUPERVISOR_SHEET_TASK_TITLE_REGEX },
+        { title: COORDINATOR_SHEET_TASK_TITLE_REGEX },
+        { tags: TAG_DAILY_SUPERVISOR_SHEET },
+        { tags: TAG_DAILY_COORDINATOR_SHEET },
+        { functionTag: "daily_supervisor_sheet" },
+        { functionTag: "daily_coordinator_sheet" },
+      ],
+    };
+    if (filter.$and) filter.$and.push(hideSheetTasks);
+    else Object.assign(filter, hideSheetTasks);
+  }
+
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(200, Number(req.query.limit) || 25);
 
@@ -741,25 +775,30 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const me = await actor(req);
-  let raw = await Task.findById(req.params.id);
-  if (
-    raw &&
-    !raw.deletedAt &&
-    isRecurring(raw.taskType) &&
-    userIsAssigneeOnTask(raw, req.userId)
-  ) {
-    await syncRecurringTaskToToday(raw, { assigneeId: req.userId });
-    raw = await Task.findById(req.params.id);
-  }
-  const task = raw
-    ? await Task.findById(req.params.id)
+  let task = await Task.findById(req.params.id)
+    .populate("assignees", "name email avatarUrl role")
+    .populate("assignedBy", "name email")
+    .populate("createdBy", "name email")
+    .populate("project", "name")
+    .populate("departmentId", "name code")
+    .populate("centerId", "name code");
+
+  if (task && !task.deletedAt && isRecurring(task.taskType) && userIsAssigneeOnTask(task, req.userId)) {
+    // Sync without a full reload round-trip first; re-populate once only if writes happened.
+    const beforeDue = task.dueDate?.getTime?.() || task.dueDate;
+    await syncRecurringTaskToToday(task, { assigneeId: req.userId });
+    const afterDue = task.dueDate?.getTime?.() || task.dueDate;
+    if (beforeDue !== afterDue || task.isModified?.()) {
+      task = await Task.findById(req.params.id)
         .populate("assignees", "name email avatarUrl role")
         .populate("assignedBy", "name email")
         .populate("createdBy", "name email")
         .populate("project", "name")
         .populate("departmentId", "name code")
-        .populate("centerId", "name code")
-    : null;
+        .populate("centerId", "name code");
+    }
+  }
+
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
   if (!actorHasAnyCenterAccess(req, me) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
@@ -768,12 +807,7 @@ router.get("/:id", async (req, res) => {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
 
-  // Re-fetch plain doc for possible save when unsticking solo awaiting-without-pending.
-  let workDoc = raw;
-  if (workDoc && userIsAssigneeOnTask(workDoc, req.userId)) {
-    workDoc = await Task.findById(task._id);
-  }
-  const personal = await resolvePersonalWorkTaskView(workDoc || task, req.userId);
+  const personal = await resolvePersonalWorkTaskView(task, req.userId);
   const base =
     personal && typeof personal === "object"
       ? personal
@@ -782,6 +816,7 @@ router.get("/:id", async (req, res) => {
         : task;
   // Prefer populated relations from the populated fetch
   const populated = task.toObject ? task.toObject() : task;
+  // Personal view (status / work state) must win over raw task fields so Submit stays visible.
   const merged = {
     ...populated,
     ...base,
@@ -791,6 +826,16 @@ router.get("/:id", async (req, res) => {
     project: populated.project,
     departmentId: populated.departmentId,
     centerId: populated.centerId,
+    // Always re-assert personal fields after populates
+    personalWorkState: base.personalWorkState || "open",
+    personalPendingKind: base.personalPendingKind,
+    canSubmitForApproval: base.canSubmitForApproval,
+    unstuck: base.unstuck,
+    sharedTaskAwaitingOthers: base.sharedTaskAwaitingOthers,
+    status: base.status ?? populated.status,
+    approvalStatus: base.approvalStatus ?? populated.approvalStatus,
+    submissionRemarks: base.submissionRemarks ?? populated.submissionRemarks,
+    notDoneApproval: base.notDoneApproval !== undefined ? base.notDoneApproval : populated.notDoneApproval,
   };
   res.json({ task: withEffectiveTaskStatus(merged) });
 });
@@ -838,13 +883,35 @@ router.post("/", async (req, res, next) => {
 
     // One Task document per assignee so submit/approve/history never leak across people.
     const assigneeIds = [...new Set((payload.assignees || []).map((id) => String(id)).filter(Boolean))];
+    const isSheetTitle = isDailySheetTaskTitle(payload.title);
+    // Tag sheet tasks consistently so save/approval and inbox filters find them.
+    if (isSheetTitle) {
+      const isSup = SUPERVISOR_SHEET_TASK_TITLE_REGEX.test(String(payload.title || ""));
+      const tag = isSup ? TAG_DAILY_SUPERVISOR_SHEET : TAG_DAILY_COORDINATOR_SHEET;
+      const functionTag = isSup ? "daily_supervisor_sheet" : "daily_coordinator_sheet";
+      payload.tags = [...new Set([...(Array.isArray(payload.tags) ? payload.tags : []), tag, "recurring"])];
+      if (!payload.functionTag || payload.functionTag === "general") payload.functionTag = functionTag;
+      if (!payload.taskType || payload.taskType === "one_time") payload.taskType = "daily";
+      if (!payload.recurrence) payload.recurrence = { forever: true, includeSunday: false, weekOff: "Sunday" };
+    }
+
     const createPayloads =
       assigneeIds.length > 1
         ? assigneeIds.map((id) => ({ ...payload, assignees: [id] }))
         : [{ ...payload, assignees: assigneeIds }];
 
     const createdTasks = [];
+    const skippedDuplicateAssignees = [];
     for (const p of createPayloads) {
+      const onlyAssignee = p.assignees?.[0] ? String(p.assignees[0]) : "";
+      if (isSheetTitle && onlyAssignee) {
+        // eslint-disable-next-line no-await-in-loop
+        const already = await findExistingOpenDailySheetTask(onlyAssignee, payload.title);
+        if (already) {
+          skippedDuplicateAssignees.push(onlyAssignee);
+          continue;
+        }
+      }
       // eslint-disable-next-line no-await-in-loop
       const task = await Task.create(p);
       createdTasks.push(task);
@@ -856,11 +923,22 @@ router.post("/", async (req, res, next) => {
         meta: { status: task.status, fanOut: assigneeIds.length > 1 },
       });
     }
-    const task = createdTasks[0];
 
+    if (!createdTasks.length) {
+      return res.status(409).json({
+        message:
+          skippedDuplicateAssignees.length > 1
+            ? "Fill Daily sheet task is already assigned to each selected person (only one open assignment allowed)."
+            : "Fill Daily sheet task is already assigned to this person (only one open assignment allowed).",
+        skippedDuplicateAssignees,
+      });
+    }
+
+    const task = createdTasks[0];
     const creator = await User.findById(req.userId).lean();
-    if (assigneeIds.length) {
-      const notifyIds = assigneeIds.filter((id) => id !== String(req.userId));
+    const createdAssigneeIds = createdTasks.flatMap((t) => (t.assignees || []).map(String));
+    if (createdAssigneeIds.length) {
+      const notifyIds = createdAssigneeIds.filter((id) => id !== String(req.userId));
       if (notifyIds.length) {
         await notifyMany(notifyIds, {
           type: "task_assigned",
@@ -886,15 +964,22 @@ router.post("/", async (req, res, next) => {
       actorName: creator?.name,
       type: "task_assigned",
       message:
-        assigneeIds.length > 1
-          ? `${creator?.name || "Admin"} assigned ${task.title} to ${assigneeIds.length} people`
+        createdAssigneeIds.length > 1
+          ? `${creator?.name || "Admin"} assigned ${task.title} to ${createdAssigneeIds.length} people`
           : `${creator?.name || "Admin"} assigned ${task.title}`,
       task: task._id,
       taskTitle: task.title,
       taskType: task.taskType,
+      meta: skippedDuplicateAssignees.length
+        ? { skippedDuplicateSheetAssignees: skippedDuplicateAssignees }
+        : undefined,
     });
 
-    res.status(201).json({ task, tasks: createdTasks });
+    res.status(201).json({
+      task,
+      tasks: createdTasks,
+      skippedDuplicateAssignees,
+    });
   } catch (e) {
     next(e);
   }
@@ -1056,6 +1141,8 @@ router.patch("/:id", async (req, res, next) => {
       task.approvalStatus = "pending";
       task.requiresApproval = true;
       task.completedAt = null;
+      // Clear stale not-done state so assigner Approve treats this as a real completion submit.
+      task.notDoneApproval = undefined;
       if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
         const todayKey = calendarDayKeyInTz(new Date());
         const time = new Intl.DateTimeFormat("en-GB", {
@@ -1494,30 +1581,57 @@ router.post("/:id/approve", async (req, res) => {
   }
 
   if (task.notDoneApproval?.status === "pending") {
-    const occurrenceDue = task.notDoneApproval?.dueDate || task.dueDate;
-    task.notDoneApproval.status = "acknowledged";
-    task.submissionRemarks = "";
-    if (task.status === "awaiting_approval" && !isRecurring(task.taskType)) {
-      task.status = "pending";
-    }
-    await task.save();
-    await finalizeApprovalRecord({
-      task,
-      occurrenceDueDate: occurrenceDue,
-      approverId: req.userId,
-      status: "not_done_acknowledged",
-    });
-    await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "not_done_acknowledged", meta: {} });
-    if (task.assignees?.length) {
-      await notifyMany(task.assignees, {
-        type: "task_approved",
-        title: "Not done acknowledged",
-        message: `Your assigner acknowledged that "${task.title}" was not done for the reported occurrence.`,
-        link: isRecurring(task.taskType) ? "/pending-recurring" : "/pending-single",
+    // Prefer a real completion submit over a sticky not-done flag on the task.
+    const completionPending = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "pending",
+      kind: "completion",
+    })
+      .sort({ submittedAt: -1 })
+      .lean();
+    // Sticky flag + only a not_done pending that is actually work notes (mis-button): still approve as completion.
+    const anyPending = !completionPending
+      ? await TaskApprovalRecord.findOne({ taskId: task._id, status: "pending" }).sort({ submittedAt: -1 }).lean()
+      : null;
+    const treatAsCompletion =
+      Boolean(completionPending) ||
+      (anyPending &&
+        anyPending.kind === "not_done" &&
+        String(anyPending.submissionRemarks || "").trim() &&
+        !looksLikeExplicitNotDoneReason(anyPending.submissionRemarks));
+
+    if (!treatAsCompletion) {
+      const occurrenceDue = task.notDoneApproval?.dueDate || task.dueDate;
+      task.notDoneApproval.status = "acknowledged";
+      task.submissionRemarks = "";
+      if (task.status === "awaiting_approval" && !isRecurring(task.taskType)) {
+        task.status = "pending";
+      }
+      await task.save();
+      await finalizeApprovalRecord({
+        task,
+        occurrenceDueDate: occurrenceDue,
+        approverId: req.userId,
+        status: "not_done_acknowledged",
+        extra: { kind: "not_done" },
       });
+      await TaskEvent.create({ taskId: task._id, actorId: req.userId, eventType: "not_done_acknowledged", meta: {} });
+      if (task.assignees?.length) {
+        await notifyMany(task.assignees, {
+          type: "task_approved",
+          title: "Not done acknowledged",
+          message: `Your assigner acknowledged that "${task.title}" was not done for the reported occurrence.`,
+          link: isRecurring(task.taskType) ? "/pending-recurring" : "/pending-single",
+        });
+      }
+      for (const id of task.assignees || []) invalidateAssigneeSync(id);
+      return res.json({ task });
     }
-    for (const id of task.assignees || []) invalidateAssigneeSync(id);
-    return res.json({ task });
+    // Fall through: completion is waiting — clear stale not-done flag and approve as completed.
+    task.notDoneApproval = undefined;
+    if (anyPending?.kind === "not_done") {
+      await TaskApprovalRecord.updateOne({ _id: anyPending._id }, { $set: { kind: "completion" } });
+    }
   }
 
   const occurrenceDue =
@@ -1528,22 +1642,72 @@ router.post("/:id/approve", async (req, res) => {
     task.dueDate = occurrenceDue;
   }
 
-  const approvedRecord = await finalizeApprovalRecord({
+  const bodyAssignee =
+    String(req.body?.assigneeId || "").trim() ||
+    (Array.isArray(task.assignees) && task.assignees.length === 1 ? String(task.assignees[0]) : null);
+
+  let approvedRecord = await finalizeApprovalRecord({
     task,
     occurrenceDueDate: occurrenceDue,
     approverId: req.userId,
     status: "approved",
+    assigneeId: bodyAssignee,
   });
+
+  // Recovery: wrongly saved as not_done_acknowledged with work remarks (common sticky bug).
+  if (!approvedRecord) {
+    const mislabeled = await TaskApprovalRecord.findOne({
+      taskId: task._id,
+      status: "not_done_acknowledged",
+      kind: "not_done",
+    }).sort({ approvedAt: -1, submittedAt: -1 });
+    if (
+      mislabeled &&
+      String(mislabeled.submissionRemarks || "").trim() &&
+      !looksLikeExplicitNotDoneReason(mislabeled.submissionRemarks)
+    ) {
+      mislabeled.status = "approved";
+      mislabeled.kind = "completion";
+      mislabeled.approvedAt = mislabeled.approvedAt || new Date();
+      mislabeled.approvedBy = req.userId;
+      await mislabeled.save();
+      approvedRecord = mislabeled;
+    }
+  }
+
+  // Task still awaiting with remarks but history row missing / already cleared.
+  if (!approvedRecord && (task.status === "awaiting_approval" || task.approvalStatus === "pending")) {
+    const remarks = String(task.submissionRemarks || task.notDoneApproval?.remarks || "").trim();
+    if (remarks) {
+      approvedRecord = await finalizeApprovalRecord({
+        task,
+        occurrenceDueDate: occurrenceDue,
+        approverId: req.userId,
+        status: "approved",
+        assigneeId: bodyAssignee,
+        extra: {
+          allowCreateWithoutPending: true,
+          submissionRemarks: remarks,
+          kind: "completion",
+          submittedAt: task.updatedAt || new Date(),
+        },
+      });
+    }
+  }
+
   if (!approvedRecord) {
     return res.status(400).json({
-      message: "No pending submission found for this occurrence. The assignee must submit before approval.",
+      message:
+        "No pending submission found for this occurrence. Ask the assignee to submit again with remarks, then approve.",
     });
   }
+
+  task.notDoneApproval = undefined;
 
   const remainingPending = await TaskApprovalRecord.countDocuments({
     taskId: task._id,
     status: "pending",
-    kind: "completion",
+    kind: { $in: ["completion", "not_done"] },
   });
 
   if (remainingPending > 0) {

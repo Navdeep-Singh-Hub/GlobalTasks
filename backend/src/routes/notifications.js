@@ -6,8 +6,14 @@ const router = Router();
 router.use(authRequired);
 
 router.get("/", async (req, res) => {
-  const notifications = await Notification.find({ user: req.userId }).sort({ createdAt: -1 }).limit(30);
-  const unread = await Notification.countDocuments({ user: req.userId, read: false });
+  const [notifications, unread] = await Promise.all([
+    Notification.find({ user: req.userId })
+      .select("title message read link type createdAt")
+      .sort({ createdAt: -1 })
+      .limit(30)
+      .lean(),
+    Notification.countDocuments({ user: req.userId, read: false }),
+  ]);
   res.json({ notifications, unread });
 });
 

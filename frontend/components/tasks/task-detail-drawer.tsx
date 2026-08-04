@@ -49,6 +49,8 @@ type TaskDetail = {
   rejectionMode?: string;
   submissionRemarks?: string;
   personalWorkState?: "open" | "submitted" | "viewer";
+  canSubmitForApproval?: boolean;
+  personalPendingKind?: string;
   sharedTaskAwaitingOthers?: boolean;
   notDoneApproval?: {
     dueDate?: string;
@@ -125,7 +127,9 @@ export function TaskDetailDrawer({
   );
   const hasPendingNotDone = task?.notDoneApproval?.status === "pending";
   const isAssignee = Boolean(
-    task && myId && task.assignees?.some((a) => String(a._id || a) === myId)
+    task &&
+      myId &&
+      task.assignees?.some((a) => String((a as { _id?: string })?._id || a) === String(myId))
   );
   const canResubmit = Boolean(
     task &&
@@ -145,21 +149,22 @@ export function TaskDetailDrawer({
         task.approvalStatus === "approved")
   );
   const isRecurringTask = Boolean(task && task.taskType !== "one_time");
-  // Block Submit only when THIS assignee already submitted (personal state), not merely because a
-  // shared multi-assignee task is awaiting for someone else.
-  const personalSubmitted =
-    task?.personalWorkState === "submitted" ||
-    (task?.status === "awaiting_approval" &&
-      task?.approvalStatus === "pending" &&
-      task?.personalWorkState !== "open" &&
-      (task?.assignees?.length || 0) <= 1);
-  const assigneeBlockedByCompletionApproval = personalSubmitted || Boolean(hasPendingNotDone && !isRecurringTask);
+  // Only hide Submit when THIS person has a pending submission in history.
+  // Never treat missing personalWorkState or shared awaiting_approval as "already submitted".
+  const personalSubmitted = task?.personalWorkState === "submitted";
+  // Sticky not-done on task without personal submit still blocks submit on one-time until cleared;
+  // personalWork API unstucks solo tasks, and personalSubmitted covers real not_done submits.
+  const blockedByStickyNotDone =
+    Boolean(hasPendingNotDone) && !personalSubmitted && !isRecurringTask && task?.personalWorkState !== "open";
+  // Hide only when API says false (already submitted) or local personalSubmitted / sticky blocks.
   const canSubmitForApproval = Boolean(
     task &&
       myId &&
       !isCeoUser &&
       isAssignee &&
-      !assigneeBlockedByCompletionApproval &&
+      !personalSubmitted &&
+      task.canSubmitForApproval !== false &&
+      !blockedByStickyNotDone &&
       task.status !== "completed" &&
       task.status !== "cancelled"
   );
@@ -174,6 +179,22 @@ export function TaskDetailDrawer({
       task.status !== "cancelled"
   );
   const canApproveNotDone = Boolean(canApprove && hasPendingNotDone);
+  // Assigner: approve / acknowledge whenever the task is waiting (not exclusive vs submit).
+  const showAssignerApprovalActions = Boolean(
+    canApprove &&
+      (personalSubmitted ||
+        hasPendingNotDone ||
+        task?.status === "awaiting_approval" ||
+        task?.approvalStatus === "pending")
+  );
+  // Banner for the person who submitted, or for assigner reviewing a waiting task.
+  const showWaitingForApprovalBanner = Boolean(
+    personalSubmitted ||
+      (canApprove &&
+        (hasPendingNotDone ||
+          task?.status === "awaiting_approval" ||
+          task?.approvalStatus === "pending"))
+  );
 
   useEffect(() => setMounted(true), []);
 
@@ -589,12 +610,10 @@ export function TaskDetailDrawer({
               </div>
             ) : (
               <>
-                {(task.personalWorkState === "submitted" ||
-                  ((task.status === "awaiting_approval" || task.approvalStatus === "pending" || hasPendingNotDone) &&
-                    task.personalWorkState !== "open")) && (
+                {showWaitingForApprovalBanner && (
                   <div className="space-y-2">
                     <div className="rounded-xl border border-violet-200 bg-violet-50/90 px-3 py-2.5 text-xs text-violet-900 dark:border-violet-900/50 dark:bg-violet-950/40 dark:text-violet-100">
-                      {hasPendingNotDone ? (
+                      {hasPendingNotDone && (personalSubmitted || canApprove) ? (
                         <>
                           <strong>Not done — waiting for assigner.</strong> An assignee reported this occurrence as not done
                           {task.notDoneApproval?.dueDate
@@ -605,19 +624,20 @@ export function TaskDetailDrawer({
                         </>
                       ) : (
                         <>
-                          <strong>Waiting for approval.</strong> The person who assigned this task must approve before it is
-                          marked completed
-                          {task.taskType !== "one_time" ? " and the next occurrence is scheduled" : ""}.
-                          {canResubmit && isAssignee ? (
+                          <strong>Waiting for approval.</strong>{" "}
+                          {personalSubmitted
+                            ? "Your submit is with the person who assigned this task."
+                            : "A submission is waiting for review."}
+                          {task.taskType !== "one_time" ? " After approve, the next occurrence is scheduled." : ""}
+                          {canResubmit && isAssignee && personalSubmitted ? (
                             <span className="mt-1 block">
-                              Use <strong>Resubmit</strong> below to withdraw this submission and redo today&apos;s work in Pending
-                              Recurring.
+                              Use <strong>Resubmit</strong> below to withdraw this submission and redo today&apos;s work.
                             </span>
                           ) : null}
                         </>
                       )}
                     </div>
-                    {task.submissionRemarks ? (
+                    {(personalSubmitted || (canApprove && task.submissionRemarks)) && task.submissionRemarks ? (
                       <div className="rounded-xl border border-brand-200 bg-brand-50/80 px-3 py-2.5 text-xs text-brand-950 dark:border-brand-900/50 dark:bg-brand-950/40 dark:text-brand-100">
                         <span className="font-semibold">Submission remarks: </span>
                         <span className="whitespace-pre-wrap">{task.submissionRemarks}</span>
@@ -657,115 +677,82 @@ export function TaskDetailDrawer({
                     Created {task.createdAt ? formatAppDateTime(task.createdAt) : "—"}
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
-                    {task.personalWorkState === "submitted" ||
-                    (task.personalWorkState !== "open" &&
-                      (task.status === "awaiting_approval" ||
-                        task.approvalStatus === "pending" ||
-                        hasPendingNotDone)) ? (
-                      canApprove || canApproveNotDone ? (
-                        <>
-                          {!canApproveNotDone && (
-                            <Button size="sm" variant="outline" onClick={() => setRejectOpen(true)}>
-                              Reject
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            variant="gradient"
-                            className="w-full sm:w-auto"
-                            onClick={async () => {
-                              await api(`/tasks/${task._id}/approve`, { method: "POST" });
-                              celebrate("approve");
-                              onUpdated?.();
-                              load();
-                            }}
-                          >
-                            {canApproveNotDone ? "Acknowledge not done" : "Approve & complete"}
-                          </Button>
-                          {canResubmit && canEditAsAssigner ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="w-full sm:w-auto"
-                              disabled={resubmitting}
-                              onClick={() => void resubmitTask()}
-                            >
-                              {resubmitting ? "Resubmitting…" : "Resubmit to assignee"}
-                            </Button>
-                          ) : null}
-                          {canEditAsAssigner && onRequestEdit ? (
-                            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
-                              Edit
-                            </Button>
-                          ) : null}
-                        </>
-                      ) : canResubmit && isAssignee ? (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="w-full sm:w-auto"
-                          disabled={resubmitting}
-                          onClick={() => void resubmitTask()}
-                        >
-                          {resubmitting ? "Resubmitting…" : "Resubmit"}
-                        </Button>
-                      ) : null
-                    ) : (
+                    {showAssignerApprovalActions ? (
                       <>
-                        {canMarkNotDone && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full sm:w-auto"
-                            disabled={submitting}
-                            onClick={() => void markNotDone()}
-                          >
-                            {submitting ? "Saving…" : "Not done"}
+                        {!canApproveNotDone && (
+                          <Button size="sm" variant="outline" onClick={() => setRejectOpen(true)}>
+                            Reject
                           </Button>
                         )}
-                        {isCeoUser ? (
-                          <Button
-                            size="sm"
-                            variant="gradient"
-                            className="w-full sm:w-auto"
-                            onClick={async () => {
-                              await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
-                              onUpdated?.();
-                              load();
-                            }}
-                          >
-                            Mark completed
-                          </Button>
-                        ) : canResubmit && isAssignee ? (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="w-full sm:w-auto"
-                            disabled={resubmitting}
-                            onClick={() => void resubmitTask()}
-                          >
-                            {resubmitting ? "Resubmitting…" : "Resubmit"}
-                          </Button>
-                        ) : canSubmitForApproval ? (
-                          <MotionButton
-                            size="sm"
-                            variant="gradient"
-                            className="w-full sm:w-auto"
-                            loading={submitting}
-                            success={submitSuccess}
-                            disabled={submitting}
-                            onClick={() => void submitForApproval()}
-                          >
-                            Submit for approval
-                          </MotionButton>
-                        ) : null}
-                        {canEditAsAssigner && onRequestEdit ? (
-                          <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
-                            Edit
-                          </Button>
-                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="gradient"
+                          className="w-full sm:w-auto"
+                          onClick={async () => {
+                            await api(`/tasks/${task._id}/approve`, { method: "POST" });
+                            celebrate("approve");
+                            onUpdated?.();
+                            load();
+                          }}
+                        >
+                          {canApproveNotDone ? "Acknowledge not done" : "Approve & complete"}
+                        </Button>
                       </>
+                    ) : null}
+                    {canResubmit && (canEditAsAssigner || (isAssignee && personalSubmitted)) ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        disabled={resubmitting}
+                        onClick={() => void resubmitTask()}
+                      >
+                        {resubmitting ? "Resubmitting…" : "Resubmit"}
+                      </Button>
+                    ) : null}
+                    {canMarkNotDone && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-full sm:w-auto"
+                        disabled={submitting}
+                        onClick={() => void markNotDone()}
+                      >
+                        {submitting ? "Saving…" : "Not done"}
+                      </Button>
                     )}
+                    {isCeoUser && isAssignee && !personalSubmitted && task.status !== "completed" ? (
+                      <Button
+                        size="sm"
+                        variant="gradient"
+                        className="w-full sm:w-auto"
+                        onClick={async () => {
+                          await api(`/tasks/${task._id}`, { method: "PATCH", body: JSON.stringify({ status: "completed" }) });
+                          onUpdated?.();
+                          load();
+                        }}
+                      >
+                        Mark completed
+                      </Button>
+                    ) : null}
+                    {canSubmitForApproval ? (
+                      <MotionButton
+                        size="sm"
+                        variant="gradient"
+                        className="w-full sm:w-auto"
+                        loading={submitting}
+                        success={submitSuccess}
+                        disabled={submitting}
+                        onClick={() => void submitForApproval()}
+                      >
+                        Submit for approval
+                      </MotionButton>
+                    ) : null}
+                    {canEditAsAssigner && onRequestEdit ? (
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => onRequestEdit(task._id)}>
+                        Edit
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
               </>

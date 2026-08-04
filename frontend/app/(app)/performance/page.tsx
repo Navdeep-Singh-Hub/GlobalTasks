@@ -1,7 +1,6 @@
 "use client";
 
 import { AssigneeApprovalHistory } from "@/components/performance/assignee-approval-history";
-import { TeamThroughputChart } from "@/components/performance/team-throughput-chart";
 import { PageHeader } from "@/components/ui/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { api } from "@/lib/api";
@@ -11,10 +10,13 @@ import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import { useEffect, useState } from "react";
 
-const TeamThroughputChartClient = dynamic(() => Promise.resolve(TeamThroughputChart), {
-  ssr: false,
-  loading: () => <div className="h-full w-full animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />,
-});
+const TeamThroughputChartClient = dynamic(
+  () => import("@/components/performance/team-throughput-chart").then((m) => m.TeamThroughputChart),
+  {
+    ssr: false,
+    loading: () => <div className="h-full w-full animate-pulse rounded-xl bg-zinc-100 dark:bg-zinc-900" />,
+  }
+);
 
 type Member = {
   user: { _id: string; name: string; role: string; executorKind?: string };

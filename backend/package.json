@@ -7,6 +7,10 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "seed": "node src/seed.js",
+    "test:flows": "node scripts/test-approval-flows.mjs",
+    "test:e2e": "node scripts/test-e2e-approval.mjs",
+    "test:smoke": "node scripts/smoke-api-flow.mjs",
+    "test": "npm run test:flows && npm run test:e2e",
     "cleanup:therapist-targets": "node scripts/remove-therapist-target-fields.js",
     "whatsapp:test": "node scripts/whatsapp-full-test.mjs"
   },

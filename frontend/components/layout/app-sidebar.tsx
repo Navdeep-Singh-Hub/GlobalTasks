@@ -80,6 +80,7 @@ export function AppSidebar({
 
   useEffect(() => {
     let cancel = false;
+    // Both desktop + mobile run this, but api() GET-dedupe + 8s shell cache = 1 network call.
     import("@/lib/api").then(({ api }) => {
       api<{ tasks: { _id: string }[]; total?: number }>(
         "/tasks?recurring=true&statusGroup=open&myTasks=true&assigneeInbox=true&limit=1"

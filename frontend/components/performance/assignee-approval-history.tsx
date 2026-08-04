@@ -40,17 +40,53 @@ const TASK_TYPE_LABELS: Record<string, string> = {
 
 
 function statusLabel(r: ApprovalRecord) {
-  if (r.status === "pending") return r.kind === "not_done" ? "Not done (assignee, waiting)" : "Waiting for approval";
-  if (r.status === "approved") return "Approved";
-  if (r.status === "not_done_acknowledged") return "Not done (assignee)";
-  if (r.status === "missed") {
-    if (r.kind === "not_done" && r.submissionRemarks?.trim() && !isAutoMissedRemarkText(r.submissionRemarks)) {
+  // Work notes mislabeled as not_done (backend also reclassifies; keep UI safe).
+  const remarks = r.submissionRemarks?.trim() || "";
+  const looksNotDoneReason = /\b(not\s*done|couldn'?t\b|could not|cannot|no staff|on leave|absent|didn'?t (do|finish)|holiday|week\s*off)\b/i.test(
+    remarks
+  );
+  const autoOnly =
+    remarks === "Not completed before the day ended — marked as not done automatically." ||
+    remarks === "Not completed before the due time — marked as not done automatically." ||
+    remarks === "No submission recorded for this day.";
+  const expiredSubmit =
+    remarks.startsWith("Submitted for approval but the day ended") ||
+    remarks.startsWith("Submitted for approval but the due time passed");
+
+  let kind = r.kind;
+  let status = r.status;
+  if (
+    kind === "not_done" &&
+    remarks &&
+    !autoOnly &&
+    !looksNotDoneReason
+  ) {
+    kind = "completion";
+    if (status === "not_done_acknowledged") status = "approved";
+  }
+  if (expiredSubmit) {
+    kind = "completion";
+  }
+
+  if (status === "pending") {
+    return kind === "not_done" ? "Not done (assignee, waiting)" : "Waiting for approval";
+  }
+  if (status === "approved") return "Approved";
+  if (status === "not_done_acknowledged") return "Not done (assignee)";
+  if (status === "missed") {
+    if (
+      kind === "completion" ||
+      expiredSubmit
+    ) {
+      return "Submitted (expired / not approved in time)";
+    }
+    if (kind === "not_done" && remarks && !isAutoMissedRemarkText(remarks)) {
       return "Not done (assignee)";
     }
     return "Not done (auto)";
   }
-  if (r.status === "rejected") return "Rejected";
-  return r.status;
+  if (status === "rejected") return "Rejected";
+  return status;
 }
 
 function isAutoMissedRemarkText(text: string) {
@@ -187,6 +223,7 @@ export function AssigneeApprovalHistory() {
       if (withSync) qs.set("sync", "true");
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
+      qs.set("limit", "250");
       const d = await api<{ records: ApprovalRecord[]; summary: typeof summary }>(
         `/dashboard/assignee-approval-history?${qs.toString()}`
       );
@@ -311,11 +348,13 @@ export function AssigneeApprovalHistory() {
                     <td className="px-2 py-2">
                       <span
                         className={
-                          r.status === "approved" || r.status === "not_done_acknowledged"
+                          statusLabel(r) === "Approved"
                             ? "text-emerald-600"
-                            : r.status === "missed"
+                            : statusLabel(r).startsWith("Not done (auto)")
                               ? "text-violet-600"
-                              : r.status === "rejected"
+                              : statusLabel(r).startsWith("Not done")
+                                ? "text-teal-700"
+                            : r.status === "rejected" || statusLabel(r) === "Rejected"
                               ? "text-rose-600"
                               : "font-medium text-amber-600"
                         }

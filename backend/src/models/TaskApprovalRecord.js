@@ -35,6 +35,7 @@ taskApprovalRecordSchema.index({ assignedBy: 1, assigneeId: 1, submittedAt: -1 }
 taskApprovalRecordSchema.index({ taskId: 1, occurrenceDueDate: 1, submittedAt: -1 });
 taskApprovalRecordSchema.index({ assigneeId: 1, status: 1, submittedAt: -1 });
 taskApprovalRecordSchema.index({ taskId: 1, status: 1, kind: 1, submittedAt: -1 });
+taskApprovalRecordSchema.index({ assignedBy: 1, status: 1, kind: 1, submittedAt: -1 });
 taskApprovalRecordSchema.index({ assignedBy: 1, status: 1, occurrenceDueDate: -1 });
 taskApprovalRecordSchema.index({ taskId: 1, status: 1, approvedAt: -1 });
 taskApprovalRecordSchema.index({ assigneeId: 1, status: 1, occurrenceDueDate: -1 });

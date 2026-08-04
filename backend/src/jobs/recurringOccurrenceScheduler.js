@@ -12,15 +12,18 @@ export function startRecurringOccurrenceScheduler() {
     5 * 60_000,
     Number(process.env.RECURRING_SYNC_INTERVAL_MS) || DEFAULT_INTERVAL_MS
   );
-  void runRecurringOccurrenceSync().catch((e) =>
-    console.error("[recurring-sync] Startup sync failed:", e)
-  );
+  // Defer full-org sync so login/dashboard are not competing at boot.
+  setTimeout(() => {
+    void runRecurringOccurrenceSync().catch((e) =>
+      console.error("[recurring-sync] Startup sync failed:", e)
+    );
+  }, 90_000);
   setInterval(() => {
     runRecurringOccurrenceSync().catch((e) =>
       console.error("[recurring-sync] Scheduled sync failed:", e)
     );
   }, intervalMs);
   console.log(
-    `[recurring-sync] Scheduler started for all assignees (every ${Math.round(intervalMs / 60_000)} min)`
+    `[recurring-sync] Scheduler started for all assignees (every ${Math.round(intervalMs / 60_000)} min, first run in 90s)`
   );
 }

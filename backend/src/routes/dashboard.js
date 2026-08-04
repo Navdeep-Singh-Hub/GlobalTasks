@@ -21,16 +21,16 @@ import {
   correctMisdatedPendingOccurrence,
   repairAssigneeHistoryRecords,
   repairSharedMultiAssigneeForAssignee,
-  repairAllSharedMultiAssigneeTasks,
   sanitizeHistoryApprovedDisplay,
   fillMissingDailyOccurrenceHistory,
   sortRecordsByOccurrence,
   sanitizeHistoryMissedDisplay,
+  reclassifyMislabeledNotDoneForDisplay,
+  repairMislabeledNotDoneFromCompletion,
   assignerScopeClause,
 } from "../services/taskApprovalHistory.js";
 import { syncRecurringTasksForAssignee } from "../services/recurringOccurrenceSync.js";
 import {
-  shouldRunThrottled,
   scheduleBackground,
   throttleKey,
   REPAIR_TTL_MS,
@@ -91,46 +91,42 @@ router.get("/summary", async (req, res) => {
     : { status: "active", owner: { $in: await User.find({ centerId: me?.centerId || null }).distinct("_id") } };
 
   const now = new Date();
-  const [totalTasks, pending, completed, overdue, activeProjects] = await Promise.all([
-    Task.countDocuments(base),
-    Task.countDocuments({ ...base, status: "pending" }),
-    Task.countDocuments({ ...base, status: "completed" }),
-    Task.countDocuments({ ...base, status: { $ne: "completed" }, dueDate: { $lt: now } }),
-    Project.countDocuments(projectFilter),
-  ]);
-
-  const byStatus = await Task.aggregate([
-    { $match: base },
-    { $group: { _id: "$status", value: { $sum: 1 } } },
-  ]);
-
-  const byCadence = await Task.aggregate([
-    { $match: base },
-    {
-      $group: {
-        _id: "$taskType",
-        total: { $sum: 1 },
-        pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
-        completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-      },
-    },
-  ]);
-
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const monthlyMatch = { deletedAt: null, createdAt: { $gte: sixMonthsAgo } };
   if (!isCeo(req.userRole)) monthlyMatch.centerId = me?.centerId || null;
   if (visibleIds && req.userRole !== "centre_head") monthlyMatch.assignees = { $in: visibleIds };
-  const monthly = await Task.aggregate([
-    { $match: monthlyMatch },
-    {
-      $group: {
-        _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
-        planned: { $sum: 1 },
-        completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
-      },
-    },
-    { $sort: { "_id.y": 1, "_id.m": 1 } },
-  ]);
+
+  const [totalTasks, pending, completed, overdue, activeProjects, byStatus, byCadence, monthly] =
+    await Promise.all([
+      Task.countDocuments(base),
+      Task.countDocuments({ ...base, status: "pending" }),
+      Task.countDocuments({ ...base, status: "completed" }),
+      Task.countDocuments({ ...base, status: { $ne: "completed" }, dueDate: { $lt: now } }),
+      Project.countDocuments(projectFilter),
+      Task.aggregate([{ $match: base }, { $group: { _id: "$status", value: { $sum: 1 } } }]),
+      Task.aggregate([
+        { $match: base },
+        {
+          $group: {
+            _id: "$taskType",
+            total: { $sum: 1 },
+            pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+          },
+        },
+      ]),
+      Task.aggregate([
+        { $match: monthlyMatch },
+        {
+          $group: {
+            _id: { y: { $year: "$createdAt" }, m: { $month: "$createdAt" } },
+            planned: { $sum: 1 },
+            completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+          },
+        },
+        { $sort: { "_id.y": 1, "_id.m": 1 } },
+      ]),
+    ]);
 
   const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   const deliveryCurve = [];
@@ -181,34 +177,67 @@ router.get("/team-performance", async (_req, res) => {
   }
   if (_req.userRole === "user" || _req.userRole === "executor") userFilter._id = _req.userId;
   const users = await User.find(userFilter).select("_id name email role executorKind avatarUrl title").lean();
-  const results = await Promise.all(
-    users.map(async (u) => {
-      const [total, pending, overdue, completed] = await Promise.all([
-        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
-        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, status: "pending", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
-        Task.countDocuments({
-          assignees: u._id,
-          deletedAt: null,
-          ...taskRange,
-          status: { $ne: "completed" },
-          dueDate: { $lt: new Date() },
-          ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }),
-        }),
-        Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, status: "completed", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) }),
-      ]);
-      const oneTime = await Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, taskType: "one_time", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
-      const daily = await Task.countDocuments({ assignees: u._id, deletedAt: null, ...taskRange, taskType: "daily", ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }) });
-      const recurring = await Task.countDocuments({
-        assignees: u._id,
-        deletedAt: null,
-        ...taskRange,
-        taskType: { $in: RECURRING },
-        ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }),
-      });
-      const completion = total ? Math.round((completed / total) * 1000) / 10 : 0;
-      return { user: u, total, pending, overdue, completed, completion, oneTime, daily, recurring };
-    })
-  );
+  if (!users.length) return res.json({ members: [] });
+
+  const userIds = users.map((u) => u._id);
+  const now = new Date();
+  const match = {
+    deletedAt: null,
+    assignees: { $in: userIds },
+    ...taskRange,
+    ...(isCeo(_req.userRole) ? {} : { centerId: me?.centerId || null }),
+  };
+
+  // One aggregation instead of ~7 countDocuments per member (was N×7 round-trips).
+  const stats = await Task.aggregate([
+    { $match: match },
+    { $unwind: "$assignees" },
+    { $match: { assignees: { $in: userIds } } },
+    {
+      $group: {
+        _id: "$assignees",
+        total: { $sum: 1 },
+        pending: { $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] } },
+        completed: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+        overdue: {
+          $sum: {
+            $cond: [
+              {
+                $and: [{ $ne: ["$status", "completed"] }, { $lt: ["$dueDate", now] }],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        oneTime: { $sum: { $cond: [{ $eq: ["$taskType", "one_time"] }, 1, 0] } },
+        daily: { $sum: { $cond: [{ $eq: ["$taskType", "daily"] }, 1, 0] } },
+        recurring: {
+          $sum: {
+            $cond: [{ $in: ["$taskType", RECURRING] }, 1, 0],
+          },
+        },
+      },
+    },
+  ]);
+
+  const byId = new Map(stats.map((s) => [String(s._id), s]));
+  const results = users.map((u) => {
+    const s = byId.get(String(u._id));
+    const total = s?.total || 0;
+    const completed = s?.completed || 0;
+    return {
+      user: u,
+      total,
+      pending: s?.pending || 0,
+      overdue: s?.overdue || 0,
+      completed,
+      completion: total ? Math.round((completed / total) * 1000) / 10 : 0,
+      oneTime: s?.oneTime || 0,
+      daily: s?.daily || 0,
+      recurring: s?.recurring || 0,
+    };
+  });
   res.json({ members: results });
 });
 
@@ -390,19 +419,13 @@ router.get("/assignee-approval-history", async (req, res) => {
     }
   }
 
-  // Never block Performance API on heavy shared-task heal — run in background.
-  scheduleBackground(
-    throttleKey("shared-repair", assigneeId),
-    () => repairSharedMultiAssigneeForAssignee(assigneeId),
-    REPAIR_TTL_MS
-  );
-  scheduleBackground(
-    throttleKey("shared-heal-org", "global"),
-    () => repairAllSharedMultiAssigneeTasks(),
-    Math.max(REPAIR_TTL_MS, 6 * 60 * 60 * 1000)
-  );
-
+  // Per-assignee heal only when user explicitly refreshes (sync=true). Never org-wide scan on page open.
   if (req.query.sync === "true") {
+    scheduleBackground(
+      throttleKey("shared-repair", assigneeId),
+      () => repairSharedMultiAssigneeForAssignee(assigneeId),
+      REPAIR_TTL_MS
+    );
     scheduleBackground(
       throttleKey("history-repair", assigneeId),
       async () => {
@@ -417,7 +440,7 @@ router.get("/assignee-approval-history", async (req, res) => {
     );
   }
 
-  const recordLimit = Math.min(1500, Math.max(50, Number(req.query.limit) || 800));
+  const recordLimit = Math.min(500, Math.max(50, Number(req.query.limit) || 200));
 
   const q = await buildAssigneeHistoryQuery({
     userId: req.userId,
@@ -472,15 +495,24 @@ router.get("/assignee-approval-history", async (req, res) => {
     if (!rid) return true;
     return rid === String(assigneeId);
   });
+  // Always correct mislabeled "Not done" rows in the API response (work remarks → completion/approved).
+  records = reclassifyMislabeledNotDoneForDisplay(records);
   records = sanitizeHistoryApprovedDisplay(records);
   records = sanitizeHistoryMissedDisplay(records);
   records = sortRecordsByOccurrence(records);
 
+  // Persist those fixes in the background so next open is clean without needing Refresh & sync.
+  scheduleBackground(
+    throttleKey("mislabeled-fix", assigneeId),
+    () => repairMislabeledNotDoneFromCompletion({ assigneeId }),
+    30_000
+  );
+
   const summary = {
     total: records.length,
     pending: records.filter((r) => r.status === "pending").length,
-    waitingForApproval: records.filter((r) => r.status === "pending").length,
-    approved: records.filter((r) => r.status === "approved" || r.status === "not_done_acknowledged").length,
+    waitingForApproval: records.filter((r) => r.status === "pending" && r.kind !== "not_done").length,
+    approved: records.filter((r) => r.status === "approved").length,
     rejected: records.filter((r) => r.status === "rejected").length,
     notDone: records.filter(
       (r) =>

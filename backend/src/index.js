@@ -4,7 +4,7 @@ import cors from "cors";
 import path from "path";
 import fs from "fs";
 import { createServer } from "http";
-import { connectDatabase } from "./config/database.js";
+import { attachProcessMongoGuards, connectDatabase } from "./config/database.js";
 import { migrateLegacyUserRoles } from "./migrateUserRoles.js";
 import { ensureMasterData } from "./bootstrap/masterData.js";
 import authRoutes from "./routes/auth.js";
@@ -148,6 +148,7 @@ app.use((err, _req, res, _next) => {
 });
 
 const uri = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/tms";
+attachProcessMongoGuards();
 
 async function ensureSupervisorSheetIndexes() {
   const coll = SupervisorSheet.collection;

@@ -14,4 +14,8 @@ const activitySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+activitySchema.index({ createdAt: -1 });
+activitySchema.index({ task: 1, createdAt: -1 });
+activitySchema.index({ actor: 1, createdAt: -1 });
+
 export const Activity = mongoose.model("Activity", activitySchema);
