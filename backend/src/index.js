@@ -83,7 +83,7 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "task-project-api",
     /** Bump when ops need to confirm Render actually restarted on the latest push. */
-    codeVersion: "sessions-list-v3",
+    codeVersion: "sessions-list-v4",
     recycleBinRetentionDays: Math.max(1, Number(process.env.RECYCLE_BIN_RETENTION_DAYS) || 10),
   })
 );

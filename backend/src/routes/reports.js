@@ -34,9 +34,44 @@ function toObjectId(id) {
 }
 
 async function actor(req) {
-  if (req._actor) return req._actor;
+  // Prefer full actor; ignore incomplete caches (missing executorKind breaks therapist checks).
+  if (
+    req._actor &&
+    String(req._actor._id) === String(req.userId) &&
+    Object.prototype.hasOwnProperty.call(req._actor, "executorKind")
+  ) {
+    return req._actor;
+  }
   req._actor = await User.findById(req.userId).select("_id role executorKind centerId").lean();
   return req._actor;
+}
+
+/** Role gate for therapist session APIs — trusts DB user, not just JWT + partial actor. */
+function canAccessTherapistSessions(req, me) {
+  const jwtRole = String(req.userRole || "").toLowerCase();
+  const dbRole = String(me?.role || "").toLowerCase();
+  const kind = String(me?.executorKind || "").toLowerCase().trim();
+  if (isManagement(jwtRole) && canViewClinicalPerformance(jwtRole)) return true;
+  if (isManagement(dbRole) && canViewClinicalPerformance(dbRole)) return true;
+  if (jwtRole === "supervisor" || dbRole === "supervisor") return true;
+  // executorKind is the clinical source of truth for therapists (role may vary / lag).
+  if (kind === "therapist") return true;
+  if ((jwtRole === "executor" || dbRole === "executor") && kind === "therapist") return true;
+  return false;
+}
+
+function isTherapistActor(req, me) {
+  const kind = String(me?.executorKind || "").toLowerCase().trim();
+  if (kind === "therapist") return true;
+  const role = String(me?.role || req.userRole || "").toLowerCase();
+  return role === "executor" && kind === "therapist";
+}
+
+function isSupervisorActor(req, me) {
+  return (
+    String(req.userRole || "").toLowerCase() === "supervisor" ||
+    String(me?.role || "").toLowerCase() === "supervisor"
+  );
 }
 
 function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
@@ -47,10 +82,8 @@ function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
 
 /** Shared filter for therapist session list / count (patient session log + performance). */
 async function buildTherapistSessionsFilter(req, me) {
-  const executorKind = String(me?.executorKind || "").toLowerCase().trim();
-  const isTherapist =
-    (req.userRole === "executor" || me?.role === "executor") && executorKind === "therapist";
-  const isSupervisor = req.userRole === "supervisor" || me?.role === "supervisor";
+  const isTherapist = isTherapistActor(req, me);
+  const isSupervisor = isSupervisorActor(req, me);
   // Personal "my uploads" log: therapists always; anyone with scope=self (supervisors).
   const selfScope =
     isTherapist || String(req.query.scope || "").toLowerCase() === "self";
@@ -91,7 +124,7 @@ async function buildTherapistSessionsFilter(req, me) {
     }
   }
 
-  if (!selfScope && req.userRole === "supervisor" && !q.therapistId && !q.$or) {
+  if (!selfScope && isSupervisorActor(req, me) && !q.therapistId && !q.$or) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
     else if (q.therapistId) {
@@ -621,17 +654,13 @@ router.get("/export", async (req, res) => {
 });
 
 router.post("/therapist-sessions", async (req, res) => {
-  const me = await actor(req);
-  const meUser = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
-  const isTherapist = meUser?.role === "executor" && String(meUser?.executorKind || "").toLowerCase() === "therapist";
-  const isSupervisor = meUser?.role === "supervisor";
-  if (!isTherapist && !isSupervisor) {
+  const uploader = await User.findById(req.userId)
+    .select("_id role executorKind centerId departmentPrimary weekOffDays")
+    .lean();
+  if (!uploader || !canAccessTherapistSessions(req, uploader)) {
     return res.status(403).json({ message: "Only therapists or supervisors can submit sessions" });
   }
-
-  const uploader = await User.findById(req.userId).select("_id role executorKind centerId departmentPrimary weekOffDays").lean();
-  if (!uploader) return res.status(404).json({ message: "User not found" });
-  if (!isCeo(req.userRole) && String(uploader.centerId || "") !== String(me?.centerId || "")) {
+  if (!uploader.centerId && !isCeo(req.userRole)) {
     return res.status(403).json({ message: "User must belong to your center" });
   }
 
@@ -681,12 +710,9 @@ router.post("/therapist-sessions", async (req, res) => {
 
 router.get("/therapist-sessions", async (req, res) => {
   const me = await actor(req);
-  const executorKind = String(me?.executorKind || "").toLowerCase();
-  const isTherapist =
-    (req.userRole === "executor" || me?.role === "executor") && executorKind === "therapist";
-  const isSupervisor = req.userRole === "supervisor" || me?.role === "supervisor";
-  const isMgmtViewer = isManagement(req.userRole) && canViewClinicalPerformance(req.userRole);
-  if (!isMgmtViewer && !isTherapist && !isSupervisor) {
+  if (!me) return res.status(401).json({ message: "Authentication required" });
+  const isTherapist = isTherapistActor(req, me);
+  if (!canAccessTherapistSessions(req, me)) {
     return res.status(403).json({ message: "Only therapists or supervisors can view sessions" });
   }
 
@@ -753,13 +779,11 @@ router.patch("/therapist-sessions/:id", async (req, res) => {
   }
 
   const meUser = await User.findById(req.userId).select("_id role executorKind centerId").lean();
-  const isTherapist = meUser?.role === "executor" && meUser?.executorKind === "therapist";
-  const isSupervisor = meUser?.role === "supervisor";
-  if (!isTherapist && !isSupervisor) {
+  if (!meUser || !canAccessTherapistSessions(req, meUser)) {
     return res.status(403).json({ message: "Only therapists or supervisors can edit sessions" });
   }
 
-  if (String(session.centerId || "") !== String(me?.centerId || "")) {
+  if (String(session.centerId || "") !== String(me?.centerId || meUser.centerId || "")) {
     return res.status(403).json({ message: "You can edit sessions from your center only" });
   }
   if (String(session.createdBy || "") !== String(req.userId || "")) {

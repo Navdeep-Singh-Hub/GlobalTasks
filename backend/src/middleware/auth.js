@@ -48,15 +48,20 @@ export async function loadUser(req, _res, next) {
 
 export async function requireCenterAssigned(req, res, next) {
   if (isCeo(req.userRole)) return next();
-  // Reuse if actor already loaded this request
-  let user = req._actor;
-  if (!user || String(user._id) !== String(req.userId)) {
-    user = await User.findById(req.userId).select("_id centerId email role").lean();
-    req._actor = user;
+  // Important: never cache a partial user on req._actor.
+  // Routes (e.g. reports) reload actor with executorKind — a partial select here
+  // used to strip executorKind and make every therapist GET return 403.
+  let centerId = req.userCenterId || null;
+  if (!centerId && req._actor && String(req._actor._id) === String(req.userId)) {
+    centerId = req._actor.centerId || null;
   }
-  if (!user?.centerId) {
+  if (!centerId) {
+    const user = await User.findById(req.userId).select("_id centerId").lean();
+    centerId = user?.centerId || null;
+  }
+  if (!centerId) {
     return res.status(403).json({ message: "Center assignment required for this account" });
   }
-  req.userCenterId = user.centerId;
+  req.userCenterId = centerId;
   next();
 }
