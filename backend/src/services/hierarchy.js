@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import { User } from "../models/User.js";
 import { Task } from "../models/Task.js";
+import { Department } from "../models/Department.js";
+import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
 import { assignerScopeClause } from "./taskApprovalHistory.js";
 import { isCeo } from "../constants/roles.js";
 
@@ -40,6 +42,127 @@ function oid(v) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Expand free-text / primary dept into match keys (slug, code, name).
+ * e.g. "speech" → speech, spe, Speech (lowercased).
+ */
+export function expandDepartmentMatchKeys(departmentText, deptDoc) {
+  const keys = new Set();
+  const add = (v) => {
+    const s = String(v || "")
+      .trim()
+      .toLowerCase();
+    if (s) keys.add(s);
+  };
+  add(departmentText);
+  if (deptDoc) {
+    add(deptDoc.name);
+    add(deptDoc.code);
+  }
+
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const d of ALLOWED_DEPARTMENTS) {
+      const cands = [d.slug, String(d.code).toLowerCase(), String(d.name).toLowerCase()];
+      if ([...keys].some((k) => cands.includes(k))) {
+        for (const c of cands) {
+          if (!keys.has(c)) {
+            keys.add(c);
+            expanded = true;
+          }
+        }
+      }
+    }
+  }
+  return [...keys];
+}
+
+/**
+ * All therapists in the supervisor's center who share the same department
+ * (Speech → all speech therapists, OT → all OT, BT → all BT, etc.).
+ * Matches both free-text `department` and `departmentPrimary`.
+ */
+export async function getSupervisorDepartmentTherapistIds(supervisorId, centerId) {
+  const supervisor = await User.findById(supervisorId).select("centerId department departmentPrimary").lean();
+  if (!supervisor) return [];
+
+  const center = centerId || supervisor.centerId || null;
+  let deptDoc = null;
+  if (supervisor.departmentPrimary) {
+    deptDoc = await Department.findById(supervisor.departmentPrimary).select("name code").lean();
+  }
+  const keys = expandDepartmentMatchKeys(supervisor.department, deptDoc);
+  if (!keys.length && !supervisor.departmentPrimary) return [];
+
+  const or = [];
+  if (supervisor.departmentPrimary) {
+    or.push({ departmentPrimary: supervisor.departmentPrimary });
+  }
+  if (keys.length) {
+    or.push({
+      $expr: {
+        $in: [{ $toLower: { $ifNull: ["$department", ""] } }, keys],
+      },
+    });
+    // Therapists who only have departmentPrimary set (no free-text department).
+    const upperCodes = keys.map((k) => k.toUpperCase());
+    const nameRegexes = keys.map((k) => new RegExp(`^${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"));
+    const linkedDeptIds = await Department.find({
+      $or: [{ code: { $in: upperCodes } }, { name: { $in: nameRegexes } }],
+    }).distinct("_id");
+    if (linkedDeptIds.length) {
+      or.push({ departmentPrimary: { $in: linkedDeptIds } });
+    }
+  }
+  if (!or.length) return [];
+
+  const filter = {
+    role: "executor",
+    executorKind: "therapist",
+    active: ACTIVE_USER_FILTER,
+    $or: or,
+  };
+  if (center) filter.centerId = oid(center) || center;
+
+  const ids = await User.find(filter).distinct("_id");
+  return ids.map(String);
+}
+
+/**
+ * Therapists a supervisor may view/manage clinically:
+ * 1) Same department + center (primary rule)
+ * 2) Plus hierarchy fallbacks so mapped reports still appear
+ */
+export async function getSupervisorTherapistIds(supervisorId, centerId) {
+  const deptIds = await getSupervisorDepartmentTherapistIds(supervisorId, centerId);
+
+  const descendants = await getDescendantUsers(supervisorId, centerId || null);
+  const descendantIds = descendants.filter((u) => u.role === "executor").map((u) => String(u._id));
+
+  const directReportIds = await User.distinct("_id", {
+    reportsTo: supervisorId,
+    role: "executor",
+    executorKind: "therapist",
+    active: ACTIVE_USER_FILTER,
+    ...(centerId ? { centerId } : {}),
+  });
+
+  const candidateIds = Array.from(
+    new Set([...deptIds, ...descendantIds, ...directReportIds.map((id) => String(id))])
+  );
+  if (!candidateIds.length) return [];
+
+  const therapistIds = await User.find({
+    _id: { $in: candidateIds },
+    role: "executor",
+    executorKind: "therapist",
+    active: ACTIVE_USER_FILTER,
+    ...(centerId ? { centerId } : {}),
+  }).distinct("_id");
+  return therapistIds;
 }
 
 async function getDirectChildrenMap(parentIds, centerId) {
@@ -119,7 +242,10 @@ export async function getVisibleUserIds({ actorId, actorRole, centerId }) {
   }
   if (actorRole === "supervisor") {
     const descendants = await getDescendantUsers(actorId, centerId);
-    return [String(actorId), ...descendants.map((u) => String(u._id))];
+    const deptTherapists = await getSupervisorDepartmentTherapistIds(actorId, centerId);
+    return Array.from(
+      new Set([String(actorId), ...descendants.map((u) => String(u._id)), ...deptTherapists])
+    );
   }
   if (actorRole === "operations") {
     const filter = { deletedAt: null, ...assignerScopeClause(actorId) };
@@ -159,8 +285,17 @@ export async function getAssignableAssigneeIds({ actorId, actorRole, centerId, a
     return getOperationsAssignableIds(actorId, centerId);
   }
 
+  // Supervisors: all therapists in their department (Speech/OT/BT/…) + direct reports.
+  if (actorRole === "supervisor") {
+    const [descendants, deptTherapists] = await Promise.all([
+      getDescendantUsers(actorId, centerId),
+      getSupervisorDepartmentTherapistIds(actorId, centerId),
+    ]);
+    const fromTree = descendants.filter((u) => u.role === "executor").map((u) => String(u._id));
+    return Array.from(new Set([...fromTree, ...deptTherapists]));
+  }
+
   const descendants = await getDescendantUsers(actorId, centerId);
   const allowedRoles = new Set(["executor"]);
   return descendants.filter((u) => allowedRoles.has(u.role)).map((u) => String(u._id));
 }
-

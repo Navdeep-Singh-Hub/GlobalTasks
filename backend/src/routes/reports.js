@@ -9,7 +9,7 @@ import { SupervisorSheet } from "../models/SupervisorSheet.js";
 import { CoordinatorSheet } from "../models/CoordinatorSheet.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { canViewClinicalPerformance, isCeo, isManagement } from "../constants/roles.js";
-import { getDescendantUsers } from "../services/hierarchy.js";
+import { getSupervisorTherapistIds } from "../services/hierarchy.js";
 import { assignerScopeClause } from "../services/taskApprovalHistory.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
@@ -321,50 +321,7 @@ async function assertCoordinatorPerformanceAccess(req, me, coordinatorId) {
   return { ok: true, coordinator: coord };
 }
 
-async function getSupervisorTherapistIds(supervisorId, centerId) {
-  const descendants = await getDescendantUsers(supervisorId, centerId || null);
-  const descendantIds = descendants
-    .filter((u) => u.role === "executor" && u.executorKind === "therapist")
-    .map((u) => String(u._id));
-
-  const directReportIds = await User.distinct("_id", {
-    reportsTo: supervisorId,
-    role: "executor",
-    executorKind: "therapist",
-    active: true,
-    ...(centerId ? { centerId } : {}),
-  });
-
-  const taskAssignedIds = await Task.distinct("assignees", {
-    createdBy: supervisorId,
-    deletedAt: null,
-    ...(centerId ? { centerId } : {}),
-  });
-
-  const sessionLinkedIds = await TherapistSession.distinct("therapistId", {
-    $or: [{ createdBy: supervisorId }, { markedBy: supervisorId }],
-    ...(centerId ? { centerId } : {}),
-  });
-
-  const candidateIds = Array.from(
-    new Set([
-      ...descendantIds,
-      ...directReportIds.map((id) => String(id)),
-      ...taskAssignedIds.map((id) => String(id)),
-      ...sessionLinkedIds.map((id) => String(id)),
-    ])
-  );
-  if (!candidateIds.length) return [];
-
-  const therapistIds = await User.find({
-    _id: { $in: candidateIds },
-    role: "executor",
-    executorKind: "therapist",
-    active: true,
-    ...(centerId ? { centerId } : {}),
-  }).distinct("_id");
-  return therapistIds;
-}
+// getSupervisorTherapistIds lives in hierarchy.js (department-scoped Speech/OT/BT/…).
 
 router.get("/summary", async (req, res) => {
   const me = await actor(req);
