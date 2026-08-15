@@ -181,9 +181,21 @@ function newRow(): SessionRow {
   };
 }
 
-export function PendingRecurringDailySessions() {
+export function PendingRecurringDailySessions({
+  onBehalfUser = null,
+}: {
+  onBehalfUser?: {
+    _id: string;
+    name: string;
+    role: string;
+    executorKind?: string;
+  } | null;
+} = {}) {
   const { user } = useAuth();
-  const isSupervisor = user?.role === "supervisor";
+  const targetUser = onBehalfUser || user;
+  const targetUserId = targetUser?._id || "";
+  const isSupervisor = targetUser?.role === "supervisor";
+  const isOnBehalf = Boolean(onBehalfUser && user && onBehalfUser._id !== user._id);
   const [sessionDate, setSessionDate] = useState(todayIsoDate);
   const [rows, setRows] = useState<SessionRow[]>(() => [newRow()]);
   const [submitting, setSubmitting] = useState(false);
@@ -223,15 +235,19 @@ export function PendingRecurringDailySessions() {
   }, [sessionDate]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || !targetUserId) return;
     let cancelled = false;
     const qs = new URLSearchParams();
     qs.set("page", "1");
     qs.set("limit", String(UPLOADED_LIST_LIMIT));
     if (viewFrom) qs.set("from", viewFrom);
     if (viewTo) qs.set("to", viewTo);
-    // Always own uploads (therapist + supervisor) — never team list on this panel.
-    qs.set("scope", "self");
+    if (isOnBehalf) {
+      qs.set("therapistId", targetUserId);
+    } else {
+      // Always own uploads (therapist + supervisor) — never team list on this panel.
+      qs.set("scope", "self");
+    }
     // Cache buster so the browser / any intermediary never serves a stale response.
     qs.set("_", String(Date.now()));
     const base = qs.toString();
@@ -261,7 +277,7 @@ export function PendingRecurringDailySessions() {
     return () => {
       cancelled = true;
     };
-  }, [user, viewFrom, viewTo, refreshToken]);
+  }, [user, targetUserId, isOnBehalf, viewFrom, viewTo, refreshToken]);
 
   const hasMoreUploaded = uploadedSessionsTotal > uploadedSessions.length;
 
@@ -294,6 +310,7 @@ export function PendingRecurringDailySessions() {
             videoUploaded: r.videoUploaded,
             videoUrl: "",
             remarks: r.remarks.trim(),
+            ...(isOnBehalf ? { therapistId: targetUserId } : {}),
           }),
         });
       }
@@ -311,10 +328,10 @@ export function PendingRecurringDailySessions() {
   };
 
   const refreshSupervisorSheetInstances = useCallback(async () => {
-    if (!user?._id) return;
+    if (!targetUserId) return;
     const qs = new URLSearchParams();
     qs.set("sheetDate", sessionDate);
-    qs.set("supervisorId", user._id);
+    qs.set("supervisorId", targetUserId);
     try {
       const d = await api<{ instances: { instanceKey: string; label: string }[] }>(`/reports/supervisor-sheet/instances?${qs.toString()}`);
       const inst = Array.isArray(d.instances) ? d.instances : [];
@@ -324,7 +341,7 @@ export function PendingRecurringDailySessions() {
     } catch {
       setSupervisorSheetInstances([]);
     }
-  }, [sessionDate, user?._id]);
+  }, [sessionDate, targetUserId]);
 
   const mergedSupervisorSheetTabs = useMemo(() => {
     const seen = new Set<string>();
@@ -350,10 +367,10 @@ export function PendingRecurringDailySessions() {
   }, [supervisorSheetInstances, pendingSupervisorSheetKeys]);
 
   useEffect(() => {
-    if (!isSupervisor || !user?._id) return;
+    if (!isSupervisor || !targetUserId) return;
     setPendingSupervisorSheetKeys([]);
     void refreshSupervisorSheetInstances();
-  }, [isSupervisor, sessionDate, user?._id, refreshSupervisorSheetInstances]);
+  }, [isSupervisor, sessionDate, targetUserId, refreshSupervisorSheetInstances]);
 
   useEffect(() => {
     const keys = new Set(mergedSupervisorSheetTabs.map((t) => t.instanceKey));
@@ -363,10 +380,10 @@ export function PendingRecurringDailySessions() {
   }, [mergedSupervisorSheetTabs, activeSupervisorSheetKey]);
 
   useEffect(() => {
-    if (!isSupervisor || !user?._id) return;
+    if (!isSupervisor || !targetUserId) return;
     const qs = new URLSearchParams();
     qs.set("sheetDate", sessionDate);
-    qs.set("supervisorId", user._id);
+    qs.set("supervisorId", targetUserId);
     qs.set("instanceKey", activeSupervisorSheetKey);
     api<{ entries: { taskKey: string; status?: string; remarks?: string }[]; label?: string }>(
       `/reports/supervisor-sheet?${qs.toString()}`
@@ -444,10 +461,10 @@ export function PendingRecurringDailySessions() {
         setSheetDateToByTask(nextDateTo);
         setSheetTherapyPlanRowsByTask(nextTherapyPlanRows);
       });
-  }, [isSupervisor, sessionDate, user?._id, activeSupervisorSheetKey, supervisorSheetReloadNonce]);
+  }, [isSupervisor, sessionDate, targetUserId, activeSupervisorSheetKey, supervisorSheetReloadNonce]);
 
   const saveSupervisorSheet = async () => {
-    if (!isSupervisor || !user?._id) return;
+    if (!isSupervisor || !targetUserId) return;
     setSavingSheet(true);
     setMessage(null);
     try {
@@ -483,7 +500,7 @@ export function PendingRecurringDailySessions() {
       }>("/reports/supervisor-sheet", {
         method: "PUT",
         body: JSON.stringify({
-          supervisorId: user._id,
+          supervisorId: targetUserId,
           sheetDate: sessionDate,
           instanceKey: activeSupervisorSheetKey,
           label: supervisorSheetLabelDraft.trim(),
@@ -525,7 +542,7 @@ export function PendingRecurringDailySessions() {
   };
 
   const removeActiveSupervisorSheetTab = async () => {
-    if (!user?._id || activeSupervisorSheetKey === "default") return;
+    if (!targetUserId || activeSupervisorSheetKey === "default") return;
     if (pendingSupervisorSheetKeys.includes(activeSupervisorSheetKey)) {
       setPendingSupervisorSheetKeys((prev) => prev.filter((k) => k !== activeSupervisorSheetKey));
       setActiveSupervisorSheetKey("default");
@@ -534,7 +551,7 @@ export function PendingRecurringDailySessions() {
     setMessage(null);
     try {
       const qs = new URLSearchParams();
-      qs.set("supervisorId", user._id);
+      qs.set("supervisorId", targetUserId);
       qs.set("sheetDate", sessionDate);
       qs.set("instanceKey", activeSupervisorSheetKey);
       await api(`/reports/supervisor-sheet?${qs.toString()}`, { method: "DELETE" });

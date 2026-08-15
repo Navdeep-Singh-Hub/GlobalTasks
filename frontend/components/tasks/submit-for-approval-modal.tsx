@@ -11,6 +11,7 @@ export function SubmitForApprovalModal({
   taskId,
   taskIds,
   taskTitle,
+  onBehalfAssigneeId,
   onClose,
   onSuccess,
 }: {
@@ -18,6 +19,7 @@ export function SubmitForApprovalModal({
   taskId?: string | null;
   taskIds?: string[];
   taskTitle?: string;
+  onBehalfAssigneeId?: string;
   onClose: () => void;
   onSuccess?: () => void;
 }) {
@@ -44,15 +46,16 @@ export function SubmitForApprovalModal({
     setErr("");
     setWorking(true);
     try {
+      const onBehalf = onBehalfAssigneeId ? { onBehalfAssigneeId } : {};
       if (bulk && taskIds?.length) {
         await api("/tasks/bulk", {
           method: "POST",
-          body: JSON.stringify({ ids: taskIds, status: "completed", submissionRemarks: text }),
+          body: JSON.stringify({ ids: taskIds, status: "completed", submissionRemarks: text, ...onBehalf }),
         });
       } else if (taskId) {
         await api(`/tasks/${taskId}`, {
           method: "PATCH",
-          body: JSON.stringify({ status: "completed", submissionRemarks: text }),
+          body: JSON.stringify({ status: "completed", submissionRemarks: text, ...onBehalf }),
         });
       }
       onClose();

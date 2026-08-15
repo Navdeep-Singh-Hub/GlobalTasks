@@ -24,6 +24,7 @@ import {
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds, findInvalidCenterAssignees, canAccessAnyCenter } from "../services/hierarchy.js";
+import { isPastDataFillEmail } from "../services/pastDataFill.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import {
   recordTaskSubmission,
@@ -80,7 +81,11 @@ async function actor(req) {
 }
 
 function actorHasAnyCenterAccess(req, me) {
-  return canAccessAnyCenter({ role: req.userRole, email: me?.email });
+  return canAccessAnyCenter({ role: req.userRole, email: me?.email }) || isPastDataFillEmail(me?.email);
+}
+
+function actorCanFillPastData(me) {
+  return isPastDataFillEmail(me?.email);
 }
 
 const ADMIN_TASK_FIELDS = new Set([
@@ -652,7 +657,11 @@ router.get("/", async (req, res) => {
   });
   if (!actorHasAnyCenterAccess(req, me)) filter.centerId = me?.centerId || null;
   const trashOnly = req.query.trash === "only" || req.query.bin === "only";
-  if (req.query.approval === "true") {
+  const onBehalfAssigneeId = String(req.query.onBehalfAssigneeId || "").trim();
+  const fillPast = actorCanFillPastData(me);
+  if (onBehalfAssigneeId && fillPast) {
+    filter.assignees = onBehalfAssigneeId;
+  } else if (req.query.approval === "true") {
     await applyApprovalListScope(filter, {
       userId: req.userId,
       role: req.userRole,
@@ -734,6 +743,8 @@ router.get("/", async (req, res) => {
   if (req.query.assigneeInbox === "true") {
     const todayKey = calendarDayKeyInTz(new Date());
     const overdueDailyTodayIds = [];
+    const personalAssigneeId =
+      onBehalfAssigneeId && fillPast ? onBehalfAssigneeId : req.userId;
     tasks = tasks.map((t) => {
       const doc = withEffectiveTaskStatus(t);
       if (
@@ -755,7 +766,7 @@ router.get("/", async (req, res) => {
         { $set: { status: "pending" } }
       );
     }
-    tasks = await filterAssigneePersonalOpenTasks(tasks, req.userId);
+    tasks = await filterAssigneePersonalOpenTasks(tasks, personalAssigneeId);
   } else {
     tasks = tasks.map((t) => withEffectiveTaskStatus(t));
   }
@@ -775,6 +786,10 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   const me = await actor(req);
+  const onBehalfAssigneeId = String(req.query.onBehalfAssigneeId || "").trim();
+  const fillPast = actorCanFillPastData(me);
+  const viewAsAssigneeId = onBehalfAssigneeId && fillPast ? onBehalfAssigneeId : req.userId;
+
   let task = await Task.findById(req.params.id)
     .populate("assignees", "name email avatarUrl role")
     .populate("assignedBy", "name email")
@@ -783,10 +798,10 @@ router.get("/:id", async (req, res) => {
     .populate("departmentId", "name code")
     .populate("centerId", "name code");
 
-  if (task && !task.deletedAt && isRecurring(task.taskType) && userIsAssigneeOnTask(task, req.userId)) {
+  if (task && !task.deletedAt && isRecurring(task.taskType) && userIsAssigneeOnTask(task, viewAsAssigneeId)) {
     // Sync without a full reload round-trip first; re-populate once only if writes happened.
     const beforeDue = task.dueDate?.getTime?.() || task.dueDate;
-    await syncRecurringTaskToToday(task, { assigneeId: req.userId });
+    await syncRecurringTaskToToday(task, { assigneeId: viewAsAssigneeId });
     const afterDue = task.dueDate?.getTime?.() || task.dueDate;
     if (beforeDue !== afterDue || task.isModified?.()) {
       task = await Task.findById(req.params.id)
@@ -803,11 +818,15 @@ router.get("/:id", async (req, res) => {
   if (!actorHasAnyCenterAccess(req, me) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
-  if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
+  if (fillPast && onBehalfAssigneeId) {
+    if (!userIsAssigneeOnTask(task, onBehalfAssigneeId)) {
+      return res.status(403).json({ message: "Selected user is not an assignee on this task" });
+    }
+  } else if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
 
-  const personal = await resolvePersonalWorkTaskView(task, req.userId);
+  const personal = await resolvePersonalWorkTaskView(task, viewAsAssigneeId);
   const base =
     personal && typeof personal === "object"
       ? personal
@@ -993,8 +1012,18 @@ router.patch("/:id", async (req, res, next) => {
     if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
+    const onBehalfAssigneeId = String(req.body.onBehalfAssigneeId || "").trim();
+    const fillPast = actorCanFillPastData(me);
+    if (onBehalfAssigneeId && fillPast && !userIsAssigneeOnTask(task, onBehalfAssigneeId)) {
+      return res.status(403).json({ message: "Selected user is not an assignee on this task" });
+    }
+    const actingAsAssigneeId = onBehalfAssigneeId && fillPast ? onBehalfAssigneeId : null;
     const isAssignerEdit = managementCreatorOwnsTask(req, task) || (isCeo(req.userRole) && taskCreatedByUser(task, req.userId));
-    if (!isAssignerEdit && !(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
+    if (
+      !actingAsAssigneeId &&
+      !isAssignerEdit &&
+      !(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))
+    ) {
       return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
     }
 
@@ -1115,17 +1144,20 @@ router.patch("/:id", async (req, res, next) => {
       });
     }
     if (requestedComplete && !isCeo(req.userRole)) {
-      const workableErr = assertOccurrenceWorkableForAssignee(task);
-      if (workableErr) return res.status(400).json({ message: workableErr });
+      const submitAsId = actingAsAssigneeId || req.userId;
+      if (!actingAsAssigneeId) {
+        const workableErr = assertOccurrenceWorkableForAssignee(task);
+        if (workableErr) return res.status(400).json({ message: workableErr });
+      }
       if (!submissionRemarks) {
         return res.status(400).json({ message: "Remarks are required when submitting for approval" });
       }
       // Multi-assignee: split so this submit only affects this person's task; others keep open copies.
-      if ((task.assignees || []).length > 1 && userIsAssigneeOnTask(task, req.userId)) {
+      if ((task.assignees || []).length > 1 && userIsAssigneeOnTask(task, submitAsId)) {
         const originalTask = task;
         const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
           originalTask,
-          req.userId,
+          submitAsId,
           { actorId: req.userId }
         );
         for (const c of clones) {
@@ -1143,7 +1175,7 @@ router.patch("/:id", async (req, res, next) => {
       task.completedAt = null;
       // Clear stale not-done state so assigner Approve treats this as a real completion submit.
       task.notDoneApproval = undefined;
-      if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate)) {
+      if (task.taskType === "daily" && !isOccurrenceDueToday(task.dueDate) && !actingAsAssigneeId) {
         const todayKey = calendarDayKeyInTz(new Date());
         const time = new Intl.DateTimeFormat("en-GB", {
           timeZone: APP_TIMEZONE,
@@ -1213,7 +1245,9 @@ router.patch("/:id", async (req, res, next) => {
       if (!assignerReopenedHistory) {
         await recordTaskSubmission({
           task,
-          assigneeId: assignerReopened ? reopenAssigneeId : req.userId,
+          assigneeId: assignerReopened
+            ? reopenAssigneeId
+            : actingAsAssigneeId || req.userId,
           remarks: task.submissionRemarks,
           kind: "completion",
         });
@@ -1280,8 +1314,13 @@ router.post("/bulk", async (req, res) => {
   const me = await actor(req);
   const { ids = [], action, status } = req.body;
   if (!ids.length) return res.json({ ok: true });
+  const onBehalfAssigneeId = String(req.body.onBehalfAssigneeId || "").trim();
+  const fillPast = actorCanFillPastData(me);
+  const actingAsAssigneeId = onBehalfAssigneeId && fillPast ? onBehalfAssigneeId : null;
   const scope = !actorHasAnyCenterAccess(req, me) ? { centerId: me?.centerId || null } : {};
-  applyMutationScopeForRole(scope, req.userId, req.userRole);
+  if (!actingAsAssigneeId) {
+    applyMutationScopeForRole(scope, req.userId, req.userRole);
+  }
 
   if (action === "delete") {
     await Task.updateMany({ _id: { $in: ids }, ...scope }, { $set: { deletedAt: new Date() } });
@@ -1298,7 +1337,7 @@ router.post("/bulk", async (req, res) => {
   }
 
   if (status === "completed") {
-    if (isAssigneeOnly(req.userRole)) {
+    if (isAssigneeOnly(req.userRole) && !actingAsAssigneeId) {
       const meUser = await User.findById(req.userId).select("_id weekOffDays").lean();
       if (isWeekOffToday(meUser?.weekOffDays || [])) {
         return res.status(400).json({ message: "You cannot mark tasks on your week off day." });
@@ -1308,7 +1347,7 @@ router.post("/bulk", async (req, res) => {
     if (!isCeo(req.userRole) && !submissionRemarks) {
       return res.status(400).json({ message: "Remarks are required when submitting for approval" });
     }
-    if (!isCeo(req.userRole)) {
+    if (!isCeo(req.userRole) && !actingAsAssigneeId) {
       const tasksToCheck = await Task.find({ _id: { $in: ids }, ...scope }).lean();
       const tooEarly = tasksToCheck.find((t) => assertOccurrenceWorkableForAssignee(t));
       if (tooEarly) {
@@ -1318,13 +1357,17 @@ router.post("/bulk", async (req, res) => {
     const actor = await User.findById(req.userId).lean();
     const tasks = await Task.find({ _id: { $in: ids }, ...scope });
     for (const t of tasks) {
+      if (actingAsAssigneeId && !userIsAssigneeOnTask(t, actingAsAssigneeId)) {
+        continue;
+      }
       if (!isCeo(req.userRole)) {
         let working = t;
-        if ((t.assignees || []).length > 1 && userIsAssigneeOnTask(t, req.userId)) {
+        const submitAsId = actingAsAssigneeId || req.userId;
+        if ((t.assignees || []).length > 1 && userIsAssigneeOnTask(t, submitAsId)) {
           // eslint-disable-next-line no-await-in-loop
           const { workingTask, clones, removedSelfFromOriginal } = await claimSharedTaskForAssignee(
             t,
-            req.userId,
+            submitAsId,
             { actorId: req.userId }
           );
           for (const c of clones) {
@@ -1344,7 +1387,7 @@ router.post("/bulk", async (req, res) => {
         // eslint-disable-next-line no-await-in-loop
         await recordTaskSubmission({
           task: working,
-          assigneeId: req.userId,
+          assigneeId: submitAsId,
           remarks: submissionRemarks,
           kind: "completion",
         });

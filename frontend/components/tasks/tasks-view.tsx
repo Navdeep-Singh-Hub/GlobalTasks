@@ -64,6 +64,8 @@ type Preset = {
   myTasks?: boolean;
   /** Assignee work inbox: exclude tasks already submitted for approval. */
   assigneeInbox?: boolean;
+  /** Fill past data: act as this assignee. */
+  onBehalfAssigneeId?: string;
 };
 
 function taskAssigner(t: Task) {
@@ -274,8 +276,13 @@ export function TasksView({
     if (preset.approval && approvalDueDate) qs.set("approvalDueDate", approvalDueDate);
     if (preset.approval && approvalAssignee !== "all") qs.set("assignee", approvalAssignee);
     if (preset.workableToday) qs.set("workableToday", "true");
-    if (preset.myTasks) qs.set("myTasks", "true");
-    if (preset.assigneeInbox) qs.set("assigneeInbox", "true");
+    if (preset.onBehalfAssigneeId) {
+      qs.set("onBehalfAssigneeId", preset.onBehalfAssigneeId);
+      qs.set("assigneeInbox", "true");
+    } else {
+      if (preset.myTasks) qs.set("myTasks", "true");
+      if (preset.assigneeInbox) qs.set("assigneeInbox", "true");
+    }
     if (masterAdminActions) {
       qs.set("masterScope", "true");
       if (!isCeoMasterView) {
@@ -293,7 +300,7 @@ export function TasksView({
       })
       .catch(() => setTasks([]))
       .finally(() => setLoading(false));
-  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, masterAdminActions, isCeoMasterView, masterRelation, assigneeFilter, approvalDueDate, approvalAssignee]);
+  }, [debouncedSearch, status, priority, taskType, preset.recurring, preset.statusGroup, preset.approval, preset.workableToday, preset.myTasks, preset.assigneeInbox, preset.onBehalfAssigneeId, masterAdminActions, isCeoMasterView, masterRelation, assigneeFilter, approvalDueDate, approvalAssignee]);
 
   useEffect(() => {
     load();
@@ -389,8 +396,10 @@ export function TasksView({
     load();
   };
 
-  const isAssigneeOnTask = (t: Task) =>
-    Boolean(myId && t.assignees?.some((a) => String(a._id || a) === myId));
+  const isAssigneeOnTask = (t: Task) => {
+    const id = preset.onBehalfAssigneeId || myId;
+    return Boolean(id && t.assignees?.some((a) => String(a._id || a) === id));
+  };
 
   const canResubmitTask = (t: Task) =>
     t.taskType === "daily" &&
@@ -1046,6 +1055,7 @@ export function TasksView({
         open={!!detailId}
         onClose={() => setDetailId(null)}
         onUpdated={load}
+        onBehalfAssigneeId={preset.onBehalfAssigneeId}
         onRequestEdit={(id) => {
           setDetailId(null);
           setEditId(id);
@@ -1070,6 +1080,7 @@ export function TasksView({
       <SubmitForApprovalModal
         open={submitBulkOpen}
         taskIds={selected}
+        onBehalfAssigneeId={preset.onBehalfAssigneeId}
         onClose={() => setSubmitBulkOpen(false)}
         onSuccess={() => {
           setSubmitBulkOpen(false);

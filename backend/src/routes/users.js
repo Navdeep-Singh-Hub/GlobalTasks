@@ -14,6 +14,7 @@ import { authRequired, requireCenterAssigned, requireManagement, requireRoles } 
 import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
 import { ACTIVE_USER_FILTER, getAssignableAssigneeIds, getVisibleUserIds, canAccessAnyCenter } from "../services/hierarchy.js";
+import { isPastDataFillEmail } from "../services/pastDataFill.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -23,7 +24,7 @@ router.use(authRequired);
 router.use(requireCenterAssigned);
 
 async function actor(req) {
-  if (req._actor) return req._actor;
+  if (req._actor && Object.prototype.hasOwnProperty.call(req._actor, "email")) return req._actor;
   req._actor = await User.findById(req.userId).select("_id role centerId email").lean();
   return req._actor;
 }
@@ -35,6 +36,7 @@ function executorNeedsSupervisor(role, executorKind) {
 router.get("/", async (req, res) => {
   const { search, role, status, department, centerId, reportsTo } = req.query;
   const me = await actor(req);
+  const fillPast = isPastDataFillEmail(me?.email);
   const q = {};
   if (search) {
     q.$or = [
@@ -50,15 +52,16 @@ router.get("/", async (req, res) => {
   if (status === "active") q.active = ACTIVE_USER_FILTER;
   if (status === "inactive") q.active = false;
   const assigneePicker =
-    String(req.query.assignable || "").toLowerCase() === "true" && (isManagement(req.userRole) || isCeo(req.userRole));
-  const crossCenter = canAccessAnyCenter({ role: req.userRole, email: me?.email });
+    String(req.query.assignable || "").toLowerCase() === "true" &&
+    (isManagement(req.userRole) || isCeo(req.userRole) || fillPast);
+  const crossCenter = canAccessAnyCenter({ role: req.userRole, email: me?.email }) || fillPast;
   const pickerCenterId =
     req.query.centerId && String(req.query.centerId) !== "all"
       ? String(req.query.centerId)
       : isCeo(req.userRole) || crossCenter
         ? ""
         : String(me?.centerId || "");
-  if (!isCeo(req.userRole) && !crossCenter) q.centerId = me?.centerId || null;
+  if (!isCeo(req.userRole) && !crossCenter && !fillPast) q.centerId = me?.centerId || null;
   if (assigneePicker && pickerCenterId && (isCeo(req.userRole) || crossCenter)) {
     q.centerId = pickerCenterId;
   }
@@ -88,7 +91,7 @@ router.get("/", async (req, res) => {
   } else if (operationsAdminRoleLookup) {
     // Admin form: e.g. supervisor list for therapist mapping in same center.
     q.role = role;
-  } else {
+  } else if (!fillPast) {
     const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
     if (visibleIds) q._id = { $in: visibleIds };
   }

@@ -14,6 +14,7 @@ import { assignerScopeClause } from "../services/taskApprovalHistory.js";
 import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
 import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetEntries.js";
+import { isPastDataFillEmail } from "../services/pastDataFill.js";
 
 const router = Router();
 router.use(authRequired);
@@ -38,16 +39,26 @@ async function actor(req) {
   if (
     req._actor &&
     String(req._actor._id) === String(req.userId) &&
-    Object.prototype.hasOwnProperty.call(req._actor, "executorKind")
+    Object.prototype.hasOwnProperty.call(req._actor, "executorKind") &&
+    Object.prototype.hasOwnProperty.call(req._actor, "email")
   ) {
     return req._actor;
   }
-  req._actor = await User.findById(req.userId).select("_id role executorKind centerId").lean();
+  req._actor = await User.findById(req.userId).select("_id role executorKind centerId email").lean();
   return req._actor;
+}
+
+function hasGlobalClinicalWrite(req, me) {
+  return isCeo(req.userRole) || isPastDataFillEmail(me?.email) || isPastDataFillEmail(req.userEmail);
+}
+
+function canBypassCenterScope(req, me) {
+  return hasGlobalClinicalWrite(req, me);
 }
 
 /** Role gate for therapist session APIs — trusts DB user, not just JWT + partial actor. */
 function canAccessTherapistSessions(req, me) {
+  if (hasGlobalClinicalWrite(req, me)) return true;
   const jwtRole = String(req.userRole || "").toLowerCase();
   const dbRole = String(me?.role || "").toLowerCase();
   const kind = String(me?.executorKind || "").toLowerCase().trim();
@@ -84,9 +95,14 @@ function parsePageLimit(query, defaultLimit = 25, maxLimit = 100) {
 async function buildTherapistSessionsFilter(req, me) {
   const isTherapist = isTherapistActor(req, me);
   const isSupervisor = isSupervisorActor(req, me);
+  const fillOnBehalf = hasGlobalClinicalWrite(req, me);
+  const onBehalfTherapistId = String(req.query.therapistId || "").trim();
   // Personal "my uploads" log: therapists always; anyone with scope=self (supervisors).
+  // Fill-on-behalf with an explicit therapistId must not collapse into the actor's self log.
   const selfScope =
-    isTherapist || String(req.query.scope || "").toLowerCase() === "self";
+    !fillOnBehalf || !onBehalfTherapistId
+      ? isTherapist || String(req.query.scope || "").toLowerCase() === "self"
+      : false;
 
   const q = {};
   if (req.query.from || req.query.to) {
@@ -107,8 +123,8 @@ async function buildTherapistSessionsFilter(req, me) {
 
   const selectedCenterId = String(req.query.centerId || "").trim();
   // Own session log: ownership is enough; do not exclude mismatched center rows.
-  if (!selfScope && !isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (!selfScope && isCeo(req.userRole) && selectedCenterId) {
+  if (!selfScope && !canBypassCenterScope(req, me)) q.centerId = me?.centerId || null;
+  else if (!selfScope && canBypassCenterScope(req, me) && selectedCenterId) {
     const centerTherapistIds = await User.find({
       active: true,
       centerId: selectedCenterId,
@@ -124,7 +140,7 @@ async function buildTherapistSessionsFilter(req, me) {
     }
   }
 
-  if (!selfScope && isSupervisorActor(req, me) && !q.therapistId && !q.$or) {
+  if (!selfScope && isSupervisorActor(req, me) && !fillOnBehalf && !q.therapistId && !q.$or) {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     if (!therapistIds.length) q.therapistId = { $in: [] };
     else if (q.therapistId) {
@@ -245,7 +261,7 @@ function taskDueDateRangeFromQuery(query) {
 }
 
 function canAccessSupervisorSheet(req, meUser, targetSupervisorId) {
-  if (isCeo(req.userRole)) return true;
+  if (hasGlobalClinicalWrite(req, meUser)) return true;
   if (req.userRole === "supervisor") return String(targetSupervisorId || "") === String(req.userId || "");
   return false;
 }
@@ -288,15 +304,15 @@ async function migrateLegacySupervisorSheets(supervisorId, sheetDate, centerId) 
   );
 }
 
-function canReadCoordinatorSheet(req, targetCoordinatorId) {
-  if (isCeo(req.userRole)) return true;
+function canReadCoordinatorSheet(req, me, targetCoordinatorId) {
+  if (hasGlobalClinicalWrite(req, me)) return true;
   if (req.userRole === "coordinator") return String(targetCoordinatorId || "") === String(req.userId || "");
   if (req.userRole === "centre_head") return true;
   return false;
 }
 
-function canWriteCoordinatorSheet(req, targetCoordinatorId) {
-  if (isCeo(req.userRole)) return true;
+function canWriteCoordinatorSheet(req, me, targetCoordinatorId) {
+  if (hasGlobalClinicalWrite(req, me)) return true;
   if (req.userRole === "coordinator") return String(targetCoordinatorId || "") === String(req.userId || "");
   return false;
 }
@@ -611,18 +627,40 @@ router.get("/export", async (req, res) => {
 });
 
 router.post("/therapist-sessions", async (req, res) => {
-  const uploader = await User.findById(req.userId)
-    .select("_id role executorKind centerId departmentPrimary weekOffDays")
+  const actorUser = await User.findById(req.userId)
+    .select("_id role executorKind centerId departmentPrimary weekOffDays email")
     .lean();
-  if (!uploader || !canAccessTherapistSessions(req, uploader)) {
+  if (!actorUser || !canAccessTherapistSessions(req, actorUser)) {
     return res.status(403).json({ message: "Only therapists or supervisors can submit sessions" });
   }
-  if (!uploader.centerId && !isCeo(req.userRole)) {
+
+  const requestedTherapistId = String(req.body.therapistId || "").trim();
+  let target = actorUser;
+  if (requestedTherapistId && String(requestedTherapistId) !== String(actorUser._id)) {
+    if (!hasGlobalClinicalWrite(req, actorUser)) {
+      return res.status(403).json({ message: "Not allowed to submit sessions for another user" });
+    }
+    target = await User.findById(requestedTherapistId)
+      .select("_id role executorKind centerId departmentPrimary weekOffDays active")
+      .lean();
+    if (!target || target.active === false) {
+      return res.status(404).json({ message: "Target user not found" });
+    }
+    const kind = String(target.executorKind || "").toLowerCase();
+    const role = String(target.role || "").toLowerCase();
+    const okTarget =
+      kind === "therapist" || role === "supervisor" || (role === "executor" && kind === "therapist");
+    if (!okTarget) {
+      return res.status(400).json({ message: "Target must be a therapist or supervisor" });
+    }
+  }
+
+  if (!target.centerId && !canBypassCenterScope(req, actorUser)) {
     return res.status(403).json({ message: "User must belong to your center" });
   }
 
   const sessionDate = String(req.body.sessionDate || new Date().toISOString().slice(0, 10));
-  if (isWeekOffOnDate(uploader.weekOffDays || [], sessionDate)) {
+  if (isWeekOffOnDate(target.weekOffDays || [], sessionDate)) {
     return res.status(400).json({ message: "Session cannot be uploaded on week off day." });
   }
   const patientName = String(req.body.patientName || "").trim();
@@ -633,9 +671,9 @@ router.post("/therapist-sessions", async (req, res) => {
       : Number(req.body.startedAt && req.body.endedAt ? 30 : 0);
 
   const session = await TherapistSession.create({
-    therapistId: uploader._id,
-    centerId: uploader.centerId,
-    departmentId: uploader.departmentPrimary || null,
+    therapistId: target._id,
+    centerId: target.centerId,
+    departmentId: target.departmentPrimary || null,
     sessionDate,
     patientName,
     patientCode: String(req.body.patientCode || ""),
@@ -933,7 +971,7 @@ router.get("/supervisor-sheet/instances", async (req, res) => {
   if (!supervisorUser || supervisorUser.role !== "supervisor") {
     return res.status(404).json({ message: "Supervisor not found" });
   }
-  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
@@ -967,7 +1005,7 @@ router.get("/supervisor-sheet", async (req, res) => {
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
   const centerId = supervisorUser.centerId || null;
-  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
@@ -988,7 +1026,7 @@ router.put("/supervisor-sheet", async (req, res) => {
   if (!supervisorUser || supervisorUser.role !== "supervisor") {
     return res.status(404).json({ message: "Supervisor not found" });
   }
-  if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can update sheets for your center only" });
   }
   const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
@@ -1052,7 +1090,7 @@ router.delete("/supervisor-sheet", async (req, res) => {
     if (!supervisorUser || supervisorUser.role !== "supervisor") {
       return res.status(404).json({ message: "Supervisor not found" });
     }
-    if (!isCeo(req.userRole) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+    if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
       return res.status(403).json({ message: "You can update sheets for your center only" });
     }
     const centerId = supervisorUser.centerId || null;
@@ -1071,7 +1109,7 @@ router.delete("/supervisor-sheet", async (req, res) => {
 router.get("/coordinator-sheet", async (req, res) => {
   const me = await actor(req);
   const targetCoordinatorId = String(req.query.coordinatorId || req.userId || "");
-  if (!canReadCoordinatorSheet(req, targetCoordinatorId)) {
+  if (!canReadCoordinatorSheet(req, me, targetCoordinatorId)) {
     return res.status(403).json({ message: "You can access coordinator sheet for allowed users only" });
   }
   const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
@@ -1080,7 +1118,7 @@ router.get("/coordinator-sheet", async (req, res) => {
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
   const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
-  if (!isCeo(req.userRole) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!canBypassCenterScope(req, me) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   const sheet = await CoordinatorSheet.findOne(where).lean();
@@ -1090,14 +1128,14 @@ router.get("/coordinator-sheet", async (req, res) => {
 router.put("/coordinator-sheet", async (req, res) => {
   const me = await actor(req);
   const targetCoordinatorId = String(req.body.coordinatorId || req.userId || "");
-  if (!canWriteCoordinatorSheet(req, targetCoordinatorId)) {
+  if (!canWriteCoordinatorSheet(req, me, targetCoordinatorId)) {
     return res.status(403).json({ message: "You can update coordinator sheet for allowed users only" });
   }
   const coordinatorUser = await User.findById(targetCoordinatorId).select("_id role centerId").lean();
   if (!coordinatorUser || coordinatorUser.role !== "coordinator") {
     return res.status(404).json({ message: "Coordinator not found" });
   }
-  if (!isCeo(req.userRole) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!canBypassCenterScope(req, me) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
     return res.status(403).json({ message: "You can update sheets for your center only" });
   }
   const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));

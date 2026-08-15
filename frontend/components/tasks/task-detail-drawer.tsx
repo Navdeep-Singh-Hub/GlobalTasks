@@ -85,6 +85,7 @@ export function TaskDetailDrawer({
   onUpdated,
   onRequestEdit,
   onSendBackForApproval,
+  onBehalfAssigneeId,
 }: {
   taskId: string | null;
   open: boolean;
@@ -92,11 +93,12 @@ export function TaskDetailDrawer({
   onUpdated?: () => void;
   onRequestEdit?: (taskId: string) => void;
   onSendBackForApproval?: (taskId: string, occurrenceDueDate?: string) => void | Promise<void>;
+  onBehalfAssigneeId?: string;
 }) {
   const { user: me } = useAuth();
   const { celebrate } = useCelebration();
-  const myId = me?._id ? String(me._id) : "";
-  const isCeoUser = isCeo(me?.role);
+  const myId = onBehalfAssigneeId || (me?._id ? String(me._id) : "");
+  const isCeoUser = isCeo(me?.role) && !onBehalfAssigneeId;
 
   const [task, setTask] = useState<TaskDetail | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -202,14 +204,15 @@ export function TaskDetailDrawer({
     if (!taskId) return;
     setLoading(true);
     setLoadError("");
-    api<{ task: TaskDetail }>(`/tasks/${taskId}`)
+    const qs = onBehalfAssigneeId ? `?onBehalfAssigneeId=${encodeURIComponent(onBehalfAssigneeId)}` : "";
+    api<{ task: TaskDetail }>(`/tasks/${taskId}${qs}`)
       .then((d) => setTask(d.task))
       .catch((e) => {
         setTask(null);
         setLoadError(e instanceof ApiError ? e.message : "Could not load task details.");
       })
       .finally(() => setLoading(false));
-  }, [taskId]);
+  }, [taskId, onBehalfAssigneeId]);
 
   useEffect(() => {
     if (open && taskId) load();
@@ -278,7 +281,11 @@ export function TaskDetailDrawer({
     try {
       await api(`/tasks/${task._id}`, {
         method: "PATCH",
-        body: JSON.stringify({ status: "completed", submissionRemarks: text }),
+        body: JSON.stringify({
+          status: "completed",
+          submissionRemarks: text,
+          ...(onBehalfAssigneeId ? { onBehalfAssigneeId } : {}),
+        }),
       });
       setSubmitSuccess(true);
       setSubmissionRemarksDraft("");

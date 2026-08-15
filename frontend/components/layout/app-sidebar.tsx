@@ -18,6 +18,7 @@ import {
   Activity,
   ShieldCheck,
   Settings,
+  UserCog,
   ChevronLeft,
   ChevronRight,
   X,
@@ -97,7 +98,10 @@ export function AppSidebar({
 
   if (!user) return null;
   const role = user.role;
-  const items = NAV.filter((n) => n.roles.includes(role));
+  const fillPastNav: NavItem[] = user.canFillPastDataOnBehalf
+    ? [{ href: "/fill-past-data", label: "Fill past data", icon: UserCog, roles: NAV_ALL }]
+    : [];
+  const items: NavItem[] = [...NAV.filter((n) => n.roles.includes(role)), ...fillPastNav];
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "Center" : "";
 
   const shell = (

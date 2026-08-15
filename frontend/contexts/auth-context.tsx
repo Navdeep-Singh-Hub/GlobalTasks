@@ -19,6 +19,7 @@ export type User = {
   permissions?: string[];
   active?: boolean;
   canAssignAcrossCenters?: boolean;
+  canFillPastDataOnBehalf?: boolean;
 };
 
 type AuthState = {

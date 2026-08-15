@@ -1,6 +1,7 @@
 import jwt from "jsonwebtoken";
 import { User } from "../models/User.js";
 import { normalizeRole, isManagement, isCeo } from "../constants/roles.js";
+import { isPastDataFillEmail } from "../services/pastDataFill.js";
 
 export function authRequired(req, res, next) {
   const header = req.headers.authorization || "";
@@ -52,16 +53,25 @@ export async function requireCenterAssigned(req, res, next) {
   // Routes (e.g. reports) reload actor with executorKind — a partial select here
   // used to strip executorKind and make every therapist GET return 403.
   let centerId = req.userCenterId || null;
-  if (!centerId && req._actor && String(req._actor._id) === String(req.userId)) {
-    centerId = req._actor.centerId || null;
+  let email = req.userEmail || null;
+  if ((!centerId || !email) && req._actor && String(req._actor._id) === String(req.userId)) {
+    centerId = centerId || req._actor.centerId || null;
+    email = email || req._actor.email || null;
   }
-  if (!centerId) {
-    const user = await User.findById(req.userId).select("_id centerId").lean();
-    centerId = user?.centerId || null;
+  if (!centerId || !email) {
+    const user = await User.findById(req.userId).select("_id centerId email").lean();
+    centerId = centerId || user?.centerId || null;
+    email = email || user?.email || null;
+  }
+  if (isPastDataFillEmail(email)) {
+    req.userEmail = email;
+    if (centerId) req.userCenterId = centerId;
+    return next();
   }
   if (!centerId) {
     return res.status(403).json({ message: "Center assignment required for this account" });
   }
   req.userCenterId = centerId;
+  req.userEmail = email;
   next();
 }

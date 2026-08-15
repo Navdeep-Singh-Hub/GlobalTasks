@@ -266,9 +266,19 @@ const COORDINATOR_SHEET_TASKS: CoordinatorSheetRow[] = [
   { key: "g-form-filling", task: "G-Form filling" },
 ];
 
-export function CoordinatorDailySheet() {
+export function CoordinatorDailySheet({
+  onBehalfUser = null,
+}: {
+  onBehalfUser?: {
+    _id: string;
+    name: string;
+    role: string;
+  } | null;
+} = {}) {
   const { user } = useAuth();
-  const isCoordinator = user?.role === "coordinator";
+  const targetUser = onBehalfUser || user;
+  const targetUserId = targetUser?._id || "";
+  const isCoordinator = targetUser?.role === "coordinator";
   const [sheetDate, setSheetDate] = useState(todayIsoDate);
   const [open, setOpen] = useState(false);
   const [statusByTask, setStatusByTask] = useState<Record<string, "yes" | "no">>({});
@@ -290,10 +300,10 @@ export function CoordinatorDailySheet() {
   }, [sheetDate]);
 
   useEffect(() => {
-    if (!isCoordinator || !user?._id) return;
+    if (!isCoordinator || !targetUserId) return;
     const qs = new URLSearchParams();
     qs.set("sheetDate", sheetDate);
-    qs.set("coordinatorId", user._id);
+    qs.set("coordinatorId", targetUserId);
     api<{ entries: { taskKey: string; status?: string; remarks?: string }[] }>(`/reports/coordinator-sheet?${qs.toString()}`)
       .then((d) => {
         const entries = Array.isArray(d.entries) ? d.entries : [];
@@ -377,10 +387,10 @@ export function CoordinatorDailySheet() {
         setSessionObservationRows([newSessionObservationRow()]);
         setRoundsPlanRows([newRoundsPlanRow()]);
       });
-  }, [isCoordinator, sheetDate, user?._id, sheetReloadNonce]);
+  }, [isCoordinator, sheetDate, targetUserId, sheetReloadNonce]);
 
   const save = async () => {
-    if (!isCoordinator || !user?._id) return;
+    if (!isCoordinator || !targetUserId) return;
     setSaving(true);
     setMessage(null);
     try {
@@ -413,7 +423,7 @@ export function CoordinatorDailySheet() {
       }>("/reports/coordinator-sheet", {
         method: "PUT",
         body: JSON.stringify({
-          coordinatorId: user._id,
+          coordinatorId: targetUserId,
           sheetDate,
           entries,
         }),
