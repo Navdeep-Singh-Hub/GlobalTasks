@@ -98,10 +98,16 @@ export function AppSidebar({
 
   if (!user) return null;
   const role = user.role;
-  const fillPastNav: NavItem[] = user.canFillPastDataOnBehalf
-    ? [{ href: "/fill-past-data", label: "Fill past data", icon: UserCog, roles: NAV_ALL }]
-    : [];
-  const items: NavItem[] = [...NAV.filter((n) => n.roles.includes(role)), ...fillPastNav];
+  const roleNav = NAV.filter((n) => n.roles.includes(role));
+  const fillPastItem: NavItem | null = user.canFillPastDataOnBehalf
+    ? { href: "/fill-past-data", label: "Fill past data", icon: UserCog, roles: NAV_ALL }
+    : null;
+  // Keep it near the top so it’s easy to find (after Pending Recurring).
+  const pendingRecurringIdx = roleNav.findIndex((n) => n.href === "/pending-recurring");
+  const items: NavItem[] = [...roleNav];
+  if (fillPastItem) {
+    items.splice(pendingRecurringIdx >= 0 ? pendingRecurringIdx + 1 : 0, 0, fillPastItem);
+  }
   const centerName = typeof user.centerId === "object" && user.centerId ? user.centerId.name || "Center" : "";
 
   const shell = (

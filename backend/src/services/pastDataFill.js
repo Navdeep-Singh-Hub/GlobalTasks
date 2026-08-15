@@ -1,7 +1,7 @@
 import { User } from "../models/User.js";
 
 /** May fill past sessions, sheets, and tasks on behalf of any user. */
-export const PAST_DATA_FILL_EMAILS = ["manjot1104@gmail.com"];
+export const PAST_DATA_FILL_EMAILS = ["manjot1104@gmail.com", "manjot@gmail.com"];
 
 export function isPastDataFillEmail(email) {
   return PAST_DATA_FILL_EMAILS.includes(String(email || "").trim().toLowerCase());
