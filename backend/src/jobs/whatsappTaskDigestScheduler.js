@@ -3,6 +3,7 @@ import { Task } from "../models/Task.js";
 import { normalizePhone, sendWhatsAppTemplate, sendWhatsAppText } from "../services/whatsappService.js";
 import { JobRunLock } from "../models/JobRunLock.js";
 import { normalizeRole } from "../constants/roles.js";
+import { runAutoSubmitDueTasksTick } from "./autoSubmitDueTasksScheduler.js";
 
 const TZ = process.env.WHATSAPP_DIGEST_TIMEZONE || "Asia/Kolkata";
 const JOB = "whatsapp_task_digest";
@@ -229,6 +230,14 @@ export async function runWhatsAppDigestTick(now = new Date()) {
       result.evening = stats;
     }
   }
+
+  try {
+    result.autoSubmit = await runAutoSubmitDueTasksTick(now);
+  } catch (e) {
+    console.error("[auto-submit] digest tick hook failed:", e);
+    result.autoSubmitError = e?.message || "Auto-submit failed";
+  }
+
   return result;
 }
 

@@ -63,6 +63,7 @@ function alignDailyDueDateForToday(task, now = new Date()) {
 export async function autoSubmitDueTasksForUser(assignee, now = new Date(), remarks = DEFAULT_REMARKS) {
   const assigneeId = assignee._id;
   if (isWeekOffToday(assignee.weekOffDays || [], now)) {
+    console.log(`[auto-submit] ${assignee.email || assigneeId}: skipped (week off today)`);
     return { submitted: 0, skipped: 0, weekOff: true, totalDueToday: 0 };
   }
 
@@ -72,7 +73,6 @@ export async function autoSubmitDueTasksForUser(assignee, now = new Date(), rema
     assignees: assigneeId,
     deletedAt: null,
     taskType: "daily",
-    requiresApproval: true,
     status: { $in: ["pending", "in_progress", "overdue"] },
   }).lean();
 
@@ -135,13 +135,18 @@ export async function autoSubmitDueTasksForUser(assignee, now = new Date(), rema
     taskIds.push(String(task._id));
   }
 
-  if (submitted > 0) {
-    console.log(
-      `[auto-submit] ${assignee.email || assigneeId}: submitted ${submitted}, skipped ${skipped}, due today ${dueToday.length}`
-    );
-  }
+  console.log(
+    `[auto-submit] ${assignee.email || assigneeId}: candidates=${candidates.length}, dueToday=${dueToday.length}, submitted=${submitted}, skipped=${skipped}`
+  );
 
-  return { submitted, skipped, weekOff: false, totalDueToday: dueToday.length, taskIds };
+  return {
+    submitted,
+    skipped,
+    weekOff: false,
+    totalDueToday: dueToday.length,
+    totalCandidates: candidates.length,
+    taskIds,
+  };
 }
 
 export async function runAutoSubmitForConfiguredAssignees(now = new Date()) {
