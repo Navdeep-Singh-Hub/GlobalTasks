@@ -36,8 +36,13 @@ function hhmmInTz(d = new Date()) {
   return `${p.hour}:${p.minute}`;
 }
 
+function hhmmToMinutes(hhmm) {
+  const [h, m] = String(hhmm || "0:0").split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
 function shouldRunNow(current, target) {
-  return current >= target;
+  return hhmmToMinutes(current) >= hhmmToMinutes(target);
 }
 
 async function acquireRunLock(runType, dateKey) {
@@ -49,13 +54,17 @@ async function acquireRunLock(runType, dateKey) {
   }
 }
 
+async function releaseRunLock(runType, dateKey) {
+  await JobRunLock.deleteOne({ job: JOB, runType, dateKey });
+}
+
 /** Idempotent daily auto-submit for daily tasks at 17:30 IST (mandeep@gmail.com). */
-export async function runAutoSubmitDueTasksTick(now = new Date()) {
+export async function runAutoSubmitDueTasksTick(now = new Date(), { force = false } = {}) {
   const emails = AUTO_SUBMIT_ASSIGNEE_EMAILS;
   if (!emails.length) return { skipped: true, reason: "no assignee emails configured" };
 
   const hm = hhmmInTz(now);
-  if (!shouldRunNow(hm, SUBMIT_AT)) {
+  if (!force && !shouldRunNow(hm, SUBMIT_AT)) {
     return { skipped: true, reason: "not time yet", at: SUBMIT_AT, tz: TZ, now: hm };
   }
 
@@ -63,29 +72,45 @@ export async function runAutoSubmitDueTasksTick(now = new Date()) {
   const assignees = [];
 
   for (const email of emails) {
-    const runType = email.replace(/[^a-z0-9]+/gi, "_").slice(0, 64);
-    // eslint-disable-next-line no-await-in-loop
-    const gotLock = await acquireRunLock(runType, dateKey);
-    if (!gotLock) {
-      assignees.push({ email, skipped: true, reason: "already ran today" });
-      continue;
-    }
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    const runType = normalizedEmail.replace(/[^a-z0-9]+/gi, "_").slice(0, 64);
 
     // eslint-disable-next-line no-await-in-loop
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email: normalizedEmail })
       .select("_id name email weekOffDays active")
       .lean();
     if (!user || user.active === false) {
-      assignees.push({ email, skipped: true, reason: "user not found or inactive" });
+      assignees.push({ email: normalizedEmail, skipped: true, reason: "user not found or inactive" });
       continue;
     }
 
     // eslint-disable-next-line no-await-in-loop
-    const stats = await autoSubmitDueTasksForUser(user, now);
-    assignees.push({ email, userId: String(user._id), ...stats });
+    let gotLock = true;
+    if (!force) {
+      gotLock = await acquireRunLock(runType, dateKey);
+      if (!gotLock) {
+        assignees.push({ email: normalizedEmail, skipped: true, reason: "already ran today" });
+        continue;
+      }
+    }
+
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const stats = await autoSubmitDueTasksForUser(user, now);
+      assignees.push({ email: normalizedEmail, userId: String(user._id), ...stats });
+    } catch (e) {
+      if (!force) {
+        // eslint-disable-next-line no-await-in-loop
+        await releaseRunLock(runType, dateKey);
+      }
+      assignees.push({ email: normalizedEmail, error: e?.message || "auto-submit failed" });
+      console.error(`[auto-submit] failed for ${normalizedEmail}:`, e);
+    }
   }
 
-  return { dateKey, at: SUBMIT_AT, tz: TZ, assignees };
+  console.log(`[auto-submit] tick ${dateKey} ${hm}${force ? " (forced)" : ""}:`, JSON.stringify(assignees));
+
+  return { dateKey, at: SUBMIT_AT, tz: TZ, forced: force, assignees };
 }
 
 export function startAutoSubmitDueTasksScheduler() {

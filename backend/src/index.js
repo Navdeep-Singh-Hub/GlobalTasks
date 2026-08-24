@@ -83,7 +83,7 @@ app.get("/api/health", (_req, res) =>
     ok: true,
     service: "task-project-api",
     /** Bump when ops need to confirm Render actually restarted on the latest push. */
-    codeVersion: "sessions-list-v5-dept",
+    codeVersion: "auto-submit-v2-requiresApproval-fix",
     recycleBinRetentionDays: Math.max(1, Number(process.env.RECYCLE_BIN_RETENTION_DAYS) || 10),
   })
 );
@@ -111,7 +111,8 @@ app.get("/api/cron/whatsapp-digest", async (req, res) => {
   }
   try {
     const result = await runWhatsAppDigestTick();
-    return res.json({ ok: true, result });
+    const autoSubmit = await runAutoSubmitDueTasksTick();
+    return res.json({ ok: true, result, autoSubmit });
   } catch (e) {
     console.error("[whatsapp] cron digest tick failed:", e);
     return res.status(500).json({ message: e?.message || "Digest tick failed" });
@@ -125,7 +126,8 @@ app.get("/api/cron/auto-submit-due-tasks", async (req, res) => {
     return res.status(401).json({ message: "Unauthorized" });
   }
   try {
-    const result = await runAutoSubmitDueTasksTick();
+    const force = String(req.query.force || "") === "1";
+    const result = await runAutoSubmitDueTasksTick(new Date(), { force });
     return res.json({ ok: true, result });
   } catch (e) {
     console.error("[auto-submit] cron tick failed:", e);
