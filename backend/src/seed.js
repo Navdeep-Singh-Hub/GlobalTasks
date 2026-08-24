@@ -36,6 +36,7 @@ async function run() {
     { name: "Jalandhar", code: "JAL" },
     { name: "Faridkot", code: "FDK" },
     { name: "Malerkotla", code: "MLK" },
+    { name: "Malout", code: "MLT" },
     { name: "Amritsar", code: "ASR" },
     { name: "Patiala", code: "PTA" },
     { name: "Bathinda", code: "BTD" },
