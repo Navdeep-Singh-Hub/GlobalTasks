@@ -110,7 +110,10 @@ async function buildTherapistSessionsFilter(req, me) {
     if (req.query.from) q.sessionDate.$gte = String(req.query.from).slice(0, 10);
     if (req.query.to) q.sessionDate.$lte = String(req.query.to).slice(0, 10);
   }
-  if (req.query.therapistId) q.therapistId = req.query.therapistId;
+  if (req.query.therapistId) {
+    // Aggregate + strict equality need ObjectId; raw query strings otherwise match 0 docs.
+    q.therapistId = toObjectId(req.query.therapistId) || req.query.therapistId;
+  }
 
   // Own log: match sessions this user uploaded OR sessions tagged to them.
   // Must not AND with a conflicting therapistId/centerId (would yield empty lists in prod).
@@ -130,11 +133,11 @@ async function buildTherapistSessionsFilter(req, me) {
       centerId: selectedCenterId,
       $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
     }).distinct("_id");
-    if (q.therapistId && typeof q.therapistId === "string") {
-      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else if (q.therapistId && q.therapistId.$in) {
+    if (q.therapistId && q.therapistId.$in) {
       const allowed = new Set(centerTherapistIds.map((id) => String(id)));
       q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else if (q.therapistId) {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
     } else if (!q.$or) {
       q.therapistId = { $in: centerTherapistIds };
     }
@@ -850,20 +853,25 @@ router.get("/therapist-performance", async (req, res) => {
     if (req.query.from) q.sessionDate.$gte = String(req.query.from);
     if (req.query.to) q.sessionDate.$lte = String(req.query.to);
   }
-  if (req.query.therapistId) q.therapistId = req.query.therapistId;
-  if (!isCeo(req.userRole)) q.centerId = me?.centerId || null;
-  else if (selectedCenterId) {
+  if (req.query.therapistId) {
+    // $match in aggregate does not cast strings → ObjectId; uncast ids yield 0 sessions.
+    q.therapistId = toObjectId(req.query.therapistId) || req.query.therapistId;
+  }
+  if (!isCeo(req.userRole)) {
+    const cid = toObjectId(me?.centerId) || me?.centerId || null;
+    q.centerId = cid;
+  } else if (selectedCenterId) {
     // For CEO center filtering, prefer therapist membership to support legacy sessions with null centerId.
     const centerTherapistIds = await User.find({
       active: true,
       centerId: selectedCenterId,
       $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
     }).distinct("_id");
-    if (q.therapistId && typeof q.therapistId === "string") {
-      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else if (q.therapistId && q.therapistId.$in) {
+    if (q.therapistId && q.therapistId.$in) {
       const allowed = new Set(centerTherapistIds.map((id) => String(id)));
       q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else if (q.therapistId) {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
     } else {
       q.therapistId = { $in: centerTherapistIds };
     }

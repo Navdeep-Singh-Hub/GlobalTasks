@@ -3,6 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Input, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAuth } from "@/contexts/auth-context";
 import { ApiError, api, assetUrl } from "@/lib/api";
 import { canViewClinicalPerformance, formatRoleLine, isCeo } from "@/lib/roles";
@@ -170,6 +171,23 @@ export default function TherapistPerformancePage() {
       patients: rows.reduce((a, b) => a + (b.patientsCovered || 0), 0),
     }),
     [rows]
+  );
+
+  const staffOptions = useMemo(
+    () => [
+      { value: "", label: "All supervisors + therapists", searchText: "all supervisors therapists" },
+      ...[...therapists]
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+        .map((t) => {
+          const roleLine = formatRoleLine(t.role, t.executorKind);
+          return {
+            value: t._id,
+            label: `${t.name} · ${roleLine}`,
+            searchText: `${t.name} ${t.email} ${roleLine}`,
+          };
+        }),
+    ],
+    [therapists]
   );
 
   const sessionGroups = useMemo<SessionGroup[]>(
@@ -383,14 +401,14 @@ export default function TherapistPerformancePage() {
           </label>
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Staff</span>
-            <Select value={therapistId} onChange={(e) => setTherapistId(e.target.value)}>
-              <option value="">All supervisors + therapists</option>
-              {therapists.map((t) => (
-                <option key={t._id} value={t._id}>
-                  {t.name} ({formatRoleLine(t.role, t.executorKind)})
-                </option>
-              ))}
-            </Select>
+            <SearchableSelect
+              value={therapistId}
+              onChange={setTherapistId}
+              options={staffOptions}
+              placeholder="All supervisors + therapists"
+              searchPlaceholder="Type name or email…"
+              emptyMessage="No matching staff"
+            />
           </label>
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">From</span>
@@ -501,7 +519,8 @@ export default function TherapistPerformancePage() {
       <div className="min-w-0 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <h2 className="text-lg font-bold">Session Info (Date-wise)</h2>
         <p className="mt-1 text-xs text-zinc-500">
-          Same therapist list as measurements on this page. Click any therapist row to load and view that therapist&apos;s date-wise sessions.
+          Same therapist list as measurements on this page ({sessionGroups.length} of {rowsTotal}). Click any
+          therapist row to load and view that therapist&apos;s date-wise sessions.
           {canCeoSessionAdmin ? " As CEO you can edit or delete any session." : ""}
         </p>
         <div className="mt-3 hidden overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] md:block">
@@ -754,6 +773,24 @@ export default function TherapistPerformancePage() {
             );
           })}
           {!sessionGroups.length && <div className="py-6 text-center text-sm text-zinc-500">No therapist records for selected filters.</div>}
+        </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-2">
+          <Button type="button" variant="outline" className="w-full sm:w-auto" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+            Previous
+          </Button>
+          <span className="text-center text-xs text-zinc-500 sm:px-2">
+            Page {page}
+            {rowsTotal > 0 ? ` · ${sessionGroups.length} of ${rowsTotal}` : ""}
+          </span>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full sm:w-auto"
+            disabled={page * 25 >= rowsTotal}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
         </div>
       </div>
 
