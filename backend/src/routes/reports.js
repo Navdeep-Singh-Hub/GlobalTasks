@@ -1,6 +1,7 @@
 import { Router } from "express";
 import mongoose from "mongoose";
 import PDFDocument from "pdfkit";
+import * as XLSX from "xlsx";
 import { Task } from "../models/Task.js";
 import { DailyReport } from "../models/DailyReport.js";
 import { User } from "../models/User.js";
@@ -154,6 +155,55 @@ async function buildTherapistSessionsFilter(req, me) {
   }
 
   return { q, selfScope, isTherapist, isSupervisor };
+}
+
+/** Session filter for therapist performance list + Excel export (same scope as the page filters). */
+async function buildTherapistPerformanceMatch(req, me) {
+  const q = {};
+  const selectedCenterId = String(req.query.centerId || "").trim();
+  if (req.query.from || req.query.to) {
+    q.sessionDate = {};
+    if (req.query.from) q.sessionDate.$gte = String(req.query.from);
+    if (req.query.to) q.sessionDate.$lte = String(req.query.to);
+  }
+  if (req.query.therapistId) {
+    q.therapistId = toObjectId(req.query.therapistId) || req.query.therapistId;
+  }
+  if (!isCeo(req.userRole)) {
+    const cid = toObjectId(me?.centerId) || me?.centerId || null;
+    q.centerId = cid;
+  } else if (selectedCenterId) {
+    const centerTherapistIds = await User.find({
+      active: true,
+      centerId: selectedCenterId,
+      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+    }).distinct("_id");
+    if (q.therapistId && q.therapistId.$in) {
+      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
+      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+    } else if (q.therapistId) {
+      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else {
+      q.therapistId = { $in: centerTherapistIds };
+    }
+  }
+  if (req.userRole === "supervisor") {
+    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
+    if (!therapistIds.length) q.therapistId = null;
+    else if (q.therapistId) {
+      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
+    } else {
+      q.therapistId = { $in: therapistIds };
+    }
+  }
+  return q;
+}
+
+function therapistDepartmentLabel(therapist, sessionDepartment) {
+  if (sessionDepartment?.name) return sessionDepartment.name;
+  if (therapist?.departmentPrimary?.name) return therapist.departmentPrimary.name;
+  const legacy = String(therapist?.department || "").trim();
+  return legacy || "—";
 }
 
 function perfCacheKey(req, me) {
@@ -846,45 +896,8 @@ router.get("/therapist-performance", async (req, res) => {
   const cacheKey = perfCacheKey(req, me);
   const cached = getCachedPerf(cacheKey);
   if (cached) return res.json(cached);
-  const q = {};
+  const q = await buildTherapistPerformanceMatch(req, me);
   const selectedCenterId = String(req.query.centerId || "").trim();
-  if (req.query.from || req.query.to) {
-    q.sessionDate = {};
-    if (req.query.from) q.sessionDate.$gte = String(req.query.from);
-    if (req.query.to) q.sessionDate.$lte = String(req.query.to);
-  }
-  if (req.query.therapistId) {
-    // $match in aggregate does not cast strings → ObjectId; uncast ids yield 0 sessions.
-    q.therapistId = toObjectId(req.query.therapistId) || req.query.therapistId;
-  }
-  if (!isCeo(req.userRole)) {
-    const cid = toObjectId(me?.centerId) || me?.centerId || null;
-    q.centerId = cid;
-  } else if (selectedCenterId) {
-    // For CEO center filtering, prefer therapist membership to support legacy sessions with null centerId.
-    const centerTherapistIds = await User.find({
-      active: true,
-      centerId: selectedCenterId,
-      $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
-    }).distinct("_id");
-    if (q.therapistId && q.therapistId.$in) {
-      const allowed = new Set(centerTherapistIds.map((id) => String(id)));
-      q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
-    } else if (q.therapistId) {
-      q.therapistId = centerTherapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else {
-      q.therapistId = { $in: centerTherapistIds };
-    }
-  }
-  if (req.userRole === "supervisor") {
-    const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
-    if (!therapistIds.length) q.therapistId = null;
-    else if (q.therapistId) {
-      q.therapistId = therapistIds.find((id) => String(id) === String(q.therapistId)) || null;
-    } else {
-      q.therapistId = { $in: therapistIds };
-    }
-  }
 
   const summary = await TherapistSession.aggregate([
     { $match: q },
@@ -967,6 +980,100 @@ router.get("/therapist-performance", async (req, res) => {
   const payload = { rows: pagedRows, total, page, limit };
   setCachedPerf(cacheKey, payload);
   res.json(payload);
+});
+
+router.get("/therapist-performance/export", async (req, res) => {
+  const me = await actor(req);
+  if (!canViewClinicalPerformance(req.userRole)) {
+    return res.status(403).json({ message: "Insufficient permissions" });
+  }
+
+  const q = await buildTherapistPerformanceMatch(req, me);
+  const sessions = await TherapistSession.find(q)
+    .populate("therapistId", "name email department departmentPrimary role executorKind")
+    .populate({ path: "therapistId", populate: { path: "departmentPrimary", select: "name" } })
+    .populate("centerId", "name code")
+    .populate("departmentId", "name")
+    .sort({ sessionDate: 1, createdAt: 1 })
+    .lean();
+
+  const summaryMap = new Map();
+  for (const session of sessions) {
+    const therapist = session.therapistId;
+    if (!therapist || typeof therapist !== "object") continue;
+    const key = String(therapist._id);
+    const department = therapistDepartmentLabel(therapist, session.departmentId);
+    const center = session.centerId?.name || "—";
+    if (!summaryMap.has(key)) {
+      summaryMap.set(key, {
+        name: therapist.name || "",
+        email: therapist.email || "",
+        department,
+        center,
+        sessions: 0,
+        patients: new Set(),
+        dates: new Set(),
+      });
+    }
+    const row = summaryMap.get(key);
+    row.sessions += 1;
+    if (session.patientName) row.patients.add(session.patientName);
+    if (session.sessionDate) row.dates.add(session.sessionDate);
+  }
+
+  const summaryRows = [
+    ["Therapist", "Email", "Department", "Center", "Session Count", "Patients Covered", "Attendance Days"],
+    ...Array.from(summaryMap.values())
+      .sort((a, b) => b.sessions - a.sessions || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }))
+      .map((r) => [r.name, r.email, r.department, r.center, r.sessions, r.patients.size, r.dates.size]),
+  ];
+
+  const detailRows = [
+    [
+      "Therapist",
+      "Email",
+      "Department",
+      "Center",
+      "Session Date",
+      "Patient Name",
+      "Patient Code",
+      "Start Time",
+      "Duration (min)",
+      "Video Uploaded",
+      "Therapist Remarks",
+      "Supervisor Score",
+    ],
+    ...sessions.map((session) => {
+      const therapist = session.therapistId && typeof session.therapistId === "object" ? session.therapistId : {};
+      return [
+        therapist.name || "",
+        therapist.email || "",
+        therapistDepartmentLabel(therapist, session.departmentId),
+        session.centerId?.name || "",
+        session.sessionDate || "",
+        session.patientName || "",
+        session.patientCode || "",
+        session.startedAt || "",
+        session.durationMinutes || 0,
+        session.videoUploaded ? "Yes" : "No",
+        session.remarks || "",
+        session.supervisorScore || 0,
+      ];
+    }),
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryRows), "Summary");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(detailRows), "Sessions");
+
+  const from = String(req.query.from || "").slice(0, 10);
+  const to = String(req.query.to || "").slice(0, 10);
+  const filename = `therapist-sessions${from ? `-${from}` : ""}${to ? `-to-${to}` : ""}.xlsx`;
+  const buf = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
+
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.send(buf);
 });
 
 router.get("/supervisor-sheet/instances", async (req, res) => {

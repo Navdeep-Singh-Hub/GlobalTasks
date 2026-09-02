@@ -5,11 +5,11 @@ import { Input, Select, Textarea } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAuth } from "@/contexts/auth-context";
-import { ApiError, api, assetUrl } from "@/lib/api";
+import { ApiError, api, assetUrl, downloadExport } from "@/lib/api";
 import { canViewClinicalPerformance, formatRoleLine, isCeo } from "@/lib/roles";
 import { formatCenterName } from "@/lib/utils";
 import { formatAppDate } from "@/lib/date-format";
-import { Activity, ChevronDown, ChevronRight, Pencil, Star, Trash2 } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Download, Pencil, Star, Trash2 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 type TherapistUser = { _id: string; name: string; email: string; role: string; executorKind?: string };
@@ -93,6 +93,7 @@ export default function TherapistPerformancePage() {
   const [ceoEditForm, setCeoEditForm] = useState<CeoSessionEditForm | null>(null);
   const [ceoEditSaving, setCeoEditSaving] = useState(false);
   const [ceoDeletingId, setCeoDeletingId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
@@ -361,6 +362,25 @@ export default function TherapistPerformancePage() {
     }
   }
 
+  async function downloadExcel() {
+    setExporting(true);
+    setMsg(null);
+    try {
+      const qs = new URLSearchParams();
+      if (therapistId) qs.set("therapistId", therapistId);
+      if (canFilterCenter && centerId) qs.set("centerId", centerId);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const suffix = from || to ? `${from || "start"}-to-${to || "end"}` : "all-dates";
+      await downloadExport(`/reports/therapist-performance/export?${qs.toString()}`, `therapist-sessions-${suffix}.xlsx`);
+      setMsg({ type: "ok", text: "Excel downloaded." });
+    } catch {
+      setMsg({ type: "err", text: "Failed to download Excel." });
+    } finally {
+      setExporting(false);
+    }
+  }
+
   if (!canManage) {
     return (
       <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
@@ -372,12 +392,24 @@ export default function TherapistPerformancePage() {
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <Activity className="h-3 w-3" /> Therapist tracker
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="chip border border-zinc-200 bg-white text-zinc-500">
+            <Activity className="h-3 w-3" /> Therapist tracker
+          </div>
+          <h1 className="mt-3 text-2xl font-bold tracking-tight">Therapist Performance</h1>
+          <p className="mt-1 text-sm text-zinc-500">Center-wise supervisor and therapist measurements with date-wise session tracking.</p>
         </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Therapist Performance</h1>
-        <p className="mt-1 text-sm text-zinc-500">Center-wise supervisor and therapist measurements with date-wise session tracking.</p>
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-2 shrink-0 self-start"
+          disabled={exporting}
+          onClick={() => void downloadExcel()}
+        >
+          <Download className="h-4 w-4" />
+          {exporting ? "Downloading…" : "Download Excel"}
+        </Button>
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
