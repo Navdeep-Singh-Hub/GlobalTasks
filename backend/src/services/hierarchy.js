@@ -5,6 +5,7 @@ import { Department } from "../models/Department.js";
 import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
 import { assignerScopeClause } from "./taskApprovalHistory.js";
 import { isCeo } from "../constants/roles.js";
+import { isGlobalAccessEmail } from "./globalAccess.js";
 
 /** May assign tasks in any center and to any center's staff (hardcoded). */
 export const CROSS_CENTER_ASSIGNER_EMAILS = ["sachin@gmail.com"];
@@ -20,7 +21,7 @@ export async function isCrossCenterAssigner(userId) {
 }
 
 export function canAccessAnyCenter({ role, email }) {
-  return isCeo(role) || isCrossCenterAssignerEmail(email);
+  return isCeo(role) || isCrossCenterAssignerEmail(email) || isGlobalAccessEmail(email);
 }
 
 /** Treat missing `active` as active (legacy users created before the field existed). */

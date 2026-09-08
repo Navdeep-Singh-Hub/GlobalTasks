@@ -6,13 +6,13 @@ import { authRequired, loadUser } from "../middleware/auth.js";
 import { normalizeRole } from "../constants/roles.js";
 import { isCrossCenterAssignerEmail } from "../services/hierarchy.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
+import { isGlobalAccessEmail } from "../services/globalAccess.js";
 
 const router = Router();
-const GLOBAL_ACCESS_EMAILS = new Set(["admin@globaltasks.demo", "testing@gmail.com"]);
 
 function effectiveRoleForUser(user) {
   if (!user) return "executor";
-  if (GLOBAL_ACCESS_EMAILS.has(String(user.email || "").toLowerCase())) return "ceo";
+  if (isGlobalAccessEmail(user.email)) return "ceo";
   return normalizeRole(user.role);
 }
 
