@@ -50,6 +50,7 @@ type DetailSheet = {
   sheetDate: string;
   instanceKey?: string;
   label?: string;
+  patientId?: string;
   entries: { taskKey: string; status: "yes" | "no"; remarks?: string }[];
 };
 
@@ -522,6 +523,11 @@ export default function SupervisorPerformancePage() {
                                     <div key={sheet._id} className="rounded-lg border border-zinc-200/80 p-3 dark:border-zinc-800">
                                       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
                                         <span>{formatAppDate(sheet.sheetDate)}</span>
+                                        {String(sheet.patientId || "").trim() ? (
+                                          <span className="rounded-md bg-brand-50 px-2 py-0.5 text-[10px] font-medium text-brand-800 dark:bg-brand-950/40 dark:text-brand-200">
+                                            Patient ID: {String(sheet.patientId).trim()}
+                                          </span>
+                                        ) : null}
                                         {sheet.instanceKey && sheet.instanceKey !== "default" && (
                                           <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">
                                             {String(sheet.label || "").trim() || "Extra sheet"}
@@ -670,6 +676,7 @@ export default function SupervisorPerformancePage() {
                             <div key={sheet._id} className="rounded-md border border-zinc-200/80 p-2 dark:border-zinc-800">
                               <div className="mb-1 text-xs font-semibold text-zinc-600 dark:text-zinc-300">
                                 {formatAppDate(sheet.sheetDate)}
+                                {String(sheet.patientId || "").trim() ? ` · Patient ID: ${String(sheet.patientId).trim()}` : ""}
                                 {sheet.instanceKey && sheet.instanceKey !== "default" ? ` · ${String(sheet.label || "").trim() || "Extra sheet"}` : ""}
                               </div>
                               <div className="space-y-1">

@@ -227,6 +227,7 @@ export function PendingRecurringDailySessions({
   const [pendingSupervisorSheetKeys, setPendingSupervisorSheetKeys] = useState<string[]>([]);
   const [activeSupervisorSheetKey, setActiveSupervisorSheetKey] = useState("default");
   const [supervisorSheetLabelDraft, setSupervisorSheetLabelDraft] = useState("");
+  const [supervisorSheetPatientIdDraft, setSupervisorSheetPatientIdDraft] = useState("");
   const [supervisorSheetViewOnly, setSupervisorSheetViewOnly] = useState(false);
   const [supervisorSheetReloadNonce, setSupervisorSheetReloadNonce] = useState(0);
 
@@ -385,7 +386,7 @@ export function PendingRecurringDailySessions({
     qs.set("sheetDate", sessionDate);
     qs.set("supervisorId", targetUserId);
     qs.set("instanceKey", activeSupervisorSheetKey);
-    api<{ entries: { taskKey: string; status?: string; remarks?: string }[]; label?: string }>(
+    api<{ entries: { taskKey: string; status?: string; remarks?: string }[]; label?: string; patientId?: string }>(
       `/reports/supervisor-sheet?${qs.toString()}`
     )
       .then((d) => {
@@ -393,6 +394,7 @@ export function PendingRecurringDailySessions({
           Array.isArray(d.entries) ? d.entries : []
         );
         setSupervisorSheetLabelDraft(typeof d.label === "string" ? d.label : "");
+        setSupervisorSheetPatientIdDraft(typeof d.patientId === "string" ? d.patientId : "");
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
         const nextTherapistNames: Record<string, string> = {};
@@ -437,6 +439,7 @@ export function PendingRecurringDailySessions({
       })
       .catch(() => {
         setSupervisorSheetLabelDraft("");
+        setSupervisorSheetPatientIdDraft("");
         const nextStatus: Record<string, "yes" | "no"> = {};
         const nextRemarks: Record<string, string> = {};
         const nextTherapistNames: Record<string, string> = {};
@@ -465,6 +468,11 @@ export function PendingRecurringDailySessions({
 
   const saveSupervisorSheet = async () => {
     if (!isSupervisor || !targetUserId) return;
+    const patientId = supervisorSheetPatientIdDraft.trim();
+    if (!patientId) {
+      setMessage({ type: "err", text: "Patient ID is required." });
+      return;
+    }
     setSavingSheet(true);
     setMessage(null);
     try {
@@ -504,6 +512,7 @@ export function PendingRecurringDailySessions({
           sheetDate: sessionDate,
           instanceKey: activeSupervisorSheetKey,
           label: supervisorSheetLabelDraft.trim(),
+          patientId,
           entries,
         }),
       });
@@ -539,6 +548,7 @@ export function PendingRecurringDailySessions({
     setPendingSupervisorSheetKeys((prev) => [...prev, key]);
     setActiveSupervisorSheetKey(key);
     setSupervisorSheetLabelDraft("");
+    setSupervisorSheetPatientIdDraft("");
   };
 
   const removeActiveSupervisorSheetTab = async () => {
@@ -770,16 +780,31 @@ export function PendingRecurringDailySessions({
                     </button>
                   )}
                 </div>
-                <label className="flex max-w-md flex-col gap-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Sheet label (optional)</span>
-                  <Input
-                    value={supervisorSheetLabelDraft}
-                    readOnly={svRo}
-                    onChange={(e) => setSupervisorSheetLabelDraft(e.target.value)}
-                    placeholder="e.g. OPD morning, Parent session"
-                    className="h-9 text-xs"
-                  />
-                </label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                  <label className="flex max-w-md flex-1 flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                      Patient ID <span className="text-rose-600">*</span>
+                    </span>
+                    <Input
+                      value={supervisorSheetPatientIdDraft}
+                      readOnly={svRo}
+                      onChange={(e) => setSupervisorSheetPatientIdDraft(e.target.value)}
+                      placeholder="Enter patient ID"
+                      required
+                      className="h-9 text-xs"
+                    />
+                  </label>
+                  <label className="flex max-w-md flex-1 flex-col gap-1">
+                    <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Sheet label (optional)</span>
+                    <Input
+                      value={supervisorSheetLabelDraft}
+                      readOnly={svRo}
+                      onChange={(e) => setSupervisorSheetLabelDraft(e.target.value)}
+                      placeholder="e.g. OPD morning, Parent session"
+                      className="h-9 text-xs"
+                    />
+                  </label>
+                </div>
               </div>
               <div className="mt-3 hidden overflow-x-auto md:block">
                 <table className="w-full min-w-[980px] text-sm">

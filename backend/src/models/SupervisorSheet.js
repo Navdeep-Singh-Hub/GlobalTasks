@@ -17,6 +17,7 @@ const supervisorSheetSchema = new mongoose.Schema(
     /** Multiple sheets per date; legacy docs treated as "default" until migrated. */
     instanceKey: { type: String, default: "default", trim: true },
     label: { type: String, default: "", trim: true },
+    patientId: { type: String, default: "", trim: true },
     entries: { type: [supervisorSheetEntrySchema], default: [] },
   },
   { timestamps: true }

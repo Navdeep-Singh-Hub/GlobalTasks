@@ -1128,7 +1128,7 @@ router.get("/supervisor-sheet", async (req, res) => {
   const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
   const sheet = await SupervisorSheet.findOne(where).lean();
   const entries = normalizeLegacySupervisorSheetEntries(sheet?.entries || []);
-  res.json({ sheetDate, instanceKey, entries, label: sheet?.label || "" });
+  res.json({ sheetDate, instanceKey, entries, label: sheet?.label || "", patientId: sheet?.patientId || "" });
 });
 
 router.put("/supervisor-sheet", async (req, res) => {
@@ -1149,6 +1149,10 @@ router.put("/supervisor-sheet", async (req, res) => {
   await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
   const instanceKey = String(req.body.instanceKey || "default");
   const label = typeof req.body.label === "string" ? req.body.label.trim() : "";
+  const patientId = typeof req.body.patientId === "string" ? req.body.patientId.trim() : "";
+  if (!patientId) {
+    return res.status(400).json({ message: "Patient ID is required" });
+  }
   const entriesInput = Array.isArray(req.body.entries) ? req.body.entries : [];
   const entries = entriesInput.map((entry) => ({
     taskKey: String(entry?.taskKey || "").trim(),
@@ -1162,6 +1166,7 @@ router.put("/supervisor-sheet", async (req, res) => {
     sheetDate,
     instanceKey,
     label,
+    patientId,
     entries: filteredEntries,
   };
   const where = { supervisorId: targetSupervisorId, sheetDate, centerId, instanceKey };
@@ -1184,6 +1189,7 @@ router.put("/supervisor-sheet", async (req, res) => {
     instanceKey: sheet.instanceKey || instanceKey,
     entries: sheet.entries || [],
     label: sheet.label || "",
+    patientId: sheet.patientId || "",
     taskApproval,
   });
 });
