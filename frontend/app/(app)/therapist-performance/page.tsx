@@ -64,6 +64,7 @@ type TherapistSessionState = {
 type CeoSessionEditForm = {
   sessionDate: string;
   patientName: string;
+  patientCode: string;
   startedAt: string;
   durationMinutes: string;
   videoUploaded: boolean;
@@ -264,6 +265,7 @@ export default function TherapistPerformancePage() {
     setCeoEditForm({
       sessionDate: s.sessionDate || "",
       patientName: s.patientName || "",
+      patientCode: s.patientCode || "",
       startedAt: s.startedAt || "",
       durationMinutes: String(s.durationMinutes ?? 0),
       videoUploaded: Boolean(s.videoUploaded),
@@ -287,6 +289,7 @@ export default function TherapistPerformancePage() {
         body: JSON.stringify({
           sessionDate: ceoEditForm.sessionDate,
           patientName: ceoEditForm.patientName.trim(),
+          patientCode: ceoEditForm.patientCode.trim(),
           startedAt: ceoEditForm.startedAt,
           durationMinutes: Number(ceoEditForm.durationMinutes) || 0,
           videoUploaded: ceoEditForm.videoUploaded,
@@ -623,6 +626,7 @@ export default function TherapistPerformancePage() {
                                   <tr>
                                     <th className="px-2 py-1.5">Date</th>
                                     <th className="px-2 py-1.5">Patient</th>
+                                    <th className="px-2 py-1.5">Patient ID</th>
                                     <th className="px-2 py-1.5">Start</th>
                                     <th className="px-2 py-1.5">Duration</th>
                                     <th className="px-2 py-1.5">Video</th>
@@ -640,6 +644,7 @@ export default function TherapistPerformancePage() {
                                     >
                                       <td className="px-2 py-1.5">{formatAppDate(s.sessionDate)}</td>
                                       <td className="px-2 py-1.5">{s.patientName}</td>
+                                      <td className="px-2 py-1.5">{String(s.patientCode || "").trim() || "—"}</td>
                                       <td className="px-2 py-1.5">{s.startedAt || "—"}</td>
                                       <td className="px-2 py-1.5">{s.durationMinutes || 0} min</td>
                                       <td className="px-2 py-1.5">
@@ -694,21 +699,21 @@ export default function TherapistPerformancePage() {
                                   ))}
                                   {detail?.error ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-rose-600">
+                                      <td colSpan={canCeoSessionAdmin ? 9 : 8} className="px-2 py-3 text-xs text-rose-600">
                                         {detail.error}
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loading ? (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={canCeoSessionAdmin ? 9 : 8} className="px-2 py-3 text-xs text-zinc-500">
                                         Loading session details…
                                       </td>
                                     </tr>
                                   ) : null}
                                   {detail?.loaded && !detail.items.length && (
                                     <tr className="border-t border-zinc-100 dark:border-zinc-800">
-                                      <td colSpan={canCeoSessionAdmin ? 8 : 7} className="px-2 py-3 text-xs text-zinc-500">
+                                      <td colSpan={canCeoSessionAdmin ? 9 : 8} className="px-2 py-3 text-xs text-zinc-500">
                                         No uploaded sessions for selected date range.
                                       </td>
                                     </tr>
@@ -764,7 +769,10 @@ export default function TherapistPerformancePage() {
                     {(detail?.items || []).map((s) => (
                       <div key={s._id} className="rounded-md bg-zinc-50 p-2 text-xs dark:bg-zinc-900">
                         <div className="font-medium">{formatAppDate(s.sessionDate)} · {s.patientName}</div>
-                        <div className="text-zinc-500">{s.startedAt || "—"} · {s.durationMinutes || 0} min · Marks {s.supervisorScore || 0}/5</div>
+                        <div className="text-zinc-500">
+                          Patient ID: {String(s.patientCode || "").trim() || "—"} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Marks{" "}
+                          {s.supervisorScore || 0}/5
+                        </div>
                         {s.remarks?.trim() ? (
                           <div className="mt-1 text-zinc-600 dark:text-zinc-300">
                             <span className="font-medium text-zinc-500">Remarks: </span>
@@ -846,6 +854,14 @@ export default function TherapistPerformancePage() {
             <label className="space-y-1 sm:col-span-2">
               <span className="text-xs font-semibold text-zinc-500">Patient</span>
               <Input value={ceoEditForm.patientName} onChange={(e) => setCeoEditForm((f) => (f ? { ...f, patientName: e.target.value } : f))} />
+            </label>
+            <label className="space-y-1 sm:col-span-2">
+              <span className="text-xs font-semibold text-zinc-500">Patient ID</span>
+              <Input
+                value={ceoEditForm.patientCode}
+                onChange={(e) => setCeoEditForm((f) => (f ? { ...f, patientCode: e.target.value } : f))}
+                placeholder="Enter patient ID"
+              />
             </label>
             <label className="space-y-1">
               <span className="text-xs font-semibold text-zinc-500">Start time</span>

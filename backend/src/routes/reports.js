@@ -1036,7 +1036,7 @@ router.get("/therapist-performance/export", async (req, res) => {
       "Center",
       "Session Date",
       "Patient Name",
-      "Patient Code",
+      "Patient ID",
       "Start Time",
       "Duration (min)",
       "Video Uploaded",

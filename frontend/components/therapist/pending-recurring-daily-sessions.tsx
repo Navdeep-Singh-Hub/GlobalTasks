@@ -38,6 +38,7 @@ function maxIsoDate(a: string, b: string) {
 type SessionRow = {
   id: string;
   patientName: string;
+  patientCode: string;
   durationMinutes: string;
   startedAt: string;
   videoUploaded: boolean;
@@ -48,6 +49,7 @@ type UploadedSession = {
   _id: string;
   sessionDate: string;
   patientName: string;
+  patientCode?: string;
   startedAt?: string;
   durationMinutes?: number;
   videoUploaded?: boolean;
@@ -60,6 +62,7 @@ type UploadedSession = {
 type EditDraft = {
   sessionDate: string;
   patientName: string;
+  patientCode: string;
   startedAt: string;
   durationMinutes: string;
   videoUploaded: boolean;
@@ -174,6 +177,7 @@ function newRow(): SessionRow {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
     patientName: "",
+    patientCode: "",
     durationMinutes: "45",
     startedAt: "",
     videoUploaded: false,
@@ -306,6 +310,7 @@ export function PendingRecurringDailySessions({
           body: JSON.stringify({
             sessionDate,
             patientName: r.patientName.trim(),
+            patientCode: r.patientCode.trim(),
             startedAt: r.startedAt,
             durationMinutes: Number(r.durationMinutes) || 0,
             videoUploaded: r.videoUploaded,
@@ -626,6 +631,7 @@ export function PendingRecurringDailySessions({
     setEditDraft({
       sessionDate: s.sessionDate || viewFrom || todayIsoDate(),
       patientName: s.patientName || "",
+      patientCode: s.patientCode || "",
       startedAt: s.startedAt || "",
       durationMinutes: String(s.durationMinutes ?? 0),
       videoUploaded: Boolean(s.videoUploaded),
@@ -647,6 +653,7 @@ export function PendingRecurringDailySessions({
         body: JSON.stringify({
           sessionDate: editDraft.sessionDate,
           patientName: editDraft.patientName.trim(),
+          patientCode: editDraft.patientCode.trim(),
           startedAt: editDraft.startedAt,
           durationMinutes: Number(editDraft.durationMinutes) || 0,
           videoUploaded: editDraft.videoUploaded,
@@ -1215,8 +1222,9 @@ export function PendingRecurringDailySessions({
       </div>
 
       <div className="mt-3 space-y-3">
-        <div className="hidden gap-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 md:grid md:grid-cols-[minmax(0,1.2fr)_100px_120px_140px_40px] md:px-1">
+        <div className="hidden gap-2 text-[10px] font-bold uppercase tracking-wide text-zinc-500 md:grid md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_100px_120px_140px_40px] md:px-1">
           <span>Patient</span>
+          <span>Patient ID</span>
           <span>Duration (min)</span>
           <span>Start time</span>
           <span>Video uploaded</span>
@@ -1226,11 +1234,15 @@ export function PendingRecurringDailySessions({
         {rows.map((r) => (
           <div
             key={r.id}
-            className="grid gap-2 rounded-xl border border-zinc-200 bg-white/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/80 md:grid-cols-[minmax(0,1.2fr)_100px_120px_140px_40px] md:items-end"
+            className="grid gap-2 rounded-xl border border-zinc-200 bg-white/90 p-3 dark:border-zinc-700 dark:bg-zinc-900/80 md:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)_100px_120px_140px_40px] md:items-end"
           >
             <label className="space-y-1 md:col-span-1">
               <span className="text-xs font-semibold text-zinc-500 md:hidden">Patient name</span>
               <Input placeholder="Patient name" value={r.patientName} onChange={(e) => patchRow(r.id, { patientName: e.target.value })} />
+            </label>
+            <label className="space-y-1 md:col-span-1">
+              <span className="text-xs font-semibold text-zinc-500 md:hidden">Patient ID</span>
+              <Input placeholder="Patient ID" value={r.patientCode} onChange={(e) => patchRow(r.id, { patientCode: e.target.value })} />
             </label>
             <label className="space-y-1">
               <span className="text-xs font-semibold text-zinc-500 md:hidden">Duration (min)</span>
@@ -1266,7 +1278,7 @@ export function PendingRecurringDailySessions({
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-            <label className="space-y-1 md:col-span-5">
+            <label className="space-y-1 md:col-span-6">
               <span className="text-xs font-semibold text-zinc-500">Remarks (optional)</span>
               <Textarea
                 placeholder="Session notes, follow-ups, etc."
@@ -1362,11 +1374,12 @@ export function PendingRecurringDailySessions({
         ) : uploadedSessions.length ? (
           <>
           <div className="mt-3 hidden overflow-x-auto md:block">
-            <table className="w-full min-w-[760px] text-sm">
+            <table className="w-full min-w-[860px] text-sm">
               <thead className="text-left text-[11px] uppercase text-zinc-500">
                 <tr>
                   <th className="px-2 py-1.5">Date</th>
                   <th className="px-2 py-1.5">Patient</th>
+                  <th className="px-2 py-1.5">Patient ID</th>
                   <th className="px-2 py-1.5">Start</th>
                   <th className="px-2 py-1.5">Duration</th>
                   <th className="px-2 py-1.5">Video</th>
@@ -1402,6 +1415,18 @@ export function PendingRecurringDailySessions({
                           />
                         ) : (
                           s.patientName
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5">
+                        {isEditing ? (
+                          <Input
+                            value={editDraft.patientCode}
+                            onChange={(e) => setEditDraft((p) => (p ? { ...p, patientCode: e.target.value } : p))}
+                            placeholder="Patient ID"
+                            className="h-8 min-w-[120px] px-2.5 text-xs"
+                          />
+                        ) : (
+                          String(s.patientCode || "").trim() || "—"
                         )}
                       </td>
                       <td className="px-2 py-1.5">
@@ -1526,6 +1551,13 @@ export function PendingRecurringDailySessions({
                       <Input
                         value={editDraft.patientName}
                         onChange={(e) => setEditDraft((p) => (p ? { ...p, patientName: e.target.value } : p))}
+                        placeholder="Patient name"
+                        className="h-8 text-xs"
+                      />
+                      <Input
+                        value={editDraft.patientCode}
+                        onChange={(e) => setEditDraft((p) => (p ? { ...p, patientCode: e.target.value } : p))}
+                        placeholder="Patient ID"
                         className="h-8 text-xs"
                       />
                       <label className="space-y-1">
@@ -1559,7 +1591,8 @@ export function PendingRecurringDailySessions({
                     <>
                       <div className="font-semibold text-zinc-800 dark:text-zinc-100">{s.patientName}</div>
                       <div className="text-xs text-zinc-500">
-                        {formatAppDate(s.sessionDate)} · {s.startedAt || "—"} · {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
+                        Patient ID: {String(s.patientCode || "").trim() || "—"} · {formatAppDate(s.sessionDate)} · {s.startedAt || "—"} ·{" "}
+                        {s.durationMinutes || 0} min · Video {s.videoUploaded ? "Yes" : "No"}
                       </div>
                       {s.remarks?.trim() ? (
                         <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-300">
