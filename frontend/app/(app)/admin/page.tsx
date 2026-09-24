@@ -152,6 +152,7 @@ export default function AdminPanelPage() {
   const [status, setStatus] = useState("active");
   const [role, setRole] = useState("all");
   const [dept, setDept] = useState("all");
+  const [center, setCenter] = useState("all");
   const [departments, setDepartments] = useState<string[]>([]);
   const [centers, setCenters] = useState<{ _id: string; name: string; code: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -166,11 +167,12 @@ export default function AdminPanelPage() {
     if (status !== "all") qs.set("status", status);
     if (role !== "all") qs.set("role", role);
     if (dept !== "all") qs.set("department", dept);
+    if (center !== "all") qs.set("centerId", center);
     api<{ users: Member[] }>(`/users?${qs.toString()}`)
       .then((d) => setMembers(d.users))
       .catch(() => setMembers([]))
       .finally(() => setLoading(false));
-  }, [search, status, role, dept]);
+  }, [search, status, role, dept, center]);
 
   useEffect(() => {
     load();
@@ -212,7 +214,7 @@ export default function AdminPanelPage() {
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-3 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
             <Input placeholder="Search name or email…" value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
@@ -233,6 +235,14 @@ export default function AdminPanelPage() {
           <Select value={dept} onChange={(e) => setDept(e.target.value)}>
             <option value="all">All Departments</option>
             {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+          </Select>
+          <Select value={center} onChange={(e) => setCenter(e.target.value)}>
+            <option value="all">All Centers</option>
+            {centers.map((c) => (
+              <option key={c._id} value={c._id}>
+                {formatCenterName(c.name)}
+              </option>
+            ))}
           </Select>
         </div>
       </div>

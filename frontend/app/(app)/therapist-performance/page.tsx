@@ -47,6 +47,17 @@ type PerformanceRow = {
   monthlyTests: number;
   avgSupervisorScore: number;
 };
+type DepartmentPatientStat = {
+  department: string;
+  label: string;
+  sessions: number;
+  patients: number;
+};
+type PerformanceOverview = {
+  sessions: number;
+  patients: number;
+  byDepartment: DepartmentPatientStat[];
+};
 type SessionGroup = {
   id: string;
   therapist: TherapistUser;
@@ -78,12 +89,15 @@ export default function TherapistPerformancePage() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [rows, setRows] = useState<PerformanceRow[]>([]);
   const [rowsTotal, setRowsTotal] = useState(0);
+  const [overview, setOverview] = useState<PerformanceOverview>({ sessions: 0, patients: 0, byDepartment: [] });
   const [page, setPage] = useState(1);
   const [sessionsPage, setSessionsPage] = useState(1);
   const [therapists, setTherapists] = useState<TherapistUser[]>([]);
   const [centers, setCenters] = useState<CenterLite[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [therapistId, setTherapistId] = useState("");
   const [centerId, setCenterId] = useState("");
+  const [department, setDepartment] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [scoreDraft, setScoreDraft] = useState<Record<string, { score: string; remarks: string }>>({});
@@ -112,6 +126,10 @@ export default function TherapistPerformancePage() {
       qsPerf.set("centerId", centerId);
       qsSessions.set("centerId", centerId);
     }
+    if (department) {
+      qsPerf.set("department", department);
+      qsSessions.set("department", department);
+    }
     if (from) {
       qsPerf.set("from", from);
       qsSessions.set("from", from);
@@ -124,7 +142,11 @@ export default function TherapistPerformancePage() {
     qsPerf.set("limit", "25");
     qsSessions.set("page", String(sessionsPage));
     qsSessions.set("limit", "30");
-    const perfPromise = api<{ rows: PerformanceRow[]; total?: number }>(`/reports/therapist-performance${qsPerf.toString() ? `?${qsPerf}` : ""}`);
+    const perfPromise = api<{
+      rows: PerformanceRow[];
+      total?: number;
+      overview?: PerformanceOverview;
+    }>(`/reports/therapist-performance${qsPerf.toString() ? `?${qsPerf}` : ""}`);
     const sessPromise = canMark
       ? api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions${qsSessions.toString() ? `?${qsSessions}` : ""}`)
       : Promise.resolve({ sessions: [] as SessionItem[], total: 0 });
@@ -132,19 +154,25 @@ export default function TherapistPerformancePage() {
     setSessions(sess.sessions || []);
     setRows(perf.rows);
     setRowsTotal(Number(perf.total) || 0);
-  }, [from, therapistId, to, page, sessionsPage, canMark, canFilterCenter, centerId]);
+    setOverview({
+      sessions: Number(perf.overview?.sessions) || 0,
+      patients: Number(perf.overview?.patients) || 0,
+      byDepartment: Array.isArray(perf.overview?.byDepartment) ? perf.overview.byDepartment : [],
+    });
+  }, [from, therapistId, to, page, sessionsPage, canMark, canFilterCenter, centerId, department]);
 
   useEffect(() => {
     if (!user) return;
     const qs = new URLSearchParams();
     if (canFilterCenter && centerId) qs.set("centerId", centerId);
+    if (department) qs.set("department", department);
     api<{ users: TherapistUser[] }>(`/users${qs.toString() ? `?${qs.toString()}` : ""}`)
       .then((d) => {
         const list = d.users.filter((u) => u.role === "supervisor" || (u.role === "executor" && u.executorKind === "therapist"));
         setTherapists(list);
       })
       .catch(() => setTherapists([]));
-  }, [user, canFilterCenter, centerId]);
+  }, [user, canFilterCenter, centerId, department]);
 
   useEffect(() => {
     if (!user || !canFilterCenter) return;
@@ -154,9 +182,16 @@ export default function TherapistPerformancePage() {
   }, [user, canFilterCenter]);
 
   useEffect(() => {
+    if (!user || !canManage) return;
+    api<{ departments: string[] }>("/users/departments")
+      .then((d) => setDepartments(Array.isArray(d.departments) ? d.departments : []))
+      .catch(() => setDepartments([]));
+  }, [user, canManage]);
+
+  useEffect(() => {
     setPage(1);
     setSessionsPage(1);
-  }, [therapistId, from, to, centerId]);
+  }, [therapistId, from, to, centerId, department]);
 
   useEffect(() => {
     if (!user) return;
@@ -164,16 +199,9 @@ export default function TherapistPerformancePage() {
       setSessions([]);
       setRows([]);
       setRowsTotal(0);
+      setOverview({ sessions: 0, patients: 0, byDepartment: [] });
     });
   }, [user, load]);
-
-  const totals = useMemo(
-    () => ({
-      sessions: rows.reduce((a, b) => a + (b.sessions || 0), 0),
-      patients: rows.reduce((a, b) => a + (b.patientsCovered || 0), 0),
-    }),
-    [rows]
-  );
 
   const staffOptions = useMemo(
     () => [
@@ -212,7 +240,7 @@ export default function TherapistPerformancePage() {
   useEffect(() => {
     setExpandedSessionTherapists({});
     setSessionByTherapist({});
-  }, [page, therapistId, from, to, centerId]);
+  }, [page, therapistId, from, to, centerId, department]);
 
   async function loadTherapistSessions(therapist: TherapistUser, force = false) {
     const therapistKey = String(therapist._id);
@@ -228,6 +256,7 @@ export default function TherapistPerformancePage() {
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
       if (canFilterCenter && centerId) qs.set("centerId", centerId);
+      if (department) qs.set("department", department);
       qs.set("page", "1");
       qs.set("limit", "500");
       const data = await api<{ sessions: SessionItem[]; total?: number }>(`/reports/therapist-sessions?${qs.toString()}`);
@@ -372,6 +401,7 @@ export default function TherapistPerformancePage() {
       const qs = new URLSearchParams();
       if (therapistId) qs.set("therapistId", therapistId);
       if (canFilterCenter && centerId) qs.set("centerId", centerId);
+      if (department) qs.set("department", department);
       if (from) qs.set("from", from);
       if (to) qs.set("to", to);
       const suffix = from || to ? `${from || "start"}-to-${to || "end"}` : "all-dates";
@@ -416,7 +446,7 @@ export default function TherapistPerformancePage() {
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Center</span>
             {canFilterCenter ? (
@@ -433,6 +463,17 @@ export default function TherapistPerformancePage() {
                 Your center
               </div>
             )}
+          </label>
+          <label className="space-y-1">
+            <span className="text-xs font-semibold text-zinc-500">Department</span>
+            <Select value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <option value="">All departments</option>
+              {departments.map((d) => (
+                <option key={d} value={d}>
+                  {d}
+                </option>
+              ))}
+            </Select>
           </label>
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Staff</span>
@@ -455,10 +496,36 @@ export default function TherapistPerformancePage() {
           </label>
           <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-900">
             <div className="font-semibold">Overview</div>
-            <div className="mt-1 text-zinc-500">
-              {totals.sessions} sessions, {totals.patients} patients covered
+            <div className="mt-1 text-zinc-600 dark:text-zinc-300">
+              <span className="font-semibold text-zinc-800 dark:text-zinc-100">{overview.sessions.toLocaleString()}</span> sessions
+            </div>
+            <div className="mt-0.5 text-zinc-600 dark:text-zinc-300">
+              <span className="font-semibold text-zinc-800 dark:text-zinc-100">{overview.patients.toLocaleString()}</span> patients total
             </div>
           </div>
+        </div>
+        <div className="mt-3 rounded-xl border border-zinc-200 bg-zinc-50/80 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
+          <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">Patients by department</div>
+          {overview.byDepartment.length ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {overview.byDepartment.map((d) => (
+                <div
+                  key={d.department}
+                  className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-[11px] dark:border-zinc-700 dark:bg-zinc-950"
+                >
+                  <span className="font-semibold text-zinc-800 dark:text-zinc-100">{d.label}</span>
+                  <span className="mx-1.5 text-zinc-300 dark:text-zinc-600">·</span>
+                  <span className="tabular-nums text-zinc-600 dark:text-zinc-300">
+                    {d.patients.toLocaleString()} patients
+                  </span>
+                  <span className="mx-1 text-zinc-300 dark:text-zinc-600">/</span>
+                  <span className="tabular-nums text-zinc-500">{d.sessions.toLocaleString()} sessions</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-1 text-[11px] text-zinc-500">No patient data for the selected filters.</div>
+          )}
         </div>
       </div>
 

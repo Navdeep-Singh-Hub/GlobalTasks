@@ -16,6 +16,8 @@ import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
 import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetEntries.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
+import { Department } from "../models/Department.js";
+import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
 
 const router = Router();
 router.use(authRequired);
@@ -33,6 +35,35 @@ function toObjectId(id) {
     return new mongoose.Types.ObjectId(s);
   }
   return null;
+}
+
+/** Therapist/supervisor user ids for a department slug (User.department + departmentPrimary). */
+async function getTherapistIdsByDepartmentSlug(departmentSlug) {
+  const selected = String(departmentSlug || "").trim().toLowerCase();
+  if (!selected || selected === "all") return null;
+  const meta = ALLOWED_DEPARTMENTS.find((d) => d.slug === selected);
+  const deptClause = [{ department: selected }];
+  if (meta) {
+    const dept = await Department.findOne({ code: meta.code }).select("_id").lean();
+    if (dept?._id) deptClause.push({ departmentPrimary: dept._id });
+  }
+  return User.find({
+    active: true,
+    $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
+    $and: [{ $or: deptClause }],
+  }).distinct("_id");
+}
+
+function applyTherapistIdIntersection(q, ids) {
+  if (ids == null) return;
+  if (q.therapistId && q.therapistId.$in) {
+    const allowed = new Set(ids.map((id) => String(id)));
+    q.therapistId.$in = q.therapistId.$in.filter((id) => allowed.has(String(id)));
+  } else if (q.therapistId) {
+    q.therapistId = ids.find((id) => String(id) === String(q.therapistId)) || null;
+  } else if (!q.$or) {
+    q.therapistId = { $in: ids };
+  }
 }
 
 async function actor(req) {
@@ -154,6 +185,11 @@ async function buildTherapistSessionsFilter(req, me) {
     }
   }
 
+  if (!selfScope) {
+    const deptIds = await getTherapistIdsByDepartmentSlug(req.query.department);
+    applyTherapistIdIntersection(q, deptIds);
+  }
+
   return { q, selfScope, isTherapist, isSupervisor };
 }
 
@@ -196,6 +232,8 @@ async function buildTherapistPerformanceMatch(req, me) {
       q.therapistId = { $in: therapistIds };
     }
   }
+  const deptIds = await getTherapistIdsByDepartmentSlug(req.query.department);
+  applyTherapistIdIntersection(q, deptIds);
   return q;
 }
 
@@ -214,6 +252,7 @@ function perfCacheKey(req, me) {
     from: String(req.query.from || ""),
     to: String(req.query.to || ""),
     centerId: String(req.query.centerId || ""),
+    department: String(req.query.department || ""),
     therapistId: String(req.query.therapistId || ""),
     page: Number(req.query.page) || 1,
     limit: Number(req.query.limit) || 25,
@@ -937,6 +976,16 @@ router.get("/therapist-performance", async (req, res) => {
   };
   if (!isCeo(req.userRole)) therapistQuery.centerId = me?.centerId || null;
   else if (selectedCenterId) therapistQuery.centerId = selectedCenterId;
+  const selectedDepartment = String(req.query.department || "").trim().toLowerCase();
+  if (selectedDepartment && selectedDepartment !== "all") {
+    const meta = ALLOWED_DEPARTMENTS.find((d) => d.slug === selectedDepartment);
+    const deptClause = [{ department: selectedDepartment }];
+    if (meta) {
+      const dept = await Department.findOne({ code: meta.code }).select("_id").lean();
+      if (dept?._id) deptClause.push({ departmentPrimary: dept._id });
+    }
+    therapistQuery.$and = [{ $or: deptClause }];
+  }
   if (req.userRole === "supervisor") {
     const therapistIds = await getSupervisorTherapistIds(req.userId, me?.centerId || null);
     const allowed = [String(req.userId), ...therapistIds.map((id) => String(id))];
@@ -946,8 +995,9 @@ router.get("/therapist-performance", async (req, res) => {
   }
 
   const users = await User.find(therapistQuery)
-    .select("_id name email centerId role executorKind")
+    .select("_id name email centerId role executorKind department departmentPrimary")
     .populate("centerId", "name code")
+    .populate("departmentPrimary", "name code")
     .lean();
   const summaryById = new Map(summary.map((s) => [String(s._id), s]));
   const hasDateFilter = Boolean(req.query.from || req.query.to);
@@ -975,9 +1025,119 @@ router.get("/therapist-performance", async (req, res) => {
     rows = rows.filter((r) => Number(r.sessions || 0) > 0);
   }
 
+  const [overviewAgg, byDepartmentAgg] = await Promise.all([
+    TherapistSession.aggregate([
+      { $match: q },
+      {
+        $group: {
+          _id: null,
+          sessions: { $sum: 1 },
+          patients: { $addToSet: "$patientName" },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          sessions: 1,
+          patients: { $size: "$patients" },
+        },
+      },
+    ]),
+    TherapistSession.aggregate([
+      { $match: q },
+      {
+        $lookup: {
+          from: "users",
+          localField: "therapistId",
+          foreignField: "_id",
+          as: "therapist",
+        },
+      },
+      { $unwind: { path: "$therapist", preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: "departments",
+          localField: "therapist.departmentPrimary",
+          foreignField: "_id",
+          as: "deptPrimary",
+        },
+      },
+      {
+        $addFields: {
+          deptSlug: {
+            $let: {
+              vars: {
+                rawDept: {
+                  $toLower: {
+                    $trim: { input: { $ifNull: ["$therapist.department", ""] } },
+                  },
+                },
+                deptCode: {
+                  $toLower: {
+                    $trim: {
+                      input: { $ifNull: [{ $arrayElemAt: ["$deptPrimary.code", 0] }, ""] },
+                    },
+                  },
+                },
+              },
+              in: {
+                $cond: [
+                  { $ne: ["$$rawDept", ""] },
+                  "$$rawDept",
+                  {
+                    $cond: [{ $ne: ["$$deptCode", ""] }, "$$deptCode", "unassigned"],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$deptSlug",
+          sessions: { $sum: 1 },
+          patients: { $addToSet: "$patientName" },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          department: "$_id",
+          sessions: 1,
+          patients: { $size: "$patients" },
+        },
+      },
+      { $sort: { patients: -1, sessions: -1, department: 1 } },
+    ]),
+  ]);
+
+  const codeToSlug = new Map(ALLOWED_DEPARTMENTS.map((d) => [d.code.toLowerCase(), d.slug]));
+  const slugToLabel = new Map(ALLOWED_DEPARTMENTS.map((d) => [d.slug, d.name]));
+  const byDepartment = byDepartmentAgg.map((row) => {
+    const raw = String(row.department || "unassigned").trim().toLowerCase() || "unassigned";
+    const slug = codeToSlug.get(raw) || raw;
+    return {
+      department: slug,
+      label: slugToLabel.get(slug) || (slug === "unassigned" ? "Unassigned" : slug),
+      sessions: Number(row.sessions) || 0,
+      patients: Number(row.patients) || 0,
+    };
+  });
+
   const total = rows.length;
   const pagedRows = rows.slice(skip, skip + limit);
-  const payload = { rows: pagedRows, total, page, limit };
+  const payload = {
+    rows: pagedRows,
+    total,
+    page,
+    limit,
+    overview: {
+      sessions: Number(overviewAgg[0]?.sessions) || 0,
+      patients: Number(overviewAgg[0]?.patients) || 0,
+      byDepartment,
+    },
+  };
   setCachedPerf(cacheKey, payload);
   res.json(payload);
 });
