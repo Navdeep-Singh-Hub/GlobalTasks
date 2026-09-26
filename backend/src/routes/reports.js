@@ -18,6 +18,7 @@ import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetE
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
 import { Department } from "../models/Department.js";
 import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
+import { buildEveryonePerformanceWorkbook } from "../services/everyonePerformanceExport.js";
 
 const router = Router();
 router.use(authRequired);
@@ -1234,6 +1235,22 @@ router.get("/therapist-performance/export", async (req, res) => {
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.send(buf);
+});
+
+router.get("/everyone-performance/export", async (req, res) => {
+  try {
+    const me = await actor(req);
+    if (!canViewClinicalPerformance(req.userRole)) {
+      return res.status(403).json({ message: "Insufficient permissions" });
+    }
+    const { buffer, filename } = await buildEveryonePerformanceWorkbook(req, me);
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (e) {
+    console.error("everyone-performance export failed", e);
+    res.status(500).json({ message: e?.message || "Failed to build everyone performance report" });
+  }
 });
 
 router.get("/supervisor-sheet/instances", async (req, res) => {

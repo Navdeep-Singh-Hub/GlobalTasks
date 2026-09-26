@@ -109,6 +109,7 @@ export default function TherapistPerformancePage() {
   const [ceoEditSaving, setCeoEditSaving] = useState(false);
   const [ceoDeletingId, setCeoDeletingId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportingEveryone, setExportingEveryone] = useState(false);
 
   const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
@@ -414,6 +415,25 @@ export default function TherapistPerformancePage() {
     }
   }
 
+  async function downloadEveryoneReport() {
+    setExportingEveryone(true);
+    setMsg(null);
+    try {
+      const qs = new URLSearchParams();
+      if (canFilterCenter && centerId) qs.set("centerId", centerId);
+      if (department) qs.set("department", department);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const suffix = from || to ? `${from || "start"}-to-${to || "end"}` : "current-month";
+      await downloadExport(`/reports/everyone-performance/export?${qs.toString()}`, `everyone-performance-${suffix}.xlsx`);
+      setMsg({ type: "ok", text: "Everyone performance report downloaded." });
+    } catch {
+      setMsg({ type: "err", text: "Failed to download everyone performance report." });
+    } finally {
+      setExportingEveryone(false);
+    }
+  }
+
   if (!canManage) {
     return (
       <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-card dark:border-zinc-800 dark:bg-zinc-950">
@@ -433,16 +453,28 @@ export default function TherapistPerformancePage() {
           <h1 className="mt-3 text-2xl font-bold tracking-tight">Therapist Performance</h1>
           <p className="mt-1 text-sm text-zinc-500">Center-wise supervisor and therapist measurements with date-wise session tracking.</p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="gap-2 shrink-0 self-start"
-          disabled={exporting}
-          onClick={() => void downloadExcel()}
-        >
-          <Download className="h-4 w-4" />
-          {exporting ? "Downloading…" : "Download Excel"}
-        </Button>
+        <div className="flex flex-wrap gap-2 shrink-0 self-start">
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2"
+            disabled={exporting || exportingEveryone}
+            onClick={() => void downloadExcel()}
+          >
+            <Download className="h-4 w-4" />
+            {exporting ? "Downloading…" : "Download sessions"}
+          </Button>
+          <Button
+            type="button"
+            variant="gradient"
+            className="gap-2"
+            disabled={exporting || exportingEveryone}
+            onClick={() => void downloadEveryoneReport()}
+          >
+            <Download className="h-4 w-4" />
+            {exportingEveryone ? "Building report…" : "Download everyone report"}
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">

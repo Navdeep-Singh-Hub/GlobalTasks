@@ -3,14 +3,14 @@
 import { Button } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { useAuth } from "@/contexts/auth-context";
-import { api } from "@/lib/api";
+import { api, downloadExport } from "@/lib/api";
 import { CoordinatorRemarksDisplay } from "@/components/therapist/coordinator-remarks-display";
 import { SupervisorRemarksDisplay } from "@/components/therapist/supervisor-remarks-display";
 import { normalizeLegacySupervisorSheetEntries } from "@/lib/supervisor-sheet-remarks";
 import { cn, formatCenterName } from "@/lib/utils";
 import { formatAppDate, formatAppDateTime } from "@/lib/date-format";
 import { canViewClinicalPerformance, formatRoleLine } from "@/lib/roles";
-import { Activity, ChevronDown, ChevronRight } from "lucide-react";
+import { Activity, ChevronDown, ChevronRight, Download } from "lucide-react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 
 type SheetKind = "supervisor" | "coordinator";
@@ -108,6 +108,8 @@ export default function SupervisorPerformancePage() {
   const [detailsById, setDetailsById] = useState<
     Record<string, { loading: boolean; loaded: boolean; error: string; sheets: DetailSheet[] }>
   >({});
+  const [exportingEveryone, setExportingEveryone] = useState(false);
+  const [exportMsg, setExportMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
   const myCenterId = useMemo(() => {
     const cid = user?.centerId;
@@ -261,6 +263,24 @@ export default function SupervisorPerformancePage() {
     else void loadCoordinatorDetails(id);
   }
 
+  async function downloadEveryoneReport() {
+    setExportingEveryone(true);
+    setExportMsg(null);
+    try {
+      const qs = new URLSearchParams();
+      if (centerId) qs.set("centerId", centerId);
+      if (from) qs.set("from", from);
+      if (to) qs.set("to", to);
+      const suffix = from || to ? `${from || "start"}-to-${to || "end"}` : "current-month";
+      await downloadExport(`/reports/everyone-performance/export?${qs.toString()}`, `everyone-performance-${suffix}.xlsx`);
+      setExportMsg({ type: "ok", text: "Everyone performance report downloaded." });
+    } catch {
+      setExportMsg({ type: "err", text: "Failed to download everyone performance report." });
+    } finally {
+      setExportingEveryone(false);
+    }
+  }
+
   const roleLabel = sheetKind === "supervisor" ? "Supervisor" : "Coordinator";
   const emptyMessage =
     sheetKind === "supervisor" ? "No supervisor records for selected filters." : "No coordinator records for selected filters.";
@@ -276,39 +296,61 @@ export default function SupervisorPerformancePage() {
 
   return (
     <div className="space-y-4 sm:space-y-5">
-      <div>
-        <div className="chip border border-zinc-200 bg-white text-zinc-500">
-          <Activity className="h-3 w-3" /> Daily sheet tracker
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <div className="chip border border-zinc-200 bg-white text-zinc-500">
+            <Activity className="h-3 w-3" /> Daily sheet tracker
+          </div>
+          <h1 className="mt-3 text-2xl font-bold tracking-tight">Supervisor & coordinator performance</h1>
+          <p className="mt-1 text-sm text-zinc-500">Supervisor and coordinator daily sheet summaries and date-wise task details.</p>
+          <div className="mt-4 inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => setSheetKind("supervisor")}
+              className={cn(
+                "rounded-lg px-4 py-2 text-xs font-semibold transition-colors",
+                sheetKind === "supervisor"
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+              )}
+            >
+              Supervisors
+            </button>
+            <button
+              type="button"
+              onClick={() => setSheetKind("coordinator")}
+              className={cn(
+                "rounded-lg px-4 py-2 text-xs font-semibold transition-colors",
+                sheetKind === "coordinator"
+                  ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
+              )}
+            >
+              Coordinators
+            </button>
+          </div>
         </div>
-        <h1 className="mt-3 text-2xl font-bold tracking-tight">Supervisor & coordinator performance</h1>
-        <p className="mt-1 text-sm text-zinc-500">Supervisor and coordinator daily sheet summaries and date-wise task details.</p>
-        <div className="mt-4 inline-flex rounded-xl border border-zinc-200 bg-zinc-50 p-1 dark:border-zinc-700 dark:bg-zinc-900">
-          <button
-            type="button"
-            onClick={() => setSheetKind("supervisor")}
-            className={cn(
-              "rounded-lg px-4 py-2 text-xs font-semibold transition-colors",
-              sheetKind === "supervisor"
-                ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
-            )}
-          >
-            Supervisors
-          </button>
-          <button
-            type="button"
-            onClick={() => setSheetKind("coordinator")}
-            className={cn(
-              "rounded-lg px-4 py-2 text-xs font-semibold transition-colors",
-              sheetKind === "coordinator"
-                ? "bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-300"
-            )}
-          >
-            Coordinators
-          </button>
-        </div>
+        <Button
+          type="button"
+          variant="gradient"
+          className="gap-2 shrink-0 self-start"
+          disabled={exportingEveryone}
+          onClick={() => void downloadEveryoneReport()}
+        >
+          <Download className="h-4 w-4" />
+          {exportingEveryone ? "Building report…" : "Download everyone report"}
+        </Button>
       </div>
+
+      {exportMsg && (
+        <div
+          className={`rounded-lg border px-3 py-2 text-xs ${
+            exportMsg.type === "ok" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-rose-200 bg-rose-50 text-rose-700"
+          }`}
+        >
+          {exportMsg.text}
+        </div>
+      )}
 
       <div className="rounded-xl border border-zinc-200/80 bg-white p-4 shadow-card dark:border-zinc-800 dark:bg-zinc-950 sm:rounded-2xl sm:p-5">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
