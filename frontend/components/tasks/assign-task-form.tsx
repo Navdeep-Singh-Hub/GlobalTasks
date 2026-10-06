@@ -197,13 +197,23 @@ export function AssignTaskForm() {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const crossCenterAssign = Boolean(user?.canAssignAcrossCenters);
+  const crossCenterAssign = Boolean(user?.canAssignAcrossCenters) || isCeo(user?.role);
+  const ownCenterId =
+    user?.centerId && typeof user.centerId === "object" && "_id" in user.centerId
+      ? String(user.centerId._id)
+      : String(user?.centerId || "");
+  const visibleCenters = crossCenterAssign ? centers : centers.filter((c) => c._id === ownCenterId);
   const pickerCenterId = drafts[0]?.centerId || "";
 
   useEffect(() => {
     api<{ centers: CenterLite[] }>("/centers").then((d) => setCenters(d.centers)).catch(() => setCenters([]));
     api<{ departments: DepartmentLite[] }>("/departments").then((d) => setDepartments(d.departments)).catch(() => setDepartments([]));
   }, []);
+
+  useEffect(() => {
+    if (crossCenterAssign || !ownCenterId) return;
+    setDrafts((list) => list.map((d) => (d.centerId ? d : { ...d, centerId: ownCenterId })));
+  }, [crossCenterAssign, ownCenterId]);
 
   useEffect(() => {
     const canPickAssignees = user?.role && (isManagement(user.role) || isCeo(user.role));
@@ -226,8 +236,9 @@ export function AssignTaskForm() {
 
   const createdCount = drafts.length;
 
-  const addDraft = () => setDrafts((d) => [...d, emptyDraft(d.length + 1)]);
-  const resetAll = () => setDrafts([emptyDraft(1)]);
+  const addDraft = () =>
+    setDrafts((d) => [...d, { ...emptyDraft(d.length + 1), centerId: crossCenterAssign ? "" : ownCenterId }]);
+  const resetAll = () => setDrafts([{ ...emptyDraft(1), centerId: crossCenterAssign ? "" : ownCenterId }]);
   const updateDraft = (id: number, patch: Partial<Draft>) => setDrafts((d) => d.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   const toggleDraftAssignee = (id: number, userId: string) =>
     setDrafts((list) =>
@@ -320,7 +331,7 @@ export function AssignTaskForm() {
           index={idx + 1}
           draft={d}
           users={users}
-          centers={centers}
+          centers={visibleCenters}
           departments={departments}
           crossCenterAssign={crossCenterAssign}
           onChange={(patch) => updateDraft(d.id, patch)}
@@ -392,10 +403,7 @@ function DraftCard({
   const usersInSelectedCenter = useMemo(() => {
     if (!draft.centerId) return crossCenterAssign ? users : [];
     const center = String(draft.centerId);
-    return users.filter((u) => {
-      const uid = userCenterIdRef(u);
-      return uid === center || !uid;
-    });
+    return users.filter((u) => userCenterIdRef(u) === center);
   }, [users, draft.centerId, crossCenterAssign]);
 
   const selectedNames = useMemo(
@@ -469,10 +477,7 @@ function DraftCard({
               }
               const allowedIds = new Set(
                 users
-                  .filter((u) => {
-                    const uid = userCenterIdRef(u);
-                    return uid === String(nextCenter) || !uid;
-                  })
+                  .filter((u) => userCenterIdRef(u) === String(nextCenter))
                   .map((u) => u._id)
               );
               onChange({

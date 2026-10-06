@@ -31,9 +31,7 @@ function centerScopeFilter(centerId) {
   if (!centerId) return {};
   const cid = oid(centerId);
   if (!cid) return {};
-  return {
-    $or: [{ centerId: cid }, { centerId: null }, { centerId: { $exists: false } }],
-  };
+  return { centerId: cid };
 }
 
 function oid(v) {
@@ -180,10 +178,10 @@ async function getDirectChildrenMap(parentIds, centerId) {
 /** Roles that can receive tasks within a center (excludes ceo / centre_head). */
 const CENTER_ASSIGNEE_ROLES = ["coordinator", "supervisor", "operations", "user", "executor"];
 
-/** Legacy users with no center still count as in-scope for a selected center. */
+/** A user belongs to a center only when their center id matches exactly. */
 export function assigneeMatchesCenter(userCenterId, taskCenterId) {
   if (!taskCenterId) return true;
-  if (userCenterId == null || userCenterId === "") return true;
+  if (userCenterId == null || userCenterId === "") return false;
   return String(userCenterId) === String(taskCenterId);
 }
 

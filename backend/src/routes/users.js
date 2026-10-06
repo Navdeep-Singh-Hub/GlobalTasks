@@ -55,14 +55,16 @@ router.get("/", async (req, res) => {
     String(req.query.assignable || "").toLowerCase() === "true" &&
     (isManagement(req.userRole) || isCeo(req.userRole) || fillPast);
   const crossCenter = canAccessAnyCenter({ role: req.userRole, email: me?.email }) || fillPast;
-  const pickerCenterId =
-    req.query.centerId && String(req.query.centerId) !== "all"
+  const ownCenterId = me?.centerId || null;
+  // Center accounts only ever see their own center. A query param cannot widen that.
+  const pickerCenterId = crossCenter
+    ? req.query.centerId && String(req.query.centerId) !== "all"
       ? String(req.query.centerId)
-      : isCeo(req.userRole) || crossCenter
-        ? ""
-        : String(me?.centerId || "");
-  if (!isCeo(req.userRole) && !crossCenter && !fillPast) q.centerId = me?.centerId || null;
-  if (assigneePicker && pickerCenterId && (isCeo(req.userRole) || crossCenter)) {
+      : ""
+    : String(ownCenterId || "");
+  if (!crossCenter) {
+    q.centerId = ownCenterId;
+  } else if (pickerCenterId && assigneePicker) {
     q.centerId = pickerCenterId;
   }
   const operationsUserListing =
@@ -74,7 +76,7 @@ router.get("/", async (req, res) => {
     const ids = await getAssignableAssigneeIds({
       actorId: req.userId,
       actorRole: req.userRole,
-      centerId: pickerCenterId || me?.centerId || null,
+      centerId: crossCenter ? pickerCenterId || null : ownCenterId,
       actorEmail: me?.email,
     });
     if (!ids.length) return res.json({ users: [] });
@@ -341,13 +343,20 @@ router.post("/:id/reset-password", requireRoles("ceo", "centre_head"), async (re
   res.json({ ok: true });
 });
 
-router.delete("/:id", requireRoles("ceo"), async (req, res) => {
+router.delete("/:id", requireRoles("ceo", "centre_head", "coordinator"), async (req, res) => {
   const userId = String(req.params.id || "");
   if (!userId) return res.status(400).json({ message: "User id is required" });
-  if (userId === String(req.userId)) return res.status(400).json({ message: "CEO cannot delete own account" });
+  if (userId === String(req.userId)) return res.status(400).json({ message: "You cannot delete your own account" });
 
-  const user = await User.findById(userId).select("_id name role").lean();
+  const me = await actor(req);
+  const user = await User.findById(userId).select("_id name role centerId").lean();
   if (!user) return res.status(404).json({ message: "User not found" });
+  if (!canAssignRole(req.userRole, user.role)) {
+    return res.status(403).json({ message: "You can only delete users junior to your role" });
+  }
+  if (!isCeo(req.userRole) && String(user.centerId || "") !== String(me?.centerId || "")) {
+    return res.status(403).json({ message: "You can delete users only in your center" });
+  }
 
   const taskIds = await Task.find({
     $or: [{ createdBy: user._id }, { assignees: user._id }],

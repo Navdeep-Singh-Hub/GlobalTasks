@@ -329,9 +329,18 @@ export function TaskEditModal({
             </Select>
             <label className="block">
               <span className="text-xs font-semibold text-zinc-500">Center *</span>
-              <Select value={centerId} onChange={(e) => setCenterId(e.target.value)} className="mt-1">
+              <Select value={centerId} disabled={!isCeo(user?.role) && !user?.canAssignAcrossCenters} onChange={(e) => setCenterId(e.target.value)} className="mt-1">
               <option value="">Select center</option>
-              {centers.map((c) => (
+              {(isCeo(user?.role) || user?.canAssignAcrossCenters
+                ? centers
+                : centers.filter((c) => {
+                    const own =
+                      user?.centerId && typeof user.centerId === "object" && "_id" in user.centerId
+                        ? String(user.centerId._id)
+                        : String(user?.centerId || "");
+                    return c._id === own;
+                  })
+              ).map((c) => (
                 <option key={c._id} value={c._id}>
                   {formatCenterName(c.name)}
                 </option>

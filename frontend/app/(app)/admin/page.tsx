@@ -14,6 +14,7 @@ import {
   ROLE_LABELS,
   USER_ROLES,
   formatRoleLine,
+  isCeo,
   rolesAssignableBy,
   type Role,
 } from "@/lib/roles";
@@ -32,6 +33,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 function operationsLeadOptions(users: Member[]): Member[] {
   return users.filter((u) => u.role === "operations");
+}
+
+function canDeleteMember(actorRole: string | undefined, actorId: string | undefined, member: Member) {
+  if (!actorRole || !actorId || member._id === actorId) return false;
+  if (actorRole !== "ceo" && actorRole !== "centre_head" && actorRole !== "coordinator") return false;
+  return rolesAssignableBy(actorRole).includes(member.role);
 }
 
 type Member = {
@@ -160,6 +167,12 @@ export default function AdminPanelPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
+  const canSeeAllCenters = isCeo(me?.role);
+  const myCenterName =
+    me?.centerId && typeof me.centerId === "object" && me.centerId.name
+      ? formatCenterName(me.centerId.name)
+      : "Your center";
+
   const load = useCallback(() => {
     setLoading(true);
     const qs = new URLSearchParams();
@@ -167,12 +180,12 @@ export default function AdminPanelPage() {
     if (status !== "all") qs.set("status", status);
     if (role !== "all") qs.set("role", role);
     if (dept !== "all") qs.set("department", dept);
-    if (center !== "all") qs.set("centerId", center);
+    if (canSeeAllCenters && center !== "all") qs.set("centerId", center);
     api<{ users: Member[] }>(`/users?${qs.toString()}`)
       .then((d) => setMembers(d.users))
       .catch(() => setMembers([]))
       .finally(() => setLoading(false));
-  }, [search, status, role, dept, center]);
+  }, [search, status, role, dept, center, canSeeAllCenters]);
 
   useEffect(() => {
     load();
@@ -188,8 +201,12 @@ export default function AdminPanelPage() {
   const deleteUserPermanent = async (m: Member) => {
     const ok = window.confirm(`Permanently delete ${m.name} and all linked data? This cannot be undone.`);
     if (!ok) return;
-    await api(`/users/${m._id}`, { method: "DELETE" });
-    load();
+    try {
+      await api(`/users/${m._id}`, { method: "DELETE" });
+      load();
+    } catch (e) {
+      window.alert(e instanceof ApiError ? e.message : "Could not delete user");
+    }
   };
 
   return (
@@ -236,14 +253,20 @@ export default function AdminPanelPage() {
             <option value="all">All Departments</option>
             {departments.map((d) => <option key={d} value={d}>{d}</option>)}
           </Select>
-          <Select value={center} onChange={(e) => setCenter(e.target.value)}>
-            <option value="all">All Centers</option>
-            {centers.map((c) => (
-              <option key={c._id} value={c._id}>
-                {formatCenterName(c.name)}
-              </option>
-            ))}
-          </Select>
+          {canSeeAllCenters ? (
+            <Select value={center} onChange={(e) => setCenter(e.target.value)}>
+              <option value="all">All Centers</option>
+              {centers.map((c) => (
+                <option key={c._id} value={c._id}>
+                  {formatCenterName(c.name)}
+                </option>
+              ))}
+            </Select>
+          ) : (
+            <div className="flex h-10 items-center rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+              {myCenterName}
+            </div>
+          )}
         </div>
       </div>
 
@@ -344,7 +367,7 @@ export default function AdminPanelPage() {
                         >
                           <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${m.active ? "left-[18px]" : "left-0.5"}`} />
                         </button>
-                        {me?.role === "ceo" && m._id !== me._id && (
+                        {canDeleteMember(me?.role, me?._id, m) && (
                           <button
                             onClick={() => void deleteUserPermanent(m)}
                             className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 dark:hover:bg-zinc-800"
@@ -403,7 +426,7 @@ export default function AdminPanelPage() {
                   >
                     <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${m.active ? "left-[18px]" : "left-0.5"}`} />
                   </button>
-                  {me?.role === "ceo" && m._id !== me._id && (
+                  {canDeleteMember(me?.role, me?._id, m) && (
                     <button
                       onClick={() => void deleteUserPermanent(m)}
                       className="flex h-8 w-8 items-center justify-center rounded-full text-zinc-400 hover:bg-zinc-100 hover:text-rose-600 dark:hover:bg-zinc-800"
@@ -465,7 +488,7 @@ function CreateUserModal({
     phone: "",
     role: (isOperationsActor ? "user" : assignable.includes("executor") ? "executor" : assignable[0]) as Role,
     executorKind: "" as string,
-    centerId: isOperationsActor ? meCenterId : "",
+    centerId: isCeo(me?.role) ? "" : meCenterId,
     reportsTo: isOperationsActor && me?._id ? me._id : "",
     department: "",
     title: "",
@@ -579,7 +602,7 @@ function CreateUserModal({
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <Select value={form.centerId} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+        <Select value={form.centerId} disabled={!isCeo(me?.role)} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
           <option value="">Select center…</option>
           {centers.map((c) => (
             <option key={c._id} value={c._id}>
@@ -904,7 +927,7 @@ function EditUserModal({
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <Select value={form.centerId} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+        <Select value={form.centerId} disabled={!isCeo(me?.role)} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
           <option value="">Select center…</option>
           {centers.map((c) => (
             <option key={c._id} value={c._id}>
