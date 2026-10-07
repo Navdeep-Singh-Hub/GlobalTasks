@@ -167,7 +167,11 @@ export default function AdminPanelPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  const canSeeAllCenters = isCeo(me?.role);
+  const canSeeAllCenters = isCeo(me?.role) || (me?.accessibleCenterIds?.length || 0) > 1;
+  const centerChoices =
+    me?.accessibleCenterIds == null
+      ? centers
+      : centers.filter((c) => me.accessibleCenterIds?.includes(String(c._id)));
   const myCenterName =
     me?.centerId && typeof me.centerId === "object" && me.centerId.name
       ? formatCenterName(me.centerId.name)
@@ -256,7 +260,7 @@ export default function AdminPanelPage() {
           {canSeeAllCenters ? (
             <Select value={center} onChange={(e) => setCenter(e.target.value)}>
               <option value="all">All Centers</option>
-              {centers.map((c) => (
+              {centerChoices.map((c) => (
                 <option key={c._id} value={c._id}>
                   {formatCenterName(c.name)}
                 </option>
@@ -602,9 +606,12 @@ function CreateUserModal({
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <Select value={form.centerId} disabled={!isCeo(me?.role)} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+        <Select value={form.centerId} disabled={!isCeo(me?.role) && (me?.accessibleCenterIds?.length || 0) <= 1} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
           <option value="">Select center…</option>
-          {centers.map((c) => (
+          {(me?.accessibleCenterIds == null
+            ? centers
+            : centers.filter((c) => me.accessibleCenterIds?.includes(String(c._id)))
+          ).map((c) => (
             <option key={c._id} value={c._id}>
               {formatCenterName(c.name)}
             </option>
@@ -927,9 +934,12 @@ function EditUserModal({
         <Input placeholder="Full name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         <Input type="email" placeholder="Email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
         <Input placeholder="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <Select value={form.centerId} disabled={!isCeo(me?.role)} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
+        <Select value={form.centerId} disabled={!isCeo(me?.role) && (me?.accessibleCenterIds?.length || 0) <= 1} onChange={(e) => setForm({ ...form, centerId: e.target.value })}>
           <option value="">Select center…</option>
-          {centers.map((c) => (
+          {(me?.accessibleCenterIds == null
+            ? centers
+            : centers.filter((c) => me.accessibleCenterIds?.includes(String(c._id)))
+          ).map((c) => (
             <option key={c._id} value={c._id}>
               {formatCenterName(c.name)}
             </option>

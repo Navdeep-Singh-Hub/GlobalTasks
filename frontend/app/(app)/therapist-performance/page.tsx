@@ -113,7 +113,11 @@ export default function TherapistPerformancePage() {
 
   const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
-  const canFilterCenter = isCeo(user?.role);
+  const canFilterCenter = isCeo(user?.role) || (user?.accessibleCenterIds?.length || 0) > 1;
+  const centerChoices =
+    user?.accessibleCenterIds == null
+      ? centers
+      : centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)));
   const canCeoSessionAdmin = isCeo(user?.role);
 
   const load = useCallback(async () => {
@@ -484,7 +488,7 @@ export default function TherapistPerformancePage() {
             {canFilterCenter ? (
               <Select value={centerId} onChange={(e) => setCenterId(e.target.value)}>
                 <option value="">All centers</option>
-                {centers.map((c) => (
+                {centerChoices.map((c) => (
                   <option key={c._id} value={c._id}>
                     {formatCenterName(c.name)}
                   </option>

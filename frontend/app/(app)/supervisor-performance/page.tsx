@@ -86,6 +86,11 @@ export default function SupervisorPerformancePage() {
   const { user } = useAuth();
   const canManage = canViewClinicalPerformance(user?.role);
   const isCeoUser = user?.role === "ceo";
+  const canPickCenter = isCeoUser || (user?.accessibleCenterIds?.length || 0) > 1;
+  const centerOptions =
+    user?.accessibleCenterIds == null
+      ? centers
+      : centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)));
   const viewerIsSupervisor = user?.role === "supervisor";
   const viewerIsCoordinator = user?.role === "coordinator";
   const [sheetKind, setSheetKind] = useState<SheetKind>("supervisor");
@@ -127,13 +132,13 @@ export default function SupervisorPerformancePage() {
 
   useEffect(() => {
     if (!user || !canManage) return;
-    if (!isCeoUser) setCenterId(myCenterId);
-  }, [user, canManage, isCeoUser, myCenterId]);
+    if (!canPickCenter) setCenterId(myCenterId);
+  }, [user, canManage, canPickCenter, myCenterId]);
 
   useEffect(() => {
     if (!user) return;
     const qs = new URLSearchParams();
-    const centerFilter = isCeoUser ? centerId : myCenterId;
+    const centerFilter = canPickCenter ? centerId : myCenterId;
     if (centerFilter) qs.set("centerId", centerFilter);
     api<{ users: PersonUser[] }>(`/users${qs.toString() ? `?${qs.toString()}` : ""}`)
       .then((d) => {
@@ -145,7 +150,7 @@ export default function SupervisorPerformancePage() {
         setSupervisors([]);
         setCoordinators([]);
       });
-  }, [user, isCeoUser, centerId, myCenterId]);
+  }, [user, canPickCenter, centerId, myCenterId]);
 
   useEffect(() => {
     setSupervisorId("");
@@ -356,9 +361,9 @@ export default function SupervisorPerformancePage() {
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <label className="space-y-1">
             <span className="text-xs font-semibold text-zinc-500">Center</span>
-            <Select value={centerId} onChange={(e) => setCenterId(e.target.value)} disabled={!isCeoUser}>
-              <option value="">{isCeoUser ? "All centers" : "Your center"}</option>
-              {centers.map((c) => (
+            <Select value={centerId} onChange={(e) => setCenterId(e.target.value)} disabled={!canPickCenter}>
+              <option value="">{canPickCenter ? "All my centers" : "Your center"}</option>
+              {centerOptions.map((c) => (
                 <option key={c._id} value={c._id}>
                   {formatCenterName(c.name)}
                   {c.code ? ` (${c.code})` : ""}

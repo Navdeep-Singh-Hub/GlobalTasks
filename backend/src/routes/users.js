@@ -15,6 +15,7 @@ import { logActivity } from "../services/activityService.js";
 import { USER_ROLES, EXECUTOR_KINDS, canAssignRole, isCeo, isManagement } from "../constants/roles.js";
 import { ACTIVE_USER_FILTER, getAssignableAssigneeIds, getVisibleUserIds, canAccessAnyCenter } from "../services/hierarchy.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
+import { accessibleCenterIds, centerClause, centerIdAllowed, extraCenterNamesForEmail } from "../services/centerAccess.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { ALLOWED_DEPARTMENT_SLUGS, isAllowedDepartmentSlug } from "../constants/departments.js";
 import { assertAllowedDepartmentId } from "../utils/departments.js";
@@ -27,6 +28,12 @@ async function actor(req) {
   if (req._actor && Object.prototype.hasOwnProperty.call(req._actor, "email")) return req._actor;
   req._actor = await User.findById(req.userId).select("_id role centerId email").lean();
   return req._actor;
+}
+
+async function mayUseCenter(req, me, centerId) {
+  if (isCeo(req.userRole) || isPastDataFillEmail(me?.email)) return true;
+  const ids = await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+  return centerIdAllowed(ids, centerId);
 }
 
 function executorNeedsSupervisor(role, executorKind) {
@@ -55,17 +62,23 @@ router.get("/", async (req, res) => {
     String(req.query.assignable || "").toLowerCase() === "true" &&
     (isManagement(req.userRole) || isCeo(req.userRole) || fillPast);
   const crossCenter = canAccessAnyCenter({ role: req.userRole, email: me?.email }) || fillPast;
-  const ownCenterId = me?.centerId || null;
-  // Center accounts only ever see their own center. A query param cannot widen that.
+  const namedCenters = extraCenterNamesForEmail(me?.email);
+  const allowedIds = crossCenter
+    ? null
+    : await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+  const requestedCenter =
+    req.query.centerId && String(req.query.centerId) !== "all" ? String(req.query.centerId) : "";
   const pickerCenterId = crossCenter
-    ? req.query.centerId && String(req.query.centerId) !== "all"
-      ? String(req.query.centerId)
-      : ""
-    : String(ownCenterId || "");
-  if (!crossCenter) {
-    q.centerId = ownCenterId;
-  } else if (pickerCenterId && assigneePicker) {
-    q.centerId = pickerCenterId;
+    ? requestedCenter
+    : requestedCenter && centerIdAllowed(allowedIds, requestedCenter)
+      ? requestedCenter
+      : String(me?.centerId || "");
+  if (crossCenter) {
+    if (assigneePicker && pickerCenterId) q.centerId = pickerCenterId;
+  } else if (requestedCenter && centerIdAllowed(allowedIds, requestedCenter)) {
+    q.centerId = requestedCenter;
+  } else {
+    Object.assign(q, centerClause(allowedIds));
   }
   const operationsUserListing =
     req.userRole === "operations" && !assigneePicker && (!role || role === "all" || role === "user");
@@ -76,7 +89,7 @@ router.get("/", async (req, res) => {
     const ids = await getAssignableAssigneeIds({
       actorId: req.userId,
       actorRole: req.userRole,
-      centerId: crossCenter ? pickerCenterId || null : ownCenterId,
+      centerId: crossCenter ? pickerCenterId || null : pickerCenterId || me?.centerId || null,
       actorEmail: me?.email,
     });
     if (!ids.length) return res.json({ users: [] });
@@ -93,7 +106,7 @@ router.get("/", async (req, res) => {
   } else if (operationsAdminRoleLookup) {
     // Admin form: e.g. supervisor list for therapist mapping in same center.
     q.role = role;
-  } else if (!fillPast) {
+  } else if (!fillPast && !namedCenters) {
     const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
     if (visibleIds) q._id = { $in: visibleIds };
   }
@@ -140,7 +153,7 @@ router.post("/", requireManagement, async (req, res, next) => {
       return res.status(400).json({ message: "Invalid executor kind" });
     }
     const me = await actor(req);
-    if (!isCeo(req.userRole) && String(me?.centerId || "") !== String(centerId)) {
+    if (!(await mayUseCenter(req, me, centerId))) {
       return res.status(403).json({ message: "You can only create users in your own center" });
     }
     if (role === "centre_head") {
@@ -277,7 +290,7 @@ router.patch("/:id", async (req, res, next) => {
     }
     if (centerId !== undefined) {
       if (!centerId) return res.status(400).json({ message: "Center is required" });
-      if (!isCeo(req.userRole) && String(me?.centerId || "") !== String(centerId)) {
+      if (!(await mayUseCenter(req, me, centerId))) {
         return res.status(403).json({ message: "You can only assign users within your center" });
       }
       user.centerId = centerId;
@@ -334,7 +347,7 @@ router.post("/:id/reset-password", requireRoles("ceo", "centre_head"), async (re
   const me = await actor(req);
   const user = await User.findById(req.params.id);
   if (!user) return res.status(404).json({ message: "User not found" });
-  if (!isCeo(req.userRole) && String(user.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await mayUseCenter(req, me, user.centerId))) {
     return res.status(403).json({ message: "You can reset passwords only for your center users" });
   }
   const pwd = req.body.password || "welcome123";
@@ -354,7 +367,7 @@ router.delete("/:id", requireRoles("ceo", "centre_head", "coordinator"), async (
   if (!canAssignRole(req.userRole, user.role)) {
     return res.status(403).json({ message: "You can only delete users junior to your role" });
   }
-  if (!isCeo(req.userRole) && String(user.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await mayUseCenter(req, me, user.centerId))) {
     return res.status(403).json({ message: "You can delete users only in your center" });
   }
 

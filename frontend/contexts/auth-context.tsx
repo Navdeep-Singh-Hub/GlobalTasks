@@ -20,6 +20,8 @@ export type User = {
   active?: boolean;
   canAssignAcrossCenters?: boolean;
   canFillPastDataOnBehalf?: boolean;
+  /** null = every center. Otherwise the only center ids this login may see. */
+  accessibleCenterIds?: string[] | null;
 };
 
 type AuthState = {

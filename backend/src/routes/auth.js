@@ -7,6 +7,7 @@ import { normalizeRole } from "../constants/roles.js";
 import { isCrossCenterAssignerEmail } from "../services/hierarchy.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
 import { isGlobalAccessEmail } from "../services/globalAccess.js";
+import { accessibleCenterIds } from "../services/centerAccess.js";
 
 const router = Router();
 
@@ -16,11 +17,17 @@ function effectiveRoleForUser(user) {
   return normalizeRole(user.role);
 }
 
-function enrichAuthUser(user) {
+async function enrichAuthUser(user) {
   const outUser = user.toJSON ? user.toJSON() : { ...user };
   outUser.role = effectiveRoleForUser(user);
   outUser.canAssignAcrossCenters = isCrossCenterAssignerEmail(user.email);
   outUser.canFillPastDataOnBehalf = isPastDataFillEmail(user.email);
+  const ids = await accessibleCenterIds({
+    role: outUser.role,
+    email: user.email,
+    centerId: user.centerId,
+  });
+  outUser.accessibleCenterIds = ids == null ? null : ids.map((id) => String(id));
   return outUser;
 }
 
@@ -61,16 +68,16 @@ router.post("/login", async (req, res, next) => {
     const effectiveRole = effectiveRoleForUser(user);
     user.lastAccessAt = new Date();
     await user.save();
-    const outUser = enrichAuthUser(user);
+    const outUser = await enrichAuthUser(user);
     res.json({ token: signToken({ ...user.toObject(), role: effectiveRole }), user: outUser });
   } catch (e) {
     next(e);
   }
 });
 
-router.get("/me", authRequired, loadUser, (req, res) => {
+router.get("/me", authRequired, loadUser, async (req, res) => {
   if (!req.user) return res.status(401).json({ message: "Authentication required" });
-  res.json({ user: enrichAuthUser(req.user) });
+  res.json({ user: await enrichAuthUser(req.user) });
 });
 
 export default router;

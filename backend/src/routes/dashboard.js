@@ -7,6 +7,7 @@ import { Escalation } from "../models/Escalation.js";
 import { authRequired, requireCenterAssigned } from "../middleware/auth.js";
 import { isCeo } from "../constants/roles.js";
 import { getVisibleUserIds } from "../services/hierarchy.js";
+import { accessibleCenterIds, centerClause, centerIdAllowed, extraCenterNamesForEmail } from "../services/centerAccess.js";
 import { isManagement } from "../constants/roles.js";
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import {
@@ -42,7 +43,7 @@ router.use(requireCenterAssigned);
 
 async function actor(req) {
   if (req._actor) return req._actor;
-  req._actor = await User.findById(req.userId).select("_id role centerId").lean();
+  req._actor = await User.findById(req.userId).select("_id role centerId email").lean();
   return req._actor;
 }
 
@@ -77,6 +78,14 @@ function parseDateRangeFromQuery(query, scope = "month", field = "dueDate") {
   return Object.keys(range).length ? { [field]: range } : rangeForScope(scope);
 }
 
+async function applyCenterLock(target, req, me) {
+  const ids = await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+  if (ids == null) return;
+  const requested = String(req.query.centerId || "");
+  if (requested && centerIdAllowed(ids, requested)) target.centerId = requested;
+  else Object.assign(target, centerClause(ids));
+}
+
 router.get("/summary", async (req, res) => {
   const me = await actor(req);
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
@@ -84,16 +93,24 @@ router.get("/summary", async (req, res) => {
   const base = { deletedAt: null, ...parseDateRangeFromQuery(req.query, scope, "dueDate") };
   if (req.query.centerId) base.centerId = req.query.centerId;
   if (req.query.departmentId) base.departmentId = req.query.departmentId;
-  if (!isCeo(req.userRole)) base.centerId = me?.centerId || null;
-  if (visibleIds && req.userRole !== "centre_head") base.assignees = { $in: visibleIds };
+  await applyCenterLock(base, req, me);
+  if (visibleIds && req.userRole !== "centre_head" && !extraCenterNamesForEmail(me?.email)) base.assignees = { $in: visibleIds };
+  const lockedIds = extraCenterNamesForEmail(me?.email)
+    ? await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId })
+    : null;
   const projectFilter = isCeo(req.userRole)
     ? { status: "active" }
-    : { status: "active", owner: { $in: await User.find({ centerId: me?.centerId || null }).distinct("_id") } };
+    : {
+        status: "active",
+        owner: {
+          $in: await User.find(lockedIds ? centerClause(lockedIds) : { centerId: me?.centerId || null }).distinct("_id"),
+        },
+      };
 
   const now = new Date();
   const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
   const monthlyMatch = { deletedAt: null, createdAt: { $gte: sixMonthsAgo } };
-  if (!isCeo(req.userRole)) monthlyMatch.centerId = me?.centerId || null;
+  await applyCenterLock(monthlyMatch, req, me);
   if (visibleIds && req.userRole !== "centre_head") monthlyMatch.assignees = { $in: visibleIds };
 
   const [totalTasks, pending, completed, overdue, activeProjects, byStatus, byCadence, monthly] =
@@ -161,8 +178,10 @@ router.get("/team-performance", async (_req, res) => {
   const taskRange = parseDateRangeFromQuery(_req.query, scope, "dueDate");
   const userFilter = { active: true };
   const visibleIds = await getVisibleUserIds({ actorId: _req.userId, actorRole: _req.userRole, centerId: me?.centerId || null });
-  if (!isCeo(_req.userRole)) userFilter.centerId = me?.centerId || null;
-  if (visibleIds) userFilter._id = { $in: visibleIds };
+  const named = extraCenterNamesForEmail(me?.email);
+  if (named) await applyCenterLock(userFilter, _req, me);
+  else if (!isCeo(_req.userRole)) userFilter.centerId = me?.centerId || null;
+  if (visibleIds && !named) userFilter._id = { $in: visibleIds };
   if (_req.userRole === "centre_head") userFilter.role = { $in: ["coordinator", "supervisor", "operations", "user", "executor"] };
   if (_req.userRole === "coordinator") userFilter.role = { $in: ["coordinator", "supervisor", "operations", "user", "executor"] };
   if (_req.userRole === "supervisor") userFilter.role = "executor";
@@ -248,10 +267,12 @@ router.get("/member-tasks", async (req, res) => {
 
   const me = await actor(req);
   const userFilter = { active: true, _id: assigneeId };
-  if (!isCeo(req.userRole)) userFilter.centerId = me?.centerId || null;
+  const named = extraCenterNamesForEmail(me?.email);
+  if (named) await applyCenterLock(userFilter, req, me);
+  else if (!isCeo(req.userRole)) userFilter.centerId = me?.centerId || null;
 
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
-  if (visibleIds && !visibleIds.includes(String(assigneeId))) {
+  if (!named && visibleIds && !visibleIds.includes(String(assigneeId))) {
     return res.status(403).json({ message: "Not allowed to view this member" });
   }
 
@@ -275,7 +296,11 @@ router.get("/member-tasks", async (req, res) => {
   const member = await User.findOne(userFilter).select("_id").lean();
   if (!member) return res.status(404).json({ message: "Member not found" });
 
-  const centerScope = isCeo(req.userRole) ? {} : { centerId: me?.centerId || null };
+  const centerScope = extraCenterNamesForEmail(me?.email)
+    ? centerClause(await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId }))
+    : isCeo(req.userRole)
+      ? {}
+      : { centerId: me?.centerId || null };
   const base = { assignees: assigneeId, deletedAt: null, ...centerScope };
   const now = new Date();
 
@@ -323,7 +348,9 @@ router.get("/activity", async (req, res) => {
     items = await Activity.find(activityRange).sort({ createdAt: -1 }).limit(limit).lean();
   } else {
     const taskIds = await Task.find({
-      centerId: me?.centerId || null,
+      ...(extraCenterNamesForEmail(me?.email)
+        ? centerClause(await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId }))
+        : { centerId: me?.centerId || null }),
       ...(visibleIds && req.userRole !== "centre_head" ? { assignees: { $in: visibleIds } } : {}),
     })
       .select("_id")
@@ -346,7 +373,8 @@ router.get("/escalations", async (req, res) => {
     .limit(Math.min(200, Number(req.query.limit) || 50))
     .lean();
   if (!isCeo(req.userRole)) {
-    items = items.filter((i) => String(i.taskId?.centerId || "") === String(me?.centerId || ""));
+    const ids = await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+    items = items.filter((i) => centerIdAllowed(ids, i.taskId?.centerId));
   }
   res.json({ items });
 });
@@ -356,7 +384,12 @@ router.get("/search", async (req, res) => {
   const visibleIds = await getVisibleUserIds({ actorId: req.userId, actorRole: req.userRole, centerId: me?.centerId || null });
   const q = String(req.query.q || "").trim();
   if (!q) return res.json({ tasks: [], projects: [], users: [] });
-  const centerScope = !isCeo(req.userRole) ? { centerId: me?.centerId || null } : {};
+  const named = extraCenterNamesForEmail(me?.email);
+  const centerScope = named
+    ? centerClause(await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId }))
+    : !isCeo(req.userRole)
+      ? { centerId: me?.centerId || null }
+      : {};
   const [tasks, projects, users] = await Promise.all([
     Task.find({
       title: new RegExp(q, "i"),
@@ -369,8 +402,8 @@ router.get("/search", async (req, res) => {
     Project.find({ name: new RegExp(q, "i") }).limit(8).lean(),
     User.find({
       $or: [{ name: new RegExp(q, "i") }, { email: new RegExp(q, "i") }],
-      ...(isCeo(req.userRole) ? {} : { centerId: me?.centerId || null }),
-      ...(visibleIds ? { _id: { $in: visibleIds } } : {}),
+      ...(isCeo(req.userRole) ? {} : centerScope),
+      ...(visibleIds && !named ? { _id: { $in: visibleIds } } : {}),
     })
       .limit(8)
       .lean(),

@@ -16,6 +16,7 @@ import { isWeekOffOnDate } from "../utils/weekoff.js";
 import { submitDailySheetTaskForApproval } from "../services/sheetTaskApproval.js";
 import { normalizeLegacySupervisorSheetEntries } from "../utils/supervisorSheetEntries.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
+import { accessibleCenterIds, centerClause, centerIdAllowed } from "../services/centerAccess.js";
 import { Department } from "../models/Department.js";
 import { ALLOWED_DEPARTMENTS } from "../constants/departments.js";
 import { buildEveryonePerformanceWorkbook } from "../services/everyonePerformanceExport.js";
@@ -89,6 +90,22 @@ function canBypassCenterScope(req, me) {
   return hasGlobalClinicalWrite(req, me);
 }
 
+async function viewerCenterIds(req, me) {
+  if (canBypassCenterScope(req, me)) return null;
+  return accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+}
+
+async function performanceCenterQuery(req, me, requestedCenterId) {
+  const ids = await viewerCenterIds(req, me);
+  if (requestedCenterId && !centerIdAllowed(ids, requestedCenterId)) return null;
+  if (requestedCenterId) return { centerId: requestedCenterId };
+  return centerClause(ids);
+}
+
+async function viewerCanSeeCenter(req, me, centerId) {
+  return centerIdAllowed(await viewerCenterIds(req, me), centerId);
+}
+
 /** Role gate for therapist session APIs — trusts DB user, not just JWT + partial actor. */
 function canAccessTherapistSessions(req, me) {
   if (hasGlobalClinicalWrite(req, me)) return true;
@@ -159,8 +176,11 @@ async function buildTherapistSessionsFilter(req, me) {
 
   const selectedCenterId = String(req.query.centerId || "").trim();
   // Own session log: ownership is enough; do not exclude mismatched center rows.
-  if (!selfScope && !canBypassCenterScope(req, me)) q.centerId = me?.centerId || null;
-  else if (!selfScope && canBypassCenterScope(req, me) && selectedCenterId) {
+  if (!selfScope && !canBypassCenterScope(req, me)) {
+    const ids = await viewerCenterIds(req, me);
+    if (selectedCenterId && centerIdAllowed(ids, selectedCenterId)) q.centerId = selectedCenterId;
+    else Object.assign(q, centerClause(ids));
+  } else if (!selfScope && canBypassCenterScope(req, me) && selectedCenterId) {
     const centerTherapistIds = await User.find({
       active: true,
       centerId: selectedCenterId,
@@ -207,8 +227,9 @@ async function buildTherapistPerformanceMatch(req, me) {
     q.therapistId = toObjectId(req.query.therapistId) || req.query.therapistId;
   }
   if (!isCeo(req.userRole)) {
-    const cid = toObjectId(me?.centerId) || me?.centerId || null;
-    q.centerId = cid;
+    const ids = await viewerCenterIds(req, me);
+    if (selectedCenterId && centerIdAllowed(ids, selectedCenterId)) q.centerId = toObjectId(selectedCenterId) || selectedCenterId;
+    else Object.assign(q, centerClause(ids));
   } else if (selectedCenterId) {
     const centerTherapistIds = await User.find({
       active: true,
@@ -975,8 +996,14 @@ router.get("/therapist-performance", async (req, res) => {
     active: true,
     $or: [{ role: "supervisor" }, { role: "executor", executorKind: "therapist" }],
   };
-  if (!isCeo(req.userRole)) therapistQuery.centerId = me?.centerId || null;
-  else if (selectedCenterId) therapistQuery.centerId = selectedCenterId;
+  const viewerIds = await viewerCenterIds(req, me);
+  if (viewerIds == null) {
+    if (selectedCenterId) therapistQuery.centerId = selectedCenterId;
+  } else if (selectedCenterId && centerIdAllowed(viewerIds, selectedCenterId)) {
+    therapistQuery.centerId = selectedCenterId;
+  } else {
+    Object.assign(therapistQuery, centerClause(viewerIds));
+  }
   const selectedDepartment = String(req.query.department || "").trim().toLowerCase();
   if (selectedDepartment && selectedDepartment !== "all") {
     const meta = ALLOWED_DEPARTMENTS.find((d) => d.slug === selectedDepartment);
@@ -1263,7 +1290,7 @@ router.get("/supervisor-sheet/instances", async (req, res) => {
   if (!supervisorUser || supervisorUser.role !== "supervisor") {
     return res.status(404).json({ message: "Supervisor not found" });
   }
-  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, supervisorUser.centerId))) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
@@ -1297,7 +1324,7 @@ router.get("/supervisor-sheet", async (req, res) => {
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
   const centerId = supervisorUser.centerId || null;
-  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, supervisorUser.centerId))) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   await migrateLegacySupervisorSheets(targetSupervisorId, sheetDate, centerId);
@@ -1318,7 +1345,7 @@ router.put("/supervisor-sheet", async (req, res) => {
   if (!supervisorUser || supervisorUser.role !== "supervisor") {
     return res.status(404).json({ message: "Supervisor not found" });
   }
-  if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, supervisorUser.centerId))) {
     return res.status(403).json({ message: "You can update sheets for your center only" });
   }
   const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
@@ -1388,7 +1415,7 @@ router.delete("/supervisor-sheet", async (req, res) => {
     if (!supervisorUser || supervisorUser.role !== "supervisor") {
       return res.status(404).json({ message: "Supervisor not found" });
     }
-    if (!canBypassCenterScope(req, me) && String(supervisorUser.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await viewerCanSeeCenter(req, me, supervisorUser.centerId))) {
       return res.status(403).json({ message: "You can update sheets for your center only" });
     }
     const centerId = supervisorUser.centerId || null;
@@ -1416,7 +1443,7 @@ router.get("/coordinator-sheet", async (req, res) => {
   }
   const sheetDate = String(req.query.sheetDate || nowDateInTz("Asia/Kolkata"));
   const where = { coordinatorId: targetCoordinatorId, sheetDate, centerId: coordinatorUser.centerId || null };
-  if (!canBypassCenterScope(req, me) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, coordinatorUser.centerId))) {
     return res.status(403).json({ message: "You can access sheets for your center only" });
   }
   const sheet = await CoordinatorSheet.findOne(where).lean();
@@ -1433,7 +1460,7 @@ router.put("/coordinator-sheet", async (req, res) => {
   if (!coordinatorUser || coordinatorUser.role !== "coordinator") {
     return res.status(404).json({ message: "Coordinator not found" });
   }
-  if (!canBypassCenterScope(req, me) && String(coordinatorUser.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, coordinatorUser.centerId))) {
     return res.status(403).json({ message: "You can update sheets for your center only" });
   }
   const sheetDate = String(req.body.sheetDate || nowDateInTz("Asia/Kolkata"));
@@ -1473,13 +1500,11 @@ router.get("/coordinator-performance", async (req, res) => {
   if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
   const requestedCenterId = String(req.query.centerId || "").trim();
-  const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
-  if (requestedCenterId && !isCeo(req.userRole) && requestedCenterId !== String(me?.centerId || "")) {
-    return res.status(403).json({ message: "You can access coordinators in your center only" });
-  }
+  const centerQuery = await performanceCenterQuery(req, me, requestedCenterId);
+  if (!centerQuery) return res.status(403).json({ message: "You can access coordinators in your center only" });
 
   const userQuery = { role: "coordinator", active: true };
-  if (effectiveCenterId) userQuery.centerId = effectiveCenterId;
+  Object.assign(userQuery, centerQuery);
 
   if (req.userRole === "coordinator") {
     userQuery._id = req.userId;
@@ -1516,7 +1541,7 @@ router.get("/coordinator-performance", async (req, res) => {
     if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
     if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
   }
-  if (effectiveCenterId) sheetQuery.centerId = effectiveCenterId;
+  Object.assign(sheetQuery, centerQuery);
 
   const sheets = coordinatorIds.length ? await CoordinatorSheet.find(sheetQuery).lean() : [];
   const byCoordinator = new Map();
@@ -1585,13 +1610,11 @@ router.get("/supervisor-performance", async (req, res) => {
   if (!canViewClinicalPerformance(req.userRole)) return res.status(403).json({ message: "Insufficient permissions" });
   const { page, limit, skip } = parsePageLimit(req.query, 25, 100);
   const requestedCenterId = String(req.query.centerId || "").trim();
-  const effectiveCenterId = requestedCenterId || (isCeo(req.userRole) ? "" : String(me?.centerId || ""));
-  if (requestedCenterId && !isCeo(req.userRole) && requestedCenterId !== String(me?.centerId || "")) {
-    return res.status(403).json({ message: "You can access supervisors in your center only" });
-  }
+  const centerQuery = await performanceCenterQuery(req, me, requestedCenterId);
+  if (!centerQuery) return res.status(403).json({ message: "You can access supervisors in your center only" });
 
   const userQuery = { role: "supervisor", active: true };
-  if (effectiveCenterId) userQuery.centerId = effectiveCenterId;
+  Object.assign(userQuery, centerQuery);
   if (req.userRole === "supervisor") {
     userQuery._id = req.userId;
   } else if (req.query.supervisorId) {
@@ -1613,7 +1636,7 @@ router.get("/supervisor-performance", async (req, res) => {
     if (req.query.from) sheetQuery.sheetDate.$gte = String(req.query.from);
     if (req.query.to) sheetQuery.sheetDate.$lte = String(req.query.to);
   }
-  if (effectiveCenterId) sheetQuery.centerId = effectiveCenterId;
+  Object.assign(sheetQuery, centerQuery);
 
   const sheets = supervisorIds.length ? await SupervisorSheet.find(sheetQuery).lean() : [];
   const bySupervisor = new Map();

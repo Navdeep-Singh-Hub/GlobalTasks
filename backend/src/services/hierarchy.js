@@ -8,7 +8,7 @@ import { isCeo } from "../constants/roles.js";
 import { isGlobalAccessEmail } from "./globalAccess.js";
 
 /** May assign tasks in any center and to any center's staff (hardcoded). */
-export const CROSS_CENTER_ASSIGNER_EMAILS = ["sachin@gmail.com"];
+export const CROSS_CENTER_ASSIGNER_EMAILS = [];
 
 export function isCrossCenterAssignerEmail(email) {
   return CROSS_CENTER_ASSIGNER_EMAILS.includes(String(email || "").trim().toLowerCase());

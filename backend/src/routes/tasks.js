@@ -24,6 +24,7 @@ import {
 import { TaskApprovalRecord } from "../models/TaskApprovalRecord.js";
 import { TaskEvent } from "../models/TaskEvent.js";
 import { getAssignableAssigneeIds, findInvalidCenterAssignees, canAccessAnyCenter } from "../services/hierarchy.js";
+import { accessibleCenterIds, centerClause, centerIdAllowed, extraCenterNamesForEmail } from "../services/centerAccess.js";
 import { isPastDataFillEmail } from "../services/pastDataFill.js";
 import { canApproveTaskForUser } from "../services/taskApprovalRouting.js";
 import {
@@ -82,6 +83,25 @@ async function actor(req) {
 
 function actorHasAnyCenterAccess(req, me) {
   return canAccessAnyCenter({ role: req.userRole, email: me?.email }) || isPastDataFillEmail(me?.email);
+}
+
+async function allowedCenterIdsFor(req, me) {
+  if (req._allowedCenterIds !== undefined) return req._allowedCenterIds;
+  if (actorHasAnyCenterAccess(req, me)) {
+    req._allowedCenterIds = null;
+    return null;
+  }
+  req._allowedCenterIds = await accessibleCenterIds({
+    role: req.userRole,
+    email: me?.email,
+    centerId: me?.centerId,
+  });
+  return req._allowedCenterIds;
+}
+
+async function taskCenterOk(req, me, centerId) {
+  const ids = await allowedCenterIdsFor(req, me);
+  return centerIdAllowed(ids, centerId);
 }
 
 function actorCanFillPastData(me) {
@@ -503,14 +523,18 @@ async function enrichMasterTasksWithHistoryMeta(tasks, statusFilter) {
   });
 }
 
-async function applyApprovalListScope(filter, { userId, role, centerId }) {
-  if (isCeo(role)) return;
+async function applyApprovalListScope(filter, { userId, role, centerId, widenToCenters }) {
+  if (isCeo(role) || widenToCenters) return;
   const visibility = await approvalVisibilityClause({ userId, role, centerId, isCeoRole: false });
   if (visibility) mergeClauseIntoFilter(filter, visibility);
 }
 
-function applyListScopeForRole(filter, { userId, role, query }) {
+function applyListScopeForRole(filter, { userId, role, query, widenToCenters }) {
   const masterScope = String(query.masterScope || "").toLowerCase() === "true";
+  if (widenToCenters) {
+    if (isAssigneeInboxQuery(query) || isAssigneeOnly(role)) applyAssigneeScopeFilter(filter, userId);
+    return;
+  }
   if (masterScope) {
     // CEO / admin@globaltasks.demo: Master Recurring & Master Single show every task in the workspace.
     if (!isCeo(role)) {
@@ -541,9 +565,13 @@ function applyMutationScopeForRole(query, userId, role) {
   }
 }
 
-async function userCanAccessTaskDoc(task, userId, role, centerId) {
+async function userCanAccessTaskDoc(task, userId, role, centerId, req, me) {
   const uid = String(userId || "");
-  if (isCeo(role)) return true;
+  if (isCeo(role) || (req && me && actorHasAnyCenterAccess(req, me))) return true;
+  if (req && me && extraCenterNamesForEmail(me.email)) {
+    const ids = await allowedCenterIdsFor(req, me);
+    if (centerIdAllowed(ids, task?.centerId?._id || task?.centerId)) return true;
+  }
   if (taskAssignerId(task) === uid) return true;
   if (userIsAssigneeOnTask(task, uid)) return true;
   return false;
@@ -655,7 +683,13 @@ router.get("/", async (req, res) => {
     centerId: me?.centerId || null,
     isCeoRole: isCeo(req.userRole),
   });
-  if (!actorHasAnyCenterAccess(req, me)) filter.centerId = me?.centerId || null;
+  const widenToCenters = Boolean(extraCenterNamesForEmail(me?.email)) && !actorHasAnyCenterAccess(req, me);
+  if (!actorHasAnyCenterAccess(req, me)) {
+    const ids = await allowedCenterIdsFor(req, me);
+    const requested = String(req.query.centerId || "");
+    if (requested && requested !== "all" && centerIdAllowed(ids, requested)) filter.centerId = requested;
+    else Object.assign(filter, centerClause(ids));
+  }
   const trashOnly = req.query.trash === "only" || req.query.bin === "only";
   const onBehalfAssigneeId = String(req.query.onBehalfAssigneeId || "").trim();
   const fillPast = actorCanFillPastData(me);
@@ -666,11 +700,12 @@ router.get("/", async (req, res) => {
       userId: req.userId,
       role: req.userRole,
       centerId: me?.centerId || null,
+      widenToCenters,
     });
   } else if (trashOnly) {
-    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
+    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query, widenToCenters });
   } else {
-    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query });
+    applyListScopeForRole(filter, { userId: req.userId, role: req.userRole, query: req.query, widenToCenters });
   }
   await applyMasterHistoricalStatusFilter(filter, req.query);
 
@@ -815,14 +850,14 @@ router.get("/:id", async (req, res) => {
   }
 
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!actorHasAnyCenterAccess(req, me) && String(task.centerId?._id || task.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await taskCenterOk(req, me, task.centerId?._id || task.centerId))) {
     return res.status(403).json({ message: "You can access tasks from your center only" });
   }
   if (fillPast && onBehalfAssigneeId) {
     if (!userIsAssigneeOnTask(task, onBehalfAssigneeId)) {
       return res.status(403).json({ message: "Selected user is not an assignee on this task" });
     }
-  } else if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))) {
+  } else if (!(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null, req, me))) {
     return res.status(403).json({ message: "You can only access tasks assigned to you or tasks you assigned" });
   }
 
@@ -871,7 +906,7 @@ router.post("/", async (req, res, next) => {
       return res.status(400).json({ message: "Description is required" });
     }
     if (!payload.centerId) return res.status(400).json({ message: "Center is required" });
-    if (!actorHasAnyCenterAccess(req, me) && String(payload.centerId) !== String(me?.centerId || "")) {
+    if (!(await taskCenterOk(req, me, payload.centerId))) {
       return res.status(403).json({ message: "You can only create tasks in your center" });
     }
     if (!Array.isArray(payload.assignees)) payload.assignees = payload.assignees ? [payload.assignees] : [];
@@ -1009,7 +1044,7 @@ router.patch("/:id", async (req, res, next) => {
     const me = await actor(req);
     let task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await taskCenterOk(req, me, task.centerId))) {
       return res.status(403).json({ message: "You can edit tasks from your center only" });
     }
     const onBehalfAssigneeId = String(req.body.onBehalfAssigneeId || "").trim();
@@ -1022,7 +1057,7 @@ router.patch("/:id", async (req, res, next) => {
     if (
       !actingAsAssigneeId &&
       !isAssignerEdit &&
-      !(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null))
+      !(await userCanAccessTaskDoc(task, req.userId, req.userRole, me?.centerId || null, req, me))
     ) {
       return res.status(403).json({ message: "You can only edit tasks assigned to you or that you created" });
     }
@@ -1082,7 +1117,7 @@ router.patch("/:id", async (req, res, next) => {
     if ("taskType" in req.body && req.body.taskType === "one_time") {
       task.recurrence = { forever: true, includeSunday: false, weekOff: "Sunday", endDate: null };
     }
-    if ("centerId" in req.body && !actorHasAnyCenterAccess(req, me) && String(req.body.centerId || "") !== String(me?.centerId || "")) {
+    if ("centerId" in req.body && !(await taskCenterOk(req, me, req.body.centerId))) {
       return res.status(403).json({ message: "You can only set your center on tasks" });
     }
     if ("assignees" in req.body) {
@@ -1317,7 +1352,8 @@ router.post("/bulk", async (req, res) => {
   const onBehalfAssigneeId = String(req.body.onBehalfAssigneeId || "").trim();
   const fillPast = actorCanFillPastData(me);
   const actingAsAssigneeId = onBehalfAssigneeId && fillPast ? onBehalfAssigneeId : null;
-  const scope = !actorHasAnyCenterAccess(req, me) ? { centerId: me?.centerId || null } : {};
+  const allowedIds = await allowedCenterIdsFor(req, me);
+  const scope = allowedIds == null ? {} : { ...centerClause(allowedIds) };
   if (!actingAsAssigneeId) {
     applyMutationScopeForRole(scope, req.userId, req.userRole);
   }
@@ -1431,7 +1467,7 @@ router.post("/:id/resubmit", async (req, res) => {
     const me = await actor(req);
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await taskCenterOk(req, me, task.centerId))) {
       return res.status(403).json({ message: "You can resubmit tasks from your center only" });
     }
 
@@ -1490,7 +1526,7 @@ router.post("/:id/not-done", async (req, res) => {
     const me = await actor(req);
     let task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await taskCenterOk(req, me, task.centerId))) {
       return res.status(403).json({ message: "You can mark tasks from your center only" });
     }
     if (!userIsAssigneeOnTask(task, req.userId)) {
@@ -1616,7 +1652,7 @@ router.post("/:id/approve", async (req, res) => {
   const me = await actor(req);
   const task = await Task.findById(req.params.id);
   if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await taskCenterOk(req, me, task.centerId))) {
     return res.status(403).json({ message: "You can approve tasks from your center only" });
   }
   if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
@@ -1820,7 +1856,7 @@ router.post("/:id/reject", async (req, res) => {
 
     const task = await Task.findById(req.params.id);
     if (!task || task.deletedAt) return res.status(404).json({ message: "Task not found" });
-    if (!actorHasAnyCenterAccess(req, me) && String(task.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await taskCenterOk(req, me, task.centerId))) {
       return res.status(403).json({ message: "You can reject tasks from your center only" });
     }
     if (!(await canApproveTaskForUser({ userId: req.userId, userRole: req.userRole, task }))) {
@@ -1893,16 +1929,16 @@ router.delete("/:id", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id);
   if (!existing || existing.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await taskCenterOk(req, me, existing.centerId))) {
     return res.status(403).json({ message: "You can delete tasks from your center only" });
   }
 
   let where;
+  const centerLimit = actorHasAnyCenterAccess(req, me) ? {} : centerClause(await allowedCenterIdsFor(req, me));
   if (managementCreatorOwnsTask(req, existing)) {
-    where = { _id: req.params.id };
-    if (!actorHasAnyCenterAccess(req, me)) where.centerId = me?.centerId || null;
+    where = { _id: req.params.id, ...centerLimit };
   } else {
-    where = !actorHasAnyCenterAccess(req, me) ? { _id: req.params.id, centerId: me?.centerId || null } : { _id: req.params.id };
+    where = { _id: req.params.id, ...centerLimit };
     applyMutationScopeForRole(where, req.userId, req.userRole);
   }
 
@@ -1916,10 +1952,10 @@ router.post("/:id/restore", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id).lean();
   if (!existing || !existing.deletedAt) return res.status(404).json({ message: "Task not found" });
-  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await taskCenterOk(req, me, existing.centerId))) {
     return res.status(403).json({ message: "You can restore tasks from your center only" });
   }
-  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {
+  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null, req, me))) {
     return res.status(403).json({ message: "You can only restore tasks assigned to you or tasks you assigned" });
   }
   const task = await Task.findOneAndUpdate({ _id: existing._id }, { deletedAt: null });
@@ -1932,10 +1968,10 @@ router.delete("/:id/hard", requireManagement, async (req, res) => {
   const me = await actor(req);
   const existing = await Task.findById(req.params.id).lean();
   if (!existing) return res.status(404).json({ message: "Task not found" });
-  if (!actorHasAnyCenterAccess(req, me) && String(existing.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await taskCenterOk(req, me, existing.centerId))) {
     return res.status(403).json({ message: "You can delete tasks from your center only" });
   }
-  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null))) {
+  if (!(await userCanAccessTaskDoc(existing, req.userId, req.userRole, me?.centerId || null, req, me))) {
     return res.status(403).json({ message: "You can only permanently delete tasks assigned to you or tasks you assigned" });
   }
   await TaskEvent.create({ taskId: existing._id, actorId: req.userId, eventType: "deleted", meta: { soft: false } });

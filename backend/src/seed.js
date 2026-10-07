@@ -41,6 +41,7 @@ async function run() {
     { name: "Patiala", code: "PTA" },
     { name: "Bathinda", code: "BTD" },
     { name: "Mohali", code: "MHL" },
+    { name: "Barnala", code: "BNL" },
   ]);
   const [cLudhiana] = centers;
   const departments = await Department.insertMany(ALLOWED_DEPARTMENTS.map(({ name, code }) => ({ name, code })));

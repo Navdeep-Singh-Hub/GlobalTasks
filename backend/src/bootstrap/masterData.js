@@ -13,6 +13,7 @@ const DEFAULT_CENTERS = [
   { name: "Patiala", code: "PTA" },
   { name: "Bathinda", code: "BTD" },
   { name: "Mohali", code: "MHL" },
+  { name: "Barnala", code: "BNL" },
 ];
 
 const DEFAULT_DEPARTMENTS = ALLOWED_DEPARTMENTS.map(({ name, code }) => ({ name, code }));
