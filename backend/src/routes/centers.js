@@ -1,12 +1,21 @@
 import { Router } from "express";
 import { Center } from "../models/Center.js";
+import { User } from "../models/User.js";
 import { authRequired, requireManagement } from "../middleware/auth.js";
+import { isCeo } from "../constants/roles.js";
+import { isGlobalAccessEmail } from "../services/globalAccess.js";
+import { accessibleCenterIds, centerIdAllowed } from "../services/centerAccess.js";
 
 const router = Router();
 router.use(authRequired);
 
-router.get("/", async (_req, res) => {
-  const centers = await Center.find().sort({ name: 1 }).lean();
+router.get("/", async (req, res) => {
+  let centers = await Center.find().sort({ name: 1 }).lean();
+  const me = await User.findById(req.userId).select("email centerId").lean();
+  if (!isCeo(req.userRole) && !isGlobalAccessEmail(me?.email)) {
+    const ids = await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+    centers = centers.filter((center) => centerIdAllowed(ids, center._id));
+  }
   res.json({ centers });
 });
 

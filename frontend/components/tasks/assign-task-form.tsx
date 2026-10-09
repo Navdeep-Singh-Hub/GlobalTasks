@@ -202,12 +202,9 @@ export function AssignTaskForm() {
     user?.centerId && typeof user.centerId === "object" && "_id" in user.centerId
       ? String(user.centerId._id)
       : String(user?.centerId || "");
-  const visibleCenters =
-    user?.accessibleCenterIds == null
-      ? crossCenterAssign
-        ? centers
-        : centers.filter((c) => c._id === ownCenterId)
-      : centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)));
+  const visibleCenters = user?.accessibleCenterIds?.length
+    ? centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)))
+    : centers;
   const pickerCenterId = drafts[0]?.centerId || "";
 
   useEffect(() => {

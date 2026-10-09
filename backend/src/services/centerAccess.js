@@ -5,9 +5,10 @@ import { isGlobalAccessEmail } from "./globalAccess.js";
 /**
  * These logins can see every record in the named centers, plus their own center.
  * null from accessibleCenterIds means unrestricted (CEO / global access).
+ * Barnala in the app is the Mohali center (shown as Barnala).
  */
 export const EXTRA_CENTER_ACCESS_BY_EMAIL = {
-  "sachin@gmail.com": ["Barnala", "Amritsar", "Moga", "Faridkot"],
+  "sachin@gmail.com": ["Mohali", "Amritsar", "Moga", "Faridkot"],
 };
 
 export function extraCenterNamesForEmail(email) {

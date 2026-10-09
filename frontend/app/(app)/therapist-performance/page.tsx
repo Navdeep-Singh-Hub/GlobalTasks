@@ -113,11 +113,10 @@ export default function TherapistPerformancePage() {
 
   const canManage = canViewClinicalPerformance(user?.role);
   const canMark = user?.role === "supervisor";
-  const canFilterCenter = isCeo(user?.role) || (user?.accessibleCenterIds?.length || 0) > 1;
-  const centerChoices =
-    user?.accessibleCenterIds == null
-      ? centers
-      : centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)));
+  const canFilterCenter = isCeo(user?.role) || (user?.accessibleCenterIds?.length || 0) > 1 || centers.length > 1;
+  const centerChoices = user?.accessibleCenterIds?.length
+    ? centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)))
+    : centers;
   const canCeoSessionAdmin = isCeo(user?.role);
 
   const load = useCallback(async () => {

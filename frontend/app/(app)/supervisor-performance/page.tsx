@@ -86,11 +86,6 @@ export default function SupervisorPerformancePage() {
   const { user } = useAuth();
   const canManage = canViewClinicalPerformance(user?.role);
   const isCeoUser = user?.role === "ceo";
-  const canPickCenter = isCeoUser || (user?.accessibleCenterIds?.length || 0) > 1;
-  const centerOptions =
-    user?.accessibleCenterIds == null
-      ? centers
-      : centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)));
   const viewerIsSupervisor = user?.role === "supervisor";
   const viewerIsCoordinator = user?.role === "coordinator";
   const [sheetKind, setSheetKind] = useState<SheetKind>("supervisor");
@@ -103,6 +98,10 @@ export default function SupervisorPerformancePage() {
   const [page, setPage] = useState(1);
   const [centers, setCenters] = useState<CenterOption[]>([]);
   const [centerId, setCenterId] = useState("");
+  const canPickCenter = isCeoUser || (user?.accessibleCenterIds?.length || 0) > 1 || centers.length > 1;
+  const centerOptions = user?.accessibleCenterIds?.length
+    ? centers.filter((c) => user.accessibleCenterIds?.includes(String(c._id)))
+    : centers;
   const [supervisors, setSupervisors] = useState<PersonUser[]>([]);
   const [coordinators, setCoordinators] = useState<PersonUser[]>([]);
   const [supervisorId, setSupervisorId] = useState("");

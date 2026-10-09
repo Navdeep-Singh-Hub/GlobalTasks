@@ -167,11 +167,10 @@ export default function AdminPanelPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<Member | null>(null);
 
-  const canSeeAllCenters = isCeo(me?.role) || (me?.accessibleCenterIds?.length || 0) > 1;
-  const centerChoices =
-    me?.accessibleCenterIds == null
-      ? centers
-      : centers.filter((c) => me.accessibleCenterIds?.includes(String(c._id)));
+  const canSeeAllCenters = isCeo(me?.role) || (me?.accessibleCenterIds?.length || 0) > 1 || centers.length > 1;
+  const centerChoices = me?.accessibleCenterIds?.length
+    ? centers.filter((c) => me.accessibleCenterIds?.includes(String(c._id)))
+    : centers;
   const myCenterName =
     me?.centerId && typeof me.centerId === "object" && me.centerId.name
       ? formatCenterName(me.centerId.name)
