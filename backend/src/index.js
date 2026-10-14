@@ -26,7 +26,7 @@ import { startRecurringOccurrenceScheduler } from "./jobs/recurringOccurrenceSch
 import { runWhatsAppDigestTick, startWhatsAppTaskDigestScheduler } from "./jobs/whatsappTaskDigestScheduler.js";
 import { runAutoSubmitDueTasksTick, startAutoSubmitDueTasksScheduler } from "./jobs/autoSubmitDueTasksScheduler.js";
 import { runRecurringOccurrenceSync } from "./jobs/recurringOccurrenceScheduler.js";
-import { isWhatsAppConfigured } from "./services/whatsappService.js";
+import { isWhatsAppConfigured, verifyWhatsAppCredentials } from "./services/whatsappService.js";
 import { SupervisorSheet } from "./models/SupervisorSheet.js";
 
 const app = express();
@@ -192,6 +192,20 @@ connectDatabase(uri)
       console.warn(
         "[whatsapp] WHATSAPP_TEMPLATE_MORNING not set — task assign uses globaltasks_morning_digest_v1. Set WHATSAPP_TEMPLATE_MORNING in .env."
       );
+    }
+    if (isWhatsAppConfigured()) {
+      void verifyWhatsAppCredentials()
+        .then((check) => {
+          if (check.ok) {
+            console.log("[whatsapp] access token accepted by Meta");
+            return;
+          }
+          console.error(
+            "[whatsapp] Meta rejected the access token. Task-assign and digest messages will not send until WHATSAPP_ACCESS_TOKEN is replaced with a new permanent token.",
+            check.meta?.message || check.reason
+          );
+        })
+        .catch((e) => console.error("[whatsapp] token check failed:", e.message || e));
     }
     server.listen(PORT, () => console.log(`API listening on http://localhost:${PORT}`));
   })

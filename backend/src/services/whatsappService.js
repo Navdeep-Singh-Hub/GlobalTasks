@@ -43,6 +43,20 @@ export function isWhatsAppConfigured() {
   return Boolean(apiUrl() && accessToken());
 }
 
+/** Confirm the saved token can still call Meta. Does not send a message. */
+export async function verifyWhatsAppCredentials() {
+  const id = phoneNumberId();
+  const token = accessToken();
+  if (!id || !token) return { ok: false, reason: "not_configured" };
+  const res = await fetch(`https://graph.facebook.com/v20.0/${id}?fields=display_phone_number,verified_name`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.ok) return { ok: true };
+  const meta = parseMetaErrorBody(await res.text().catch(() => ""));
+  const tokenRejected = meta.code === 190;
+  return { ok: false, reason: tokenRejected ? "token_invalid" : "meta_error", meta };
+}
+
 /** For diagnostics scripts — never logs the token itself. */
 export function whatsAppConfigStatus() {
   const id = phoneNumberId();
