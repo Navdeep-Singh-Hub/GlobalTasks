@@ -7,6 +7,8 @@ import { SupervisorSheet } from "../models/SupervisorSheet.js";
 import { CoordinatorSheet } from "../models/CoordinatorSheet.js";
 import { normalizeWeekOffDays } from "../utils/weekoff.js";
 import { isCeo } from "../constants/roles.js";
+import { accessibleCenterIds, centerClause, centerIdAllowed } from "./centerAccess.js";
+import { isPastDataFillEmail } from "./pastDataFill.js";
 
 const DAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -141,10 +143,20 @@ export async function buildEveryonePerformanceWorkbook(req, me) {
   const selectedRole = String(req.query.role || "").trim().toLowerCase();
 
   const userQuery = { active: true };
-  if (!isCeo(req.userRole)) {
-    userQuery.centerId = me?.centerId || null;
-  } else if (selectedCenterId) {
+  const bypassCenter =
+    isCeo(req.userRole) || isPastDataFillEmail(me?.email) || isPastDataFillEmail(req.userEmail);
+  const allowedCenterIds = bypassCenter
+    ? null
+    : await accessibleCenterIds({ role: req.userRole, email: me?.email, centerId: me?.centerId });
+  if (selectedCenterId) {
+    if (!centerIdAllowed(allowedCenterIds, selectedCenterId)) {
+      const err = new Error("You can access this center only");
+      err.status = 403;
+      throw err;
+    }
     userQuery.centerId = toObjectId(selectedCenterId) || selectedCenterId;
+  } else {
+    Object.assign(userQuery, centerClause(allowedCenterIds));
   }
   if (selectedDepartment && selectedDepartment !== "all") {
     userQuery.department = selectedDepartment;

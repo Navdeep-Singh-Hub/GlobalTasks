@@ -436,7 +436,7 @@ async function assertCoordinatorPerformanceAccess(req, me, coordinatorId) {
   if (!coord || coord.role !== "coordinator") {
     return { ok: false, status: 404, message: "Coordinator not found" };
   }
-  if (!isCeo(req.userRole) && String(coord.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, coord.centerId))) {
     return { ok: false, status: 403, message: "You can access coordinators in your center only" };
   }
   if (req.userRole === "coordinator" && String(coordinatorId) !== String(req.userId)) {
@@ -1514,7 +1514,7 @@ router.get("/coordinator-performance", async (req, res) => {
     if (!rid) return res.json({ rows: [], total: 0, page, limit });
     const boss = await User.findById(rid).select("role centerId").lean();
     if (!boss || boss.role !== "coordinator") return res.json({ rows: [], total: 0, page, limit });
-    if (!isCeo(req.userRole) && String(boss.centerId || "") !== String(me?.centerId || "")) {
+    if (!(await viewerCanSeeCenter(req, me, boss.centerId))) {
       return res.json({ rows: [], total: 0, page, limit });
     }
     userQuery._id = rid;
@@ -1686,7 +1686,7 @@ router.get("/supervisor-performance/details", async (req, res) => {
 
   const supervisor = await User.findById(supervisorId).select("_id role centerId").lean();
   if (!supervisor || supervisor.role !== "supervisor") return res.status(404).json({ message: "Supervisor not found" });
-  if (!isCeo(req.userRole) && String(supervisor.centerId || "") !== String(me?.centerId || "")) {
+  if (!(await viewerCanSeeCenter(req, me, supervisor.centerId))) {
     return res.status(403).json({ message: "You can access supervisors in your center only" });
   }
   if (req.userRole === "supervisor" && String(supervisorId) !== String(req.userId || "")) {
